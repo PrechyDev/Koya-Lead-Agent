@@ -1,0 +1,36 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+dist/
+build/
+
+# Eval fixtures contain scraped third-party website content — keep local
+evals/fixtures/*.json
+!evals/fixtures/sample_*.json
+
+# Exports / local artefacts
+exports/
+*.csv
+*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Claude Code local settings (keep shared skills in .claude/skills)
+.claude/settings.local.json
