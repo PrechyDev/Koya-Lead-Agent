@@ -226,6 +226,17 @@ def add_usage(run_id: str, counter: str, amount: int = 1) -> dict:
     return row["usage"] if row else {}
 
 
+def append_usage_item(run_id: str, key: str, value: str) -> None:
+    """Append to a list inside usage in ONE statement (a read-modify-write of the whole usage object could
+    overwrite a counter that a parallel researcher had just reserved)."""
+    execute(
+        f"""update {t('runs')}
+            set usage = jsonb_set(usage, %s::text[], coalesce(usage->%s, '[]'::jsonb) || to_jsonb(%s::text))
+            where id = %s""",
+        ([key], key, value, run_id),
+    )
+
+
 def next_tool_call_seq(run_id: str) -> int:
     row = fetch_one(
         f"update {t('runs')} set tool_call_count = tool_call_count + 1 where id = %s returning tool_call_count",

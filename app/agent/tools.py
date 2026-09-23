@@ -42,6 +42,7 @@ OUT_OF_SCOPE_QUESTION = {
     "too_vague": "",
 }
 GROUNDING_CALL_CAP_USD = 0.03
+MAX_FREE_EMPTY_SEARCHES = 1    # an Apify search that returns nothing is given back once per run
 MAX_DRAFT_CHECKS_PER_LEAD = 5  # free self-checks before save_outreach; bounded so a confused writer can't loop
 # A disqualifier is answered "does it apply?", so it must name what to EXCLUDE. "Not an agency" inverts that:
 # "applies" would mean "is not an agency" and would reject exactly the companies we want (seen in dev ICPs).
@@ -325,10 +326,13 @@ def build_handlers(ctx: RunContext) -> dict:
             return out
 
         await db.run(db.add_usage, ctx.run_id, "candidates_found", result.raw_count)
-        run_row = await db.run(db.get_run, ctx.run_id)
-        usage_now = dict(run_row["usage"] or {})
-        usage_now["queries"] = queries + [query]
-        await db.run(db.update_run, ctx.run_id, usage=usage_now)
+        await db.run(db.append_usage_item, ctx.run_id, "queries", query)
+        refunded = False
+        if result.raw_count == 0 and int(usage.get("empty_searches", 0)) < MAX_FREE_EMPTY_SEARCHES:
+            # LinkedIn search is variable (errors log #10): one empty search doesn't use up a search slot.
+            await db.run(db.add_usage, ctx.run_id, "discovery_calls", -1)
+            await db.run(db.add_usage, ctx.run_id, "empty_searches")
+            refunded = True
 
         domains = [c["domain"] for c in result.companies]
         seen = (await db.run(db.recently_researched, domains, settings.research_reuse_days, ctx.run_id)
@@ -376,7 +380,8 @@ def build_handlers(ctx: RunContext) -> dict:
         summary = (f"Apify returned {result.raw_count} (cap {size}, page {start_page}) for '{query}': "
                    f"{len(to_research)} to research, {len(rejected)} rejected on pre-screen, "
                    f"{result.dropped_no_domain} without a website, {dupes} duplicates, "
-                   f"{len(skipped)} researched in the last {settings.research_reuse_days} days")
+                   f"{len(skipped)} researched in the last {settings.research_reuse_days} days"
+                   + ("; empty search not counted against the search limit" if refunded else ""))
         return success({
             "companies_to_research": to_research,
             "rejected_on_prescreen": rejected,
