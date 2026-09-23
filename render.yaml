@@ -50,3 +50,5 @@ services:
         value: "false"
       - key: MAX_RUNS_PER_DAY
         value: "5"
+      - key: FIXTURE_MODE             # "true" only while running the public injection test (deployment.md 5.5)
+        value: "false"

@@ -11,18 +11,21 @@ Every run, lead, tool call and cent of Claude spend is stored in Supabase Postgr
 
 The agent **does not** find or validate email addresses, and **never sends** anything. A human reviews every draft.
 
-- System spec: [docs/specs.md](docs/specs.md) · UI rules: [docs/design.md](docs/design.md)
+- System spec: [docs/specs.md](docs/specs.md) · UI rules: [docs/design.md](docs/design.md) · Deployment: [docs/deployment.md](docs/deployment.md)
 
 ## How it works (short)
 
 ```
 Browser (login) → FastAPI (roles, CSRF, rate limits, 1 run at a time, budget guard)
-  → Phase A: ICP refiner (Agent SDK) → clarification check → "you've run this before" gate
+  → Phase A: free input gate → free pre-run checks → Haiku scope check → ICP refiner (Agent SDK)
+             → clarification check → "you've run this before" gate
   → Phase B: orchestrator → researcher subagent per company → copywriter subagent per qualified lead
+             (one subagent at a time)
        every action goes through our own guarded tools (leadtools MCP server):
-       discover (Apify, capped) · scrape (Firecrawl, cached, sanitized) · save_qualification (evidence rules)
+       discover (Apify, capped, free pre-screen) · scrape (Firecrawl, cached, sanitized)
+       · save_qualification (evidence rules, code-computed fit score) · check_drafts (free, before saving)
        · save_outreach (code checks + Haiku fact-check) · finish_run (quality scorecard)
-  → Supabase: runs · leads · tool_calls · scrape_cache · spend_ledger · members · eval_results
+  → Supabase: members · runs · leads · tool_calls · scrape_cache · spend_ledger · system_events · eval_results
 ```
 
 ## Local setup (Windows / PowerShell or Git Bash)
@@ -31,19 +34,19 @@ Browser (login) → FastAPI (roles, CSRF, rate limits, 1 run at a time, budget g
 py -3.12 -m venv .venv
 .venv/Scripts/python -m pip install -r requirements.txt
 .venv/Scripts/python -m pip install pytest pytest-asyncio respx ruff
-cp .env.example .env                       # fill in (see comments in the file)
+cp .env.example .env                       # fill in (see comments in the file; you write SUPABASE_DB_DSN yourself)
 git config core.hooksPath .githooks        # secret scan before every commit
 
 .venv/Scripts/python scripts/create_app_role.py   # creates the least-privilege DB user from the SUPABASE_DB_DSN you put in .env (read-only)
 .venv/Scripts/python scripts/migrate.py           # applies db/migrations in order (safe to re-run)
-.venv/Scripts/python scripts/bootstrap_owner.py you@example.com "Your Name" --owner   # give yourself access
+.venv/Scripts/python scripts/bootstrap_owner.py you@example.com "Your Name" --owner --invite   # give yourself admin access
 .venv/Scripts/python -m uvicorn app.main:app --reload --port 8000                    # http://localhost:8000
 ```
 
 ## Tests
 
 ```bash
-.venv/Scripts/python -m pytest -q          # 116 tests; uses the real DB (throwaway rows), fakes all paid APIs
+.venv/Scripts/python -m pytest -q          # 145 tests; uses the real DB (throwaway rows), fakes all paid APIs
 ```
 
 ## Useful scripts
@@ -54,7 +57,7 @@ git config core.hooksPath .githooks        # secret scan before every commit
 | `scripts/resume_run.py <run_id> find_new\|refresh_same` | Continues a run paused at the repeat gate | as a run |
 | `scripts/transcript_cost.py <session_id> [--record <run_id>]` | Recovers a killed session's true cost from Claude Code transcripts | free |
 | `evals/ab.py export\|estimate\|reference\|run\|report` | One-off model A/B (docs/specs.md §9); refuses without `--yes` and above $0.90 | ≤ $0.90 total |
-| `spikes/sdk_spike.py` | The build-step-0.2 SDK behaviour check | ≤ $0.10 |
+| `spikes/sdk_spike.py` | The SDK behaviour check run before building (tools, subagents, skills, hooks, cost) | ≤ $0.10 |
 
 ## Deploy (Render free)
 
@@ -79,9 +82,11 @@ The same problem within 30 minutes is counted, not re-sent. Client-facing messag
 
 ## Safety summary
 
-- Nothing public except `/login`, `/accept-invite`, `/health` and two test fixture pages.
+- Nothing public except `/login`, `/accept-invite` and `/health` (plus two test pages, only while `FIXTURE_MODE=true`).
 - Supabase Auth logins, admin/member roles checked on the server, and CSRF tokens on every action.
 - The app DB user has no DELETE, no DROP, and no access to other schemas. RLS is on.
 - The agent has no web browsing, shell or file tools. Our tools enforce all limits from the run record.
-- Scraped text is redacted, injection-flagged, truncated and wrapped as untrusted data.
+- Scraped text and LinkedIn descriptions are redacted and injection-flagged; every piece of outside text in a prompt is fenced as untrusted data.
+- Drafts are checked by code and a separate fact-checker; nothing is sent, and only approved drafts are exported.
+- Every log line is filtered for emails, keys and passwords.
 - The Claude budget is enforced from the spend ledger. Each phase has a watchdog. Cost is recovered even if a phase is killed.

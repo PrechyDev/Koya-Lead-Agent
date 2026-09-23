@@ -6,7 +6,8 @@ agent asks for:
   * a hard filter only counts as 'pass' with evidence + a source URL;
   * any 'fail'  -> not_qualified;
   * any 'unknown' (or a missing check) -> needs_review, never qualified;
-  * qualified needs confidence >= 0.70.
+  * qualified needs a fit score >= 0.70. The score is computed by code (app/lib/scoring.py, D-48), which
+    already keeps a fully-passing lead at 0.70+, so this is a last safety net, not a model's opinion.
 Pre-screening rejects candidates that already fail a hard filter on the
 discovery data, before any scrape or Claude call.
 """

@@ -37,8 +37,12 @@ def a_run():
     return runs[0]
 
 
-def test_logged_out_is_redirected_and_public_pages_work(client_as):
+def test_logged_out_is_redirected_and_public_pages_work(client_as, monkeypatch):
+    from app.config import get_settings
+    monkeypatch.setattr(get_settings(), "fixture_mode", False)
     c = client_as(None)
+    assert c.get("/fixtures/injection.html").status_code == 404  # off by default: no public test pages
+    monkeypatch.setattr(get_settings(), "fixture_mode", True)
     r = c.get("/")
     assert r.status_code == 303 and r.headers["location"].startswith("/login")
     assert c.get("/login").status_code == 200

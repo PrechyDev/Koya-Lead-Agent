@@ -1,6 +1,6 @@
 ---
 name: outbound-copywriting
-description: Use when writing the 3-step cold email sequence and LinkedIn message for ONE qualified lead, using only the lead's stored research. Explains the copy rules, placeholders, limits and how to fill save_outreach.
+description: Use when writing the 3-step cold email sequence and LinkedIn message for ONE qualified lead, using only the lead's stored research. Explains the copy rules, placeholders, limits, how to self-check with check_drafts and how to fill save_outreach.
 ---
 
 # Outbound Copywriting

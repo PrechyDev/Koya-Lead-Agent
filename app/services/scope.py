@@ -1,8 +1,8 @@
 """Cheap 'is this a lead search?' check (D-34), run before the full ICP step.
 
 The free code gate (app.lib.objective.objective_problem) stops junk. This stops real sentences that aren't
-lead searches ("can I buy ice cream in Ife?") with one small Haiku call (~$0.002) instead of starting the
-full ICP agent (~$0.02). Only `lead_search` goes on. If this check itself fails (API down), the run falls
+lead searches ("can I buy ice cream in Ife?") with one small Haiku call (measured ~$0.0008) instead of starting
+the full ICP agent (~$0.02-0.04). Only `lead_search` goes on. If this check itself fails (API down), the run falls
 back to the ICP step, which classifies the request too; the server enforces it either way.
 """
 

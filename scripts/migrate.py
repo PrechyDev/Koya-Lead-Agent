@@ -1,4 +1,4 @@
-"""Apply database migrations in order (build step 2.1).
+"""Apply database migrations in order.
 
 Uses SUPABASE_ADMIN_DSN (the postgres user) — run this on your laptop only.
 Each file in db/migrations/ is applied once, inside a transaction, and

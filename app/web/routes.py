@@ -530,10 +530,11 @@ async def test_alert(request: Request, csrf_token: str = Form(""), member: Membe
 
 
 # ---------------------------------------------------------------------------
-# Test fixture pages (public, so Firecrawl can fetch them): E-13, T-inj
+# Test fixture pages (public, so Firecrawl can fetch them): E-13, T-inj.
+# Served only while FIXTURE_MODE=true, so a normal deployment has no public test pages.
 # ---------------------------------------------------------------------------
 @router.get("/fixtures/{name}", response_class=HTMLResponse)
 async def fixture_page(request: Request, name: str):
-    if name not in {"injection.html", "parked.html"}:
+    if not get_settings().fixture_mode or name not in {"injection.html", "parked.html"}:
         raise HTTPException(status_code=404, detail="Not found.")
     return templates.TemplateResponse(request, f"fixtures/{name}", {})

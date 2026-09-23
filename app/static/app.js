@@ -193,6 +193,23 @@
     refreshAll();
   });
 
+  // Lost connection (Render asleep, Wi-Fi drop): say so in the System Message bar instead of freezing silently.
+  // Live polling keeps retrying on its own schedule; the banner clears on the next successful request.
+  function connectionBanner(show) {
+    var bar = document.getElementById("system-message");
+    var existing = document.getElementById("offline-banner");
+    if (!show) { if (existing) existing.remove(); return; }
+    if (existing || !bar) return;
+    bar.insertAdjacentHTML("afterbegin",
+      '<div id="offline-banner" class="banner error" role="alert"><span class="icon" aria-hidden="true">✕</span>' +
+      '<div class="msg">Can\'t reach the server. Retrying automatically… ' +
+      '<button type="button" class="btn small" onclick="location.reload()">Retry now</button></div></div>');
+  }
+  document.addEventListener("htmx:sendError", function () { connectionBanner(true); });
+  document.addEventListener("htmx:afterRequest", function (event) {
+    if (event.detail && event.detail.successful) connectionBanner(false);
+  });
+
   // "Last updated" stamp for the live panel.
   document.body && document.body.addEventListener("htmx:afterSwap", function (event) {
     var stamp = document.getElementById("live-stamp");

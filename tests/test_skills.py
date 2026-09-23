@@ -1,4 +1,4 @@
-"""The five skills keep every rule from their source guides (build step 5.1)."""
+"""The five skills keep every rule from their source guides."""
 
 import re
 from pathlib import Path

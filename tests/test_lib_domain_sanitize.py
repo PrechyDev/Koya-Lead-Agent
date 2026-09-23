@@ -1,7 +1,7 @@
 from app.lib.domain import canonical_url, normalize_domain, same_url
 from app.lib.sanitize import (
-    fence,
     contains_contact_details,
+    fence,
     redact,
     redact_obj,
     sanitize_page,

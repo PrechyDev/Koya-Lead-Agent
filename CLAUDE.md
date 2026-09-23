@@ -21,7 +21,8 @@ This repo (`lead-agent/`) holds **only** what runs the system, plus its shared d
 | --- | --- | --- |
 | `docs/specs.md` | ✅ | **Source of truth**: architecture, data model, tool contracts, limits, budgets, A/B plan, edge cases, decisions |
 | `docs/design.md` | ✅ | UI rules |
-| `.claude/skills/*` | ✅ | The 5 Agent SDK skills (built from the assets guides) |
+| `docs/deployment.md` | ✅ | Ordered Render deployment + verification plan |
+| `agent_plugin/skills/*` | ✅ | The 5 Agent SDK skills (built from the assets guides), loaded as a local plugin |
 | `../docs/build_plan.md` | ❌ | Ordered steps with Why / Do / Done when / You decide |
 | `../docs/progress.md` | ❌ | Live log: status, decisions, errors → fixes, tests, spend, A/B results |
 | `../aat-c3-week-5-lead-agent-main/PRD.md` | ❌ | Official brief |
@@ -70,35 +71,44 @@ The owner is a **Python developer** who knows some TypeScript, and wants to be *
 
   Failed-then-fixed evidence matters more than "all green".
 - UI follows `docs/design.md`: every clickable has hover/focus/active/disabled/loading states; system messages never go inside result content.
-- Use `DEV_LIMITS=true` for all development. Use `FIXTURE_MODE=true` for evals (no Apify/Firecrawl calls).
+- Use `DEV_LIMITS=true` for all development. The model A/B (`evals/ab.py`) replays recorded fixtures, so it makes no Apify/Firecrawl calls. `FIXTURE_MODE=true` only switches on the public test pages (`/fixtures/…`, for the injection test); keep it `false` otherwise.
 - Run the secret scan before every commit.
 
 ## Stack
 
-Python 3.11+ · `claude-agent-sdk` (orchestrator + subagents, in-process MCP tools, skills in `.claude/skills/`) · FastAPI + Jinja2 + HTMX + plain CSS · psycopg 3 + psycopg_pool (direct Postgres, `prepare_threshold=None`) · Pydantic v2 · httpx (Firecrawl) · apify-client · anthropic (grounding check) · tldextract · pytest + respx · Render free (Docker).
+Python 3.12 · `claude-agent-sdk` 0.2.158 (orchestrator + subagents, in-process MCP tools, skills as a local plugin in `agent_plugin/`) · FastAPI + Jinja2 + HTMX + plain CSS · psycopg 3 + psycopg_pool (direct Postgres, `prepare_threshold=None`) · Pydantic v2 · httpx (Firecrawl) · apify-client · anthropic (scope check + fact-check) · tldextract · pycountry · slowapi · PyJWT · pytest + respx · Render free (Docker).
 
-Models are set per role via `MODEL_ORCHESTRATOR`, `MODEL_ICP`, `MODEL_RESEARCHER`, `MODEL_COPYWRITER`, `MODEL_GROUNDING`. The final values come from the A/B test (build step 7). Candidates: `claude-haiku-4-5`, `claude-sonnet-5`; `claude-opus-5-5` is the reference labeller only.
+Models are set per role via `MODEL_ORCHESTRATOR`, `MODEL_ICP`, `MODEL_RESEARCHER`, `MODEL_COPYWRITER`, `MODEL_GROUNDING`. The final values come from the A/B test (`evals/ab.py`, not run yet; until then Sonnet 5 everywhere and Haiku 4.5 for the fact-check). Candidates: `claude-haiku-4-5`, `claude-sonnet-5`; `claude-opus-5-5` is the reference labeller only.
 
-## Project layout (target)
+## Project layout
 
 ```
-/                       CLAUDE.md, pyproject.toml, .env.example, Dockerfile
-/docs                   specs.md, design.md  (build_plan.md + progress.md live in ../docs, not committed)
-/.claude/skills         icp-refinement/, lead-qualification/, outbound-copywriting/, lead-list-quality/, outreach-safety/
+/                       CLAUDE.md, README.md, pyproject.toml, requirements.txt, .env.example,
+                        Dockerfile, .dockerignore, render.yaml, .githooks/pre-commit (secret scan)
+/docs                   specs.md, design.md, deployment.md  (build_plan.md + progress.md live in ../docs)
+/agent_plugin           .claude-plugin/plugin.json + skills/<5 skills>/SKILL.md
 /app
-  main.py               FastAPI app, routes
+  main.py               FastAPI app, auth middleware, error handlers, /health
   config.py             settings, limit presets, model prices
-  db.py                 psycopg pool + typed queries (schema-qualified)
-  agent/                runner.py, prompts.py, mcp_server.py, tools/*.py, logging.py
-  services/             apify.py, firecrawl.py, grounding.py
-  lib/                  domain.py, sanitize.py, limits.py, budget.py, outreach_checks.py, qualification_rules.py
-  templates/            base.html, home.html, run.html, partials/*.html
-  static/               tokens.css, app.css, htmx.min.js
-/db/migrations          0001_lead_agent_schema.sql, …
-/evals                  run_ab.py, report.py, fixtures/
-/spikes                 sdk_spike.py
-/scripts                migrate.py
-/tests                  unit + integration, fixtures (incl. injection page)
+  db.py                 psycopg pool + every SQL query (schema-qualified)
+  auth.py               Supabase logins, JWKS check, invites, CSRF, roles
+  runs.py               RunManager: one background run at a time, keep-alive, restart recovery
+  failures.py, alerts.py  failure catalogue (client vs admin message); System issues + n8n alerts
+  logging_setup.py      one logging format with secret/email redaction
+  agent/                runner.py (phases, SDK options, hooks), tools.py (the 10 leadtools), prompts.py,
+                        context.py, logging.py (logged_call), transcripts.py (cost recovery)
+  services/             apify.py, firecrawl.py, grounding.py (fact-check), scope.py, health.py (pre-run checks)
+  lib/                  pure rules: domain, sanitize, objective, limits, budget, qualification_rules,
+                        scoring, outreach_checks, tech_signals
+  web/                  routes.py (pages + actions), templating.py
+  templates/            pages, partials/ (HTMX fragments), fixtures/ (test pages)
+  static/               app.css, app.js, htmx.min.js
+/db/migrations          0000_app_role.sql … 0006_confidence_breakdown.sql
+/scripts                migrate, create_app_role, bootstrap_owner, dev_run, resume_run, transcript_cost, secret_scan
+/evals                  ab.py (model A/B), fixtures/
+/spikes                 sdk_spike.py + spike_plugin/
+/n8n                    alert-email-workflow.json
+/tests                  unit + integration (real DB, paid APIs faked)
 ```
 
 ## Commands
@@ -106,8 +116,10 @@ Models are set per role via `MODEL_ORCHESTRATOR`, `MODEL_ICP`, `MODEL_RESEARCHER
 ```
 py -3.12 -m venv .venv && .venv/Scripts/python -m pip install -r requirements.txt   # + pytest pytest-asyncio respx ruff
 .venv/Scripts/python -m uvicorn app.main:app --reload --port 8000   # run locally
-.venv/Scripts/python -m pytest -q                                   # 75 tests (real DB, paid APIs faked)
+.venv/Scripts/python -m pytest -q                                   # 145 tests (real DB, paid APIs faked)
 .venv/Scripts/python scripts/migrate.py                             # apply DB migrations (admin DSN, laptop only)
+.venv/Scripts/python scripts/create_app_role.py                     # create/sync the app DB user from the DSN you put in .env
+.venv/Scripts/python scripts/bootstrap_owner.py <email> "<Name>" --owner [--invite]   # give the first admin access
 .venv/Scripts/python scripts/dev_run.py "<objective>"               # a DEV-limits run from the terminal (spends!)
 .venv/Scripts/python evals/ab.py estimate --name <fixtures>         # A/B pre-flight (free); run/reference need --yes
 .venv/Scripts/python scripts/secret_scan.py --all                   # scan everything tracked
@@ -115,10 +127,10 @@ py -3.12 -m venv .venv && .venv/Scripts/python -m pip install -r requirements.tx
 
 Agent SDK gotchas learned the hard way (see ../docs/progress.md §4):
 - never put `"Task"` in `disallowed_tools` (it disables subagents)
-- subagents must be `background=False` in this headless app
+- subagents must be `background=False` in this headless app, and must be delegated **one at a time**: several Agent calls in one message run as background tasks and the run can stop early (live run a1f525ef, specs D-49)
 - always keep `setting_sources=[]` (isolation)
 - every phase has a watchdog, and a killed phase's cost is recovered from transcripts.
 
 ## Environment variables (names only)
 
-`ANTHROPIC_API_KEY`, `APIFY_TOKEN` (team), `APIFY_ACTOR_ID`, `FIRECRAWL_API_KEY`, `SUPABASE_DB_DSN` (app role), `SUPABASE_DB_SCHEMA` (= lead_agent), `SUPABASE_ADMIN_DSN` (local migrations only), `SUPABASE_URL`, `SUPABASE_ANON_KEY` (server-side only), `SUPABASE_SERVICE_ROLE_KEY` (server-side only, invites), `SUPABASE_JWKS_URL` (optional), `SESSION_SECRET`, `APP_BASE_URL`, `RESEARCH_REUSE_DAYS`, `SCRAPE_CACHE_DAYS`, `MODEL_ORCHESTRATOR`, `MODEL_ICP`, `MODEL_RESEARCHER`, `MODEL_COPYWRITER`, `MODEL_GROUNDING`, `CLAUDE_BUDGET_TOTAL_USD`, `DEV_LIMITS`, `FIXTURE_MODE`, `MAX_RUNS_PER_DAY`, `RENDER_EXTERNAL_URL` (set by Render), `PORT`.
+`ANTHROPIC_API_KEY`, `APIFY_TOKEN` (team), `APIFY_ACTOR_ID`, `FIRECRAWL_API_KEY`, `SUPABASE_DB_DSN` (app role), `SUPABASE_DB_SCHEMA` (= lead_agent), `SUPABASE_ADMIN_DSN` (local migrations only), `SUPABASE_URL`, `SUPABASE_ANON_KEY` (server-side only), `SUPABASE_SERVICE_ROLE_KEY` (server-side only, invites), `SUPABASE_JWKS_URL` (optional), `SESSION_SECRET`, `APP_BASE_URL`, `RESEARCH_REUSE_DAYS`, `SCRAPE_CACHE_DAYS`, `MODEL_ORCHESTRATOR`, `MODEL_ICP`, `MODEL_RESEARCHER`, `MODEL_COPYWRITER`, `MODEL_GROUNDING`, `CLAUDE_BUDGET_TOTAL_USD`, `DEV_LIMITS`, `FIXTURE_MODE`, `MAX_RUNS_PER_DAY`, `MAX_RUNS_PER_USER_PER_DAY`, `MAX_RUNS_PER_ADMIN_PER_DAY`, `MAX_PARALLEL_SUBAGENTS` (keep 1), `ALERT_WEBHOOK_URL`, `ALERT_WEBHOOK_SECRET`, `COOKIE_SECURE` (optional), `LOG_LEVEL` (optional), `RENDER_EXTERNAL_URL` (set by Render), `PORT`.

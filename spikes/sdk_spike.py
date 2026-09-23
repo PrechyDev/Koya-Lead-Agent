@@ -1,4 +1,4 @@
-"""Build step 0.2: prove how the Python Agent SDK behaves before building on it.
+"""SDK spike (run once, before building): prove how the Python Agent SDK behaves before relying on it.
 
 Checks (answers go into ../docs/progress.md §2):
   1. an in-process MCP tool is callable            -> tool handler prints

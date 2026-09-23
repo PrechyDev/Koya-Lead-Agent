@@ -5,7 +5,13 @@ import pytest
 from app.config import DEV_LIMITS, FULL_LIMITS, limits_for_run
 from app.lib.budget import BudgetExceeded, assert_can_spend, cost_from_usage
 from app.lib.limits import next_discovery_batch, qualified_slots_left
-from app.lib.objective import country_code, icp_signature, normalize_headcount, objective_hash, parse_headcount_range
+from app.lib.objective import (
+    country_code,
+    icp_signature,
+    normalize_headcount,
+    objective_hash,
+    parse_headcount_range,
+)
 from app.lib.outreach_checks import check_outreach, measure
 from app.lib.qualification_rules import HardFilterCheck, decide_status, invalid_sources, prescreen
 

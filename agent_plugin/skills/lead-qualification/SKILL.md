@@ -1,6 +1,6 @@
 ---
 name: lead-qualification
-description: Use when judging whether ONE discovered company fits the refined ICP, after scraping its website. Explains the evidence rules, the confidence rubric and exactly how to fill the save_qualification tool.
+description: Use when judging whether ONE discovered company fits the refined ICP, after scraping its website. Explains the evidence rules, how the system computes the fit score from your checks, and exactly how to fill the save_qualification tool.
 ---
 
 # Lead Qualification

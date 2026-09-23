@@ -60,15 +60,15 @@ Clickable table rows show a `›` chevron on the right and the hover background.
 | Hover/focus/active/disabled | plain CSS on `.btn`, `.btn:hover`, `.btn:focus-visible`, `.btn:active`, `.btn:disabled` |
 | Loading + no double-submit | HTMX forms: `hx-disabled-elt` disables the button during the request and the `.htmx-request` class shows the spinner (`.btn .when-loading`). Plain forms (login, accept invite): `app.js` adds `.is-loading` on the `submit` event |
 | Server errors → banner, not results | the server answers errors with the `HX-Retarget: #system-message` + `HX-Reswap: innerHTML` headers and renders `partials/banner.html`. So errors can **never** land inside a results block |
-| Live run updates | `hx-get="/runs/{id}/panel" hx-trigger="every 3s"`; the server returns **HTTP 286** once the run is terminal, which stops polling |
+| Live run updates | `hx-get="/runs/{id}/live" hx-trigger="every 3s"`; the server returns **HTTP 286** once the run is terminal, which stops polling |
 | Copied ✓ feedback | a tiny inline script: `navigator.clipboard.writeText(...)`, then swap the label for 2s (plus a fallback that selects the text) |
 | Confirm destructive actions | `hx-confirm="Cancel this run? Work done so far is kept."` |
 
-## 3. Design tokens (`app/static/tokens.css`)
+## 3. Design tokens (top of `app/static/app.css`; a dark-mode set follows under `prefers-color-scheme: dark`)
 
 ```css
 :root {
-  --bg: #f5f6f8; --surface: #ffffff; --border: #d9dce1; --text: #1b1f24; --text-muted: #5c6470;
+  --bg: #f5f6f8; --surface: #ffffff; --surface-2: #eef1f5; --border: #d9dce1; --text: #1b1f24; --text-muted: #5c6470;
   --primary: #2350d8; --primary-hover: #1b3fae; --primary-active: #153287; --on-primary: #ffffff;
   --focus: #f0a500;
   --success: #1f7a3a; --success-bg: #e6f4ea;
@@ -107,7 +107,7 @@ Status badge mapping (use everywhere):
 │ │ Qualification objective  [ textarea, 5–1000 chars, counter]│ │
 │ │ Examples: (chip: vague) (chip: specific)  ← fill textarea  │ │
 │ │ Target qualified leads [10 ▾ 1–10]                         │ │
-│ │ Limits (read-only): ≤30 companies · ≤22 sites · $3 budget  │ │
+│ │ Limits (read-only): ≤20 companies · ≤20 pages · $1.25 AI   │ │
 │ │                                   [ Start research run ]   │ │
 │ │ "Drafts are never sent. A human reviews everything."       │ │
 │ └────────────────────────────────────────────────────────────┘ │
@@ -122,32 +122,33 @@ Status badge mapping (use everywhere):
 ├ System Message bar: current status sentence / error / completion ┤
 │ Objective (quoted, read-only)                     [Cancel run]  │
 │ Stepper: Refine ICP ▸ Discover ▸ Scrape ▸ Qualify ▸ Draft ▸ Done │
-│ Counters: Companies 12/30 · Sites 8/22 · Qualified 4/10 · $0.84/$3.00 │
+│ Counters: Companies 12/20 · Pages 8/20 · Qualified 4/10 · $0.84/$1.25 │
 │ Tabs: [ICP] [Leads (14)] [Tool calls (37)] [Summary]            │
 │ ─ tab content (Results zone) ─                                  │
 ```
 - Stepper: done = green check, current = blue with spinner, pending = grey, failed = red ✕ at the failing step.
 - Polling every 3s while non-terminal. Show "Last updated 2s ago" in small muted text. Stop polling at a terminal status.
 - **ICP tab:** the table of fields; hard filters and soft preferences as separate lists; "Assumptions the agent made" in a highlighted box; "Your constraints preserved" list.
-- **Leads tab:** filter chips (All / Qualified / Needs review / Not qualified) with counts; table: company · domain (external link ↗, opens a new tab) · status badge · confidence (as a number, "0.82") · review status · ›. Row click → detail drawer.
+- **Leads tab:** filter chips (All / Qualified / Needs review / Not qualified / Pending) with counts; table: company · domain (external link ↗, opens a new tab) · status badge · fit score ("0.80") · drafts status · review status. Row click → detail drawer. Download CSV / sample pack (JSON) buttons sit above the table.
 - **Tool calls tab:** chronological table: # · tool · purpose · input summary · result summary · status badge · duration. Error rows are tinted red with the error message visible (not hidden in a tooltip). Filter by tool/status.
 - **Summary tab:** run summary, shortfall reason, costs, turns, and export buttons [Download CSV] [Download JSON].
 
 ### 4.3 Lead detail drawer (right side, ~50% width; full screen on mobile)
 Sections in order, each with a heading:
-1. **Header:** name, domain ↗, status badge, confidence, review status.
-2. **Why (qualification):** hard-filter checklist (✓/✕/? per filter + evidence + source link), fit reasons, concerns (amber list).
+1. **Header:** name, domain ↗, status badge, fit score, drafts status, review status (+ reviewer name).
+2. **Why (qualification):** hard-filter checklist (✓/✕/? per filter + evidence + source link); "How the fit score was calculated" (each +/− item, computed by the system); exclusions (applies / does not apply / unknown); nice-to-haves; tools seen on the site; fit reasons; concerns (amber box); the pre-screen result.
 3. **Sources:** source URLs (links) + source summary. Injection flags, if any, in a warning box.
-4. **Outreach drafts:** label "DRAFT — not sent. Requires human review." Three cards, **Email 1/2/3**. Each card: Subject (with copy), Body (with copy), a separate "Personalization note" + "Evidence: <url>" box, and a grounding badge. Then the LinkedIn card with a char count "212/300".
-5. **Review actions (sticky footer):** [Approve drafts] (primary) · [Reject] (red outline, asks for a note) · reviewer note textarea.
+4. **Outreach drafts:** label "Draft · not sent · requires human review". Three cards, **Email 1/2/3**. Each card: Subject (with copy), Body (with copy), a separate "Personalization note" + "Evidence: <url>" box, and a fact-check badge. Then the LinkedIn card with a char count "212/300", and a collapsible "Fact-check details" list of every checked claim.
+5. **Review actions (sticky footer):** reviewer note textarea · [Approve drafts] (primary) · [Reject] (red, **disabled until a note is written**, then asks to confirm) · [Undo approval] once approved.
 - Close with ✕, the Esc key, or a backdrop click. Focus returns to the row.
 
 ### 4.4 Login, invite, team & spend
 - **Login:** a centred card with email, password and [Sign in] (loading state "Signing in…"). Errors go in the banner ("Email or password is incorrect"). No sign-up link: "Access is by invitation. Ask your admin."
 - **Accept invite:** a name + password (with confirm) form. Rules are shown before typing, not only after an error.
-- **Header:** app name · Runs · (admin) Team · (admin) Spend · a user menu (name, role badge, Sign out).
+- **Header:** app name · Runs · (admin) Team · (admin) Spend · (admin) System issues with an open-issue count · the user's name, role badge and Sign out. Admins also get a banner on every page while an issue is open.
 - **Team (admin):** a table of name · email · role badge · status (Active/Deactivated) · actions. [Invite teammate] is the primary button. Deactivate needs a confirm and is disabled, with a tooltip, for the owner or the last admin. The result of inviting an existing account is shown as an info banner: "They already have an account. They can sign in with their existing password."
-- **Spend (admin):** budget bar ($ spent / $6.00), then tables by run, model and source (run / grounding / eval), plus Apify cost.
+- **Spend (admin):** budget bar ($ spent / $6.00), then tables by run, model and source (icp / run / grounding / preflight / eval), plus Apify cost.
+- **System issues (admin):** open and resolved alerts, each with what happened and how to fix it; [Mark fixed]; [Send a test alert] (disabled, with the reason, until the n8n webhook is set).
 
 ### 4.5 Repeat-objective gate
 - **Stage 1 (form):** as you type (debounced), an info hint appears *under the objective field*: "You ran this on Sep 20: 10 qualified. [View results]". It's informational; Start stays enabled.
@@ -164,8 +165,8 @@ When status = `needs_clarification`, a warning banner reads "The agent needs mor
 | --- | --- |
 | No runs yet | "No runs yet. Start one above." |
 | Tab data not yet produced | a muted placeholder: "Leads appear here once discovery finishes." |
-| Initial page load | skeleton rows (grey bars), not a blank screen |
-| API unreachable | error banner "Can't reach the server. Retrying in 5s…" + [Retry now] |
+| Initial page load | pages are server-rendered, so the full layout arrives with the first response (no blank screen, no skeletons needed) |
+| Server unreachable (e.g. Render waking up, Wi-Fi drop) | error banner "Can't reach the server. Retrying automatically…" + [Retry now]; live polling keeps retrying and the banner clears on the next success (`app.js`) |
 | Run failed | error banner with message + step; the partial results stay visible below |
 
 ---
@@ -182,7 +183,7 @@ Plain words. Say "companies", "sites scraped", "qualified". Don't say "MCP", "to
 
 ---
 
-## 8. Definition-of-done checklist (tick before marking Phase 8 done)
+## 8. Definition-of-done checklist (check every new page against it)
 
 - [ ] Every button/link/row/chip/tab has hover, focus-visible, active, disabled and (where async) loading states
 - [ ] No submit button is clickable while a required input is empty or invalid, and it says why
