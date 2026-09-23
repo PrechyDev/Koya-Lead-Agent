@@ -56,6 +56,22 @@ class Settings(BaseSettings):
     render_external_url: str = ""
     cookie_secure: bool | None = Field(default=None)
 
+    @field_validator("apify_actor_id", "model_orchestrator", "model_icp", "model_researcher", "model_copywriter",
+                     "model_grounding", mode="before")
+    @classmethod
+    def _blank_means_default(cls, value, info):
+        # An empty line like `APIFY_ACTOR_ID=` in .env must not override the default with "".
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return cls.model_fields[info.field_name].default
+        return value.strip() if isinstance(value, str) else value
+
+    def missing_run_config(self) -> list[str]:
+        """Settings a research run can't work without (checked before any spend)."""
+        required = {"ANTHROPIC_API_KEY": self.anthropic_api_key, "APIFY_TOKEN": self.apify_token,
+                    "APIFY_ACTOR_ID": self.apify_actor_id, "FIRECRAWL_API_KEY": self.firecrawl_api_key,
+                    "SUPABASE_DB_DSN": self.supabase_db_dsn}
+        return [name for name, value in required.items() if not value]
+
     @field_validator("supabase_db_schema")
     @classmethod
     def _schema_is_safe(cls, value: str) -> str:
@@ -98,6 +114,7 @@ class RunLimits:
     max_budget_usd: float
     max_outreach_rewrites: int
     max_tool_calls: int
+    phase_timeout_s: int
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -116,6 +133,7 @@ FULL_LIMITS = RunLimits(
     max_budget_usd=1.25,
     max_outreach_rewrites=2,
     max_tool_calls=120,
+    phase_timeout_s=1800,
 )
 
 DEV_LIMITS = RunLimits(
@@ -131,10 +149,12 @@ DEV_LIMITS = RunLimits(
     max_budget_usd=0.30,
     max_outreach_rewrites=1,
     max_tool_calls=40,
+    phase_timeout_s=900,
 )
 
 ICP_PHASE_MAX_TURNS = 6
 ICP_PHASE_MAX_BUDGET_USD = 0.05
+ICP_PHASE_TIMEOUT_S = 240
 
 
 def limits_for_run(target_qualified: int, dev: bool) -> RunLimits:

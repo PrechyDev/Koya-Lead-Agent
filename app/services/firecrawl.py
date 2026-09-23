@@ -9,9 +9,9 @@
 import asyncio
 import re
 from dataclasses import dataclass, field
+from urllib.parse import urljoin, urlsplit
 
 import httpx
-from urllib.parse import urljoin, urlsplit
 
 from app.config import get_settings
 from app.lib.sanitize import sanitize_page

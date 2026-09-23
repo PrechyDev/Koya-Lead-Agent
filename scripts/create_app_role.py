@@ -25,8 +25,8 @@ from pathlib import Path
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
 import psycopg
-from psycopg import errors, sql
 from dotenv import dotenv_values
+from psycopg import errors, sql
 
 ROOT = Path(__file__).resolve().parent.parent
 ENV_PATH = ROOT / ".env"

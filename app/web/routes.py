@@ -2,7 +2,6 @@
 
 import csv
 import io
-import json
 import re
 import uuid
 from datetime import datetime

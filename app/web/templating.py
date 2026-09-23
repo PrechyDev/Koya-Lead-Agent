@@ -1,6 +1,6 @@
 """Jinja2 setup and small display helpers shared by all templates."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi.templating import Jinja2Templates
@@ -48,7 +48,7 @@ def badge(status: str | None) -> tuple[str, str]:
 def ago(value: datetime | None) -> str:
     if not value:
         return "—"
-    delta = datetime.now(timezone.utc) - value
+    delta = datetime.now(UTC) - value
     seconds = int(delta.total_seconds())
     if seconds < 60:
         return "just now"

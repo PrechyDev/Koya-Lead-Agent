@@ -249,11 +249,13 @@ def count_full_runs_today(created_by: str | None = None) -> int:
     return int(fetch_one(sql, params)["n"])
 
 
-def find_recent_run_by_hash(objective_hash: str, days: int, exclude_id: str | None = None) -> dict | None:
+def find_recent_run_by_hash(  # only runs that produced qualified leads are worth pointing to
+objective_hash: str, days: int, exclude_id: str | None = None) -> dict | None:
     return fetch_one(
         f"""select * from {t('runs')}
             where objective_hash = %s and created_at > now() - make_interval(days => %s)
               and status in ('completed', 'completed_partial') and (%s::uuid is null or id <> %s::uuid)
+              and coalesce((usage->>'qualified')::int, 0) > 0
             order by created_at desc limit 1""",
         (objective_hash, days, exclude_id, exclude_id),
     )
@@ -264,6 +266,7 @@ def find_recent_run_by_signature(signature: str, days: int, exclude_id: str) -> 
         f"""select * from {t('runs')}
             where icp_signature = %s and created_at > now() - make_interval(days => %s)
               and status in ('completed', 'completed_partial') and id <> %s
+              and coalesce((usage->>'qualified')::int, 0) > 0
             order by created_at desc limit 1""",
         (signature, days, exclude_id),
     )

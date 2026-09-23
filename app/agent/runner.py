@@ -9,6 +9,7 @@ Built-in tools are limited to Agent/Skill; everything else goes through our
 guarded `leadtools` server. Every Claude cost lands in the spend ledger.
 """
 
+import asyncio
 import logging
 import tempfile
 from datetime import datetime
@@ -28,7 +29,8 @@ from app.agent import prompts
 from app.agent.context import RunContext
 from app.agent.logging import log_event
 from app.agent.tools import build_scorecard, build_server, mcp_name
-from app.config import ICP_PHASE_MAX_BUDGET_USD, ICP_PHASE_MAX_TURNS, get_settings
+from app.agent.transcripts import session_cost
+from app.config import ICP_PHASE_MAX_BUDGET_USD, ICP_PHASE_MAX_TURNS, ICP_PHASE_TIMEOUT_S, get_settings
 from app.lib.budget import BudgetExceeded, assert_can_spend
 from app.lib.sanitize import redact
 
@@ -36,8 +38,10 @@ log = logging.getLogger("lead_agent.runner")
 ROOT = Path(__file__).resolve().parents[2]
 PLUGIN_PATH = ROOT / "agent_plugin"
 WORKDIR = Path(tempfile.gettempdir()) / "koya_lead_agent_cwd"
+# NOTE: never list "Task" here. In this CLI version the subagent tool ("Agent") is tied to "Task", and
+# disallowing it silently disables delegation (found in dev run 736fd297; see progress.md errors log).
 BLOCKED_BUILTINS = ["Bash", "Read", "Write", "Edit", "MultiEdit", "Glob", "Grep", "WebFetch", "WebSearch",
-                    "NotebookEdit", "TodoWrite", "Task", "BashOutput", "KillShell"]
+                    "NotebookEdit", "TodoWrite", "BashOutput", "KillShell"]
 
 ICP_TOOLS = ["save_icp"]
 ORCHESTRATOR_TOOLS = ["discover_companies", "get_run_state", "finish_run"]
@@ -120,12 +124,46 @@ def _options(ctx: RunContext, *, model: str, system_prompt: str, tool_names: lis
     )
 
 
-async def _consume(prompt: str, options: ClaudeAgentOptions) -> ResultMessage | None:
-    result = None
-    async for message in query(prompt=prompt, options=options):
-        if isinstance(message, ResultMessage):
-            result = message  # the last one carries the cumulative cost
-    return result
+class PhaseTimeout(Exception):
+    pass
+
+
+class _Session:
+    """Remembers the CLI session id so cost can be recovered if the phase never reports it."""
+
+    def __init__(self) -> None:
+        self.session_id: str | None = None
+        self.result: ResultMessage | None = None
+
+
+async def _consume(prompt: str, options: ClaudeAgentOptions, session: _Session, timeout_s: int) -> ResultMessage | None:
+    async def read() -> None:
+        async for message in query(prompt=prompt, options=options):
+            data = getattr(message, "data", None)
+            sid = getattr(message, "session_id", None) or (data.get("session_id") if isinstance(data, dict) else None)
+            if sid and not session.session_id:
+                session.session_id = sid
+            if isinstance(message, ResultMessage):
+                session.result = message  # the last one carries the cumulative cost
+
+    try:
+        await asyncio.wait_for(read(), timeout=timeout_s)
+    except TimeoutError as exc:
+        raise PhaseTimeout(f"the agent did not finish within {timeout_s // 60} minutes") from exc
+    return session.result
+
+
+def _recover_cost(run_id: str, source: str, session: _Session, why: str) -> Decimal:
+    """Phase ended without a ResultMessage (timeout/crash/cancel): recover the true cost from transcripts."""
+    if not session.session_id or session.result is not None:
+        return Decimal("0")
+    total = Decimal("0")
+    for model, cost in session_cost(session.session_id).items():
+        if cost > 0:
+            db.record_spend(source, cost, ref_id=run_id, model=model,
+                            note=f"{source} phase recovered from transcript {session.session_id} ({why})")
+            total += cost
+    return total
 
 
 def _record_cost(run_id: str, source: str, result: ResultMessage | None, fallback_model: str) -> Decimal:
@@ -161,6 +199,9 @@ def _refresh_run_cost(run_id: str, turns_add: int = 0) -> None:
 async def run_icp_phase(run_id: str) -> str:
     """Returns the status the run is left in: needs_clarification | awaiting_confirmation | ready."""
     settings = get_settings()
+    missing = settings.missing_run_config()
+    if missing:
+        raise RunAborted("Not configured: " + ", ".join(missing) + " must be set before runs can start.")
     ctx = await db.run(RunContext.load, run_id)
     run = await db.run(db.get_run, run_id)
     spent = await db.run(db.total_spend)
@@ -173,8 +214,15 @@ async def run_icp_phase(run_id: str) -> str:
     options = _options(ctx, model=settings.model_icp, system_prompt=prompts.ICP_SYSTEM, tool_names=ICP_TOOLS,
                        skills=["icp-refinement", "outreach-safety"], max_turns=ICP_PHASE_MAX_TURNS,
                        max_budget_usd=ICP_PHASE_MAX_BUDGET_USD, main_role="icp-refiner")
-    result = await _consume(prompts.icp_user_prompt(run["objective"], parent and parent["objective"],
-                                                    "answered" if parent else None), options)
+    session = _Session()
+    try:
+        result = await _consume(prompts.icp_user_prompt(run["objective"], parent and parent["objective"],
+                                                        "answered" if parent else None), options, session,
+                                timeout_s=ICP_PHASE_TIMEOUT_S)
+    except BaseException:
+        await db.run(_recover_cost, run_id, "icp", session, "phase interrupted")
+        await db.run(_refresh_run_cost, run_id)
+        raise
     await db.run(_record_cost, run_id, "icp", result, settings.model_icp)
     await db.run(_refresh_run_cost, run_id, result.num_turns if result else 0)
 
@@ -221,6 +269,7 @@ async def run_research_phase(run_id: str) -> None:
             skills=[_skill("lead-qualification"), _skill("outreach-safety")],
             model=settings.model_researcher,
             maxTurns=10,
+            background=False,  # foreground: the orchestrator waits for each result (progress.md errors log)
         ),
         "copywriter": AgentDefinition(
             description="Writes the 3-email sequence and LinkedIn message for ONE qualified lead.",
@@ -229,6 +278,7 @@ async def run_research_phase(run_id: str) -> None:
             skills=[_skill("outbound-copywriting"), _skill("outreach-safety")],
             model=settings.model_copywriter,
             maxTurns=10,
+            background=False,
         ),
     }
     options = _options(
@@ -238,22 +288,31 @@ async def run_research_phase(run_id: str) -> None:
         max_turns=int(ctx.limits["max_turns"]), max_budget_usd=remaining_budget, main_role="orchestrator",
         agents=agents,
     )
-    result = None
+    session = _Session()
+    timeout_s = int(ctx.limits.get("phase_timeout_s", 1800))
     try:
-        result = await _consume(prompts.orchestrator_user_prompt(run), options)
-    finally:
-        await db.run(_record_cost, run_id, "run", result, settings.model_orchestrator)
-        await db.run(_refresh_run_cost, run_id, result.num_turns if result else 0)
+        result = await _consume(prompts.orchestrator_user_prompt(run), options, session, timeout_s=timeout_s)
+    except PhaseTimeout as exc:
+        await db.run(_recover_cost, run_id, "run", session, "watchdog timeout")
+        await db.run(_refresh_run_cost, run_id)
+        await db.run(_force_finish, ctx, None, f"{exc}; stopped by the watchdog")
+        return
+    except BaseException:
+        await db.run(_recover_cost, run_id, "run", session, "phase interrupted")
+        await db.run(_refresh_run_cost, run_id)
+        raise
+    await db.run(_record_cost, run_id, "run", result, settings.model_orchestrator)
+    await db.run(_refresh_run_cost, run_id, result.num_turns if result else 0)
 
     if not ctx.finished:
         await db.run(_force_finish, ctx, result)
 
 
-def _force_finish(ctx: RunContext, result: ResultMessage | None) -> None:
-    """The agent stopped without finish_run (limit hit or it just stopped): finalize from real counts (E-22, E-23)."""
+def _force_finish(ctx: RunContext, result: ResultMessage | None, why: str | None = None) -> None:
+    """The agent stopped without finish_run (limit, timeout, or it just stopped): finalize from real counts (E-22/23)."""
     scorecard, qualified, target = build_scorecard(ctx.run_id)
     reason = (result.subtype if result else "no result")
-    why = {"error_max_budget_usd": "the per-run Claude budget was reached",
+    why = why or {"error_max_budget_usd": "the per-run Claude budget was reached",
            "error_max_turns": "the per-run turn limit was reached"}.get(reason, f"the agent stopped early ({reason})")
     if qualified == 0:
         db.set_status(ctx.run_id, "failed", f"Stopped: {why}; no qualified leads", error_message=f"Stopped: {why}.",

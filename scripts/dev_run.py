@@ -1,0 +1,77 @@
+"""Start a research run from the command line (no web UI needed). Uses DEV limits by default.
+
+    .venv/Scripts/python scripts/dev_run.py "Find US B2B SaaS companies with 10-100 employees that may need AI automation"
+    .venv/Scripts/python scripts/dev_run.py --full "..."      # full limits (10 leads) — costs up to $1.25 + Apify
+    .venv/Scripts/python scripts/dev_run.py --kind eval_record "..."   # A/B fixture recording run
+
+Prints the run's progress and final summary; everything is stored in Supabase.
+"""
+
+import argparse
+import asyncio
+import sys
+import uuid
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from app import db  # noqa: E402
+from app.agent.runner import execute_run  # noqa: E402
+from app.config import get_settings, limits_for_run  # noqa: E402
+from app.lib.objective import objective_hash  # noqa: E402
+
+
+async def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("objective")
+    parser.add_argument("--full", action="store_true", help="use full limits instead of DEV limits")
+    parser.add_argument("--target", type=int, default=10)
+    parser.add_argument("--kind", default="dev", choices=["dev", "eval_record", "app"])
+    parser.add_argument("--refresh", action="store_true", help="re-research companies seen in the last 30 days")
+    args = parser.parse_args()
+
+    settings = get_settings()
+    limits = limits_for_run(args.target, dev=not args.full)
+    run, _ = db.create_run(
+        idempotency_key=f"cli-{uuid.uuid4()}", objective=args.objective, objective_hash=objective_hash(args.objective),
+        limits=limits.to_dict(), run_kind=args.kind,
+    )
+    run_id = str(run["id"])
+    if args.refresh:
+        db.update_run(run_id, cross_run_dedupe=False, repeat_choice="refresh_same")
+    print(f"run {run_id} | limits: target {limits.target_qualified}, candidates {limits.max_candidates}, "
+          f"scrapes {limits.max_scrapes}, Claude cap ${limits.max_budget_usd}")
+    print(f"models: orchestrator={settings.model_orchestrator} icp={settings.model_icp} "
+          f"researcher={settings.model_researcher} copywriter={settings.model_copywriter} "
+          f"grounding={settings.model_grounding}")
+
+    task = asyncio.create_task(execute_run(run_id))
+    last = None
+    while not task.done():
+        await asyncio.sleep(5)
+        r = db.get_run(run_id)
+        line = f"  [{r['status']}] {r['status_detail'] or ''}"
+        if line != last:
+            print(line)
+            last = line
+    await task
+
+    r = db.get_run(run_id)
+    print("\nstatus:", r["status"], "|", r["status_detail"])
+    print("cost_usd:", r["cost_usd"], "| turns:", r["num_turns"], "| usage:", r["usage"])
+    if r["error_message"]:
+        print("error:", r["error_message"])
+    if r["clarification_question"]:
+        print("clarification:", r["clarification_question"])
+    for lead in db.list_leads(run_id):
+        print(f"  - {lead['company_domain']:<28} {lead['qualification_status']:<14} "
+              f"conf={lead['confidence']} outreach={lead['outreach_status']}")
+    print("tool calls:")
+    for c in db.list_tool_calls(run_id):
+        print(f"  {c['seq']:>3} {c['agent_role']:<12} {c['tool_name']:<28} {c['status']:<8} {(c['result_summary'] or '')[:90]}")
+    print("project spend so far: $%.4f" % db.total_spend())
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(asyncio.run(main()))

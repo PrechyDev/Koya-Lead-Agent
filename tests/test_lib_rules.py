@@ -149,3 +149,13 @@ def test_bad_outreach_is_caught():
     for expected in ["exactly 3", "words", "email address", "banned phrase", "subject is 80", "evidence_ref",
                      "URL", "unknown placeholder", "{{first_name}}", "LinkedIn message is 301"]:
         assert expected in text, expected
+
+
+def test_blank_env_values_fall_back_to_defaults(monkeypatch):
+    from app.config import Settings
+    monkeypatch.setenv("APIFY_ACTOR_ID", "")
+    monkeypatch.setenv("MODEL_RESEARCHER", "  ")
+    s = Settings(_env_file=None)
+    assert s.apify_actor_id == "harvestapi/linkedin-company-search"
+    assert s.model_researcher == "claude-sonnet-5"
+    assert "ANTHROPIC_API_KEY" in Settings(_env_file=None, anthropic_api_key="").missing_run_config()

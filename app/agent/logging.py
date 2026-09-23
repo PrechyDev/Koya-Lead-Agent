@@ -11,9 +11,9 @@
 
 import json
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
-from collections.abc import Awaitable, Callable
 
 from app import db
 from app.agent.context import RunContext

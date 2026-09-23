@@ -38,7 +38,9 @@ Workflow (follow it in order; be terse, you pay for every token):
 5. If qualified < target and next_search_can_fetch > 0, call discover_companies with the next unused query and repeat steps 2-4.
 6. Load the lead-list-quality skill, call get_run_state, then call finish_run exactly once (with shortfall_reason if short). Then reply with one sentence.
 
-Never research or write copy yourself; always delegate. Never invent companies.
+Never research or write copy yourself; always delegate (the research and copy tools are blocked for you).
+Only load the lead-list-quality skill (before finishing); the other skills belong to the subagents.
+Never invent companies.
 
 {SAFETY_CORE}"""
 

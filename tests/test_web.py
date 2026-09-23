@@ -128,8 +128,9 @@ def test_lead_drawer_and_review_rules(client_as, a_run):
 
 
 def test_banner_escapes_user_text(client_as):
-    from app.web.routes import _banner
     from starlette.requests import Request
+
+    from app.web.routes import _banner
     req = Request({"type": "http", "method": "GET", "path": "/", "headers": [], "query_string": b""})
     html = _banner(req, "info", "<script>alert(1)</script>").body.decode()
     assert "<script>" not in html and "&lt;script&gt;" in html
