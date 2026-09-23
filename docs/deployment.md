@@ -63,7 +63,7 @@ Import `n8n/alert-email-workflow.json`, set the Gmail credential, email and secr
 | 5.3 | "Find me leads" | ~$0.001 | too_vague → clarification question (PRD test 1 companion) |
 | 5.4 | One **DEV** run of a new objective (target 2) | $0.30 Claude + $0.05 Apify | Live proof of **parallel subagents (D-49)**, **`check_drafts` before saving (D-50)** and the rewrite path (errors log #7), all still pending live verification. Check `tool_calls`: `Delegate:researcher` rows with the same timestamp; `check_drafts` before `save_outreach` |
 | 5.5 | Set `FIXTURE_MODE=true`, run the injection fixture page, then set it back to `false` | ~$0.10 | Prompt injection over a real public URL (PRD "untrusted input") |
-| 5.6 | Watch Render → Metrics → Memory during 5.4 | — | Parallel subagents stay under 512 MB. If memory goes above ~450 MB, set `max_parallel_subagents` to 2 |
+| 5.6 | Watch Render → Metrics → Memory during 5.4 | — | Parallel subagents stay under 512 MB. If memory goes above ~450 MB, set the env var `MAX_PARALLEL_SUBAGENTS=2` (no code change; applies to new runs) |
 
 Then set **`DEV_LIMITS=false`** (full limits: 10 leads, 20 companies, $1.25 per run) and redeploy **between runs**.
 

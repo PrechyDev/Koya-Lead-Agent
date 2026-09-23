@@ -189,7 +189,9 @@ def test_blank_env_values_fall_back_to_defaults(monkeypatch):
     from app.config import Settings
     monkeypatch.setenv("APIFY_ACTOR_ID", "")
     monkeypatch.setenv("MODEL_RESEARCHER", "  ")
+    monkeypatch.setenv("MAX_PARALLEL_SUBAGENTS", "")
     s = Settings(_env_file=None)
+    assert s.max_parallel_subagents is None
     assert s.apify_actor_id == "harvestapi/linkedin-company-search"
     assert s.model_researcher == "claude-sonnet-5"
     assert "ANTHROPIC_API_KEY" in Settings(_env_file=None, anthropic_api_key="").missing_run_config()

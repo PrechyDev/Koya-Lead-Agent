@@ -53,13 +53,14 @@ class Settings(BaseSettings):
     max_runs_per_day: int = 5
     max_runs_per_user_per_day: int = 2
     max_runs_per_admin_per_day: int = 5
+    max_parallel_subagents: int | None = None  # optional override of the preset (e.g. 2 if Render memory is tight)
     render_external_url: str = ""
     alert_webhook_url: str = ""
     alert_webhook_secret: str = ""
     cookie_secure: bool | None = Field(default=None)
 
     @field_validator("apify_actor_id", "model_orchestrator", "model_icp", "model_researcher", "model_copywriter",
-                     "model_grounding", mode="before")
+                     "model_grounding", "max_parallel_subagents", mode="before")
     @classmethod
     def _blank_means_default(cls, value, info):
         # An empty line like `APIFY_ACTOR_ID=` in .env must not override the default with "".
@@ -165,7 +166,9 @@ ICP_PHASE_TIMEOUT_S = 240
 def limits_for_run(target_qualified: int, dev: bool) -> RunLimits:
     base = DEV_LIMITS if dev else FULL_LIMITS
     target = max(1, min(int(target_qualified), base.target_qualified))
-    return RunLimits(**{**base.to_dict(), "target_qualified": target})
+    override = get_settings().max_parallel_subagents
+    parallel = max(1, min(int(override), 5)) if override else base.max_parallel_subagents
+    return RunLimits(**{**base.to_dict(), "target_qualified": target, "max_parallel_subagents": parallel})
 
 
 # ---------------------------------------------------------------------------
