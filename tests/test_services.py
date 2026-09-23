@@ -180,3 +180,12 @@ async def test_grounding_passes_clean_drafts():
     res = await gr.check_grounding("s", [], "li", model="claude-haiku-4-5",
                                    client=SimpleNamespace(messages=_FakeMessages(verdict)))
     assert res.passed and res.report()["claims"][0]["supported"]
+
+
+@respx.mock
+async def test_scrape_returns_useful_internal_links_only():
+    md = ("# Acme\n[About us](/about-us) [Careers](https://www.acme.io/careers/) [Blog post](/blog/x) "
+          "[Partner](https://other.com/about) [Pricing](/pricing)\n" + "Acme builds software for clinics. " * 10)
+    respx.post(fc.API_URL).mock(return_value=_ok(md, url="https://www.acme.io/"))
+    page = await fc.scrape("https://acme.io/")
+    assert page.links == ["/about-us", "/careers", "/pricing"]

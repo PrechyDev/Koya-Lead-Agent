@@ -11,6 +11,7 @@ import re
 from dataclasses import dataclass, field
 
 import httpx
+from urllib.parse import urljoin, urlsplit
 
 from app.config import get_settings
 from app.lib.sanitize import sanitize_page
@@ -19,6 +20,7 @@ API_URL = "https://api.firecrawl.dev/v2/scrape"
 IMAGE_RE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
 LINK_RE = re.compile(r"\[([^\]]*)\]\((?:[^()]|\([^)]*\))*\)")
 LOGIN_WALL_RE = re.compile(r"\b(?:sign in to continue|log in to continue|please log in|verify you are human|captcha)\b", re.I)
+USEFUL_PATH_RE = re.compile(r"/(?:about|company|team|who-we-are|our-story|customers|case-studies|careers|jobs|pricing|product|platform|solutions|industries)", re.I)
 PARKED_RE = re.compile(r"\b(?:this domain (?:is|may be) for sale|buy this domain|domain parking|parked free)\b", re.I)
 
 
@@ -39,6 +41,24 @@ class ScrapedPage:
     injection_flags: list[str] = field(default_factory=list)
     redactions: dict[str, int] = field(default_factory=dict)
     parked: bool = False
+    links: list[str] = field(default_factory=list)
+
+
+def internal_links(markdown: str, base_url: str, limit: int = 12) -> list[str]:
+    """Same-site paths worth a second look (about/customers/careers...), found before links are stripped."""
+    host = (urlsplit(base_url).hostname or "").removeprefix("www.")
+    found: list[str] = []
+    for target in re.findall(r"\]\(([^)\s]+)", markdown or ""):
+        url = urljoin(base_url, target)
+        parts = urlsplit(url)
+        if (parts.hostname or "").removeprefix("www.") != host or parts.scheme not in ("http", "https"):
+            continue
+        path = parts.path.rstrip("/")
+        if path and USEFUL_PATH_RE.match(path) and path.count("/") <= 2 and path not in found:
+            found.append(path)
+        if len(found) >= limit:
+            break
+    return found
 
 
 def denoise(markdown: str) -> str:
@@ -96,7 +116,8 @@ async def scrape(url: str, *, max_chars: int = 6000, client: httpx.AsyncClient |
     if site_status and site_status >= 400:
         raise ScrapeError("site_error", f"Site returned HTTP {site_status}.", site_status)
 
-    text = denoise(data.get("markdown") or "")
+    raw_markdown = data.get("markdown") or ""
+    text = denoise(raw_markdown)
     if len(text) < 80:
         raise ScrapeError("empty", "Page had almost no readable text (JS-only or blocked).", site_status)
     if LOGIN_WALL_RE.search(text[:2000]) and len(text) < 1500:
@@ -107,4 +128,5 @@ async def scrape(url: str, *, max_chars: int = 6000, client: httpx.AsyncClient |
         url=url, final_url=final_url, title=(meta.get("title") or "")[:200], content=clean.text,
         truncated=clean.truncated, status_code=site_status, injection_flags=clean.injection_flags,
         redactions=clean.redactions, parked=bool(PARKED_RE.search(text[:3000])),
+        links=internal_links(raw_markdown, final_url),
     )

@@ -1,0 +1,283 @@
+"""Runs one research run in two phases (specs.md §4-5).
+
+Phase A (cheap):  icp-refiner query -> save_icp -> clarification check -> repeat gate.
+Phase B (costly): orchestrator + researcher/copywriter subagents -> finish_run.
+
+Isolation: setting_sources=[] and strict_mcp_config=True, so nothing from the
+machine's Claude Code setup (settings, hooks, CLAUDE.md, MCP servers) leaks in.
+Built-in tools are limited to Agent/Skill; everything else goes through our
+guarded `leadtools` server. Every Claude cost lands in the spend ledger.
+"""
+
+import logging
+import tempfile
+from datetime import datetime
+from decimal import Decimal
+from pathlib import Path
+
+from claude_agent_sdk import (
+    AgentDefinition,
+    ClaudeAgentOptions,
+    HookMatcher,
+    ResultMessage,
+    query,
+)
+
+from app import db
+from app.agent import prompts
+from app.agent.context import RunContext
+from app.agent.logging import log_event
+from app.agent.tools import build_scorecard, build_server, mcp_name
+from app.config import ICP_PHASE_MAX_BUDGET_USD, ICP_PHASE_MAX_TURNS, get_settings
+from app.lib.budget import BudgetExceeded, assert_can_spend
+from app.lib.sanitize import redact
+
+log = logging.getLogger("lead_agent.runner")
+ROOT = Path(__file__).resolve().parents[2]
+PLUGIN_PATH = ROOT / "agent_plugin"
+WORKDIR = Path(tempfile.gettempdir()) / "koya_lead_agent_cwd"
+BLOCKED_BUILTINS = ["Bash", "Read", "Write", "Edit", "MultiEdit", "Glob", "Grep", "WebFetch", "WebSearch",
+                    "NotebookEdit", "TodoWrite", "Task", "BashOutput", "KillShell"]
+
+ICP_TOOLS = ["save_icp"]
+ORCHESTRATOR_TOOLS = ["discover_companies", "get_run_state", "finish_run"]
+RESEARCHER_TOOLS = ["get_research_brief", "scrape_website", "save_qualification"]
+COPYWRITER_TOOLS = ["get_lead", "save_outreach"]
+GROUNDING_RESERVE_USD = Decimal("0.10")
+
+
+class RunAborted(Exception):
+    pass
+
+
+def _skill(name: str) -> str:
+    return f"leadagent:{name}"
+
+
+def _make_hooks(ctx: RunContext, main_role: str, allowed: set[str], main_thread_tools: set[str]) -> dict:
+    """Log skill loads + delegations; deny (and log) anything outside the allowlist.
+
+    The main thread may only use `main_thread_tools`: the orchestrator must delegate research and
+    copywriting to subagents instead of doing it itself (keeps its context, and cost, small).
+    """
+
+    async def pre_tool(input_data, tool_use_id, context):
+        name = input_data.get("tool_name", "")
+        tool_input = input_data.get("tool_input") or {}
+        role = input_data.get("agent_type") or main_role
+        if name == "Skill":
+            skill = str(tool_input.get("skill") or tool_input.get("name") or "?")
+            await log_event(ctx, role, f"Skill:{skill.split(':')[-1]}", f"skill={skill}")
+            return {}
+        if name == "Agent":
+            sub = str(tool_input.get("subagent_type") or "?")
+            brief = str(tool_input.get("prompt") or tool_input.get("description") or "")[:200]
+            await log_event(ctx, role, f"Delegate:{sub}", brief, purpose=str(tool_input.get("description") or "")[:200])
+            return {}
+        if name in allowed:
+            if input_data.get("agent_id") is None and name not in main_thread_tools:
+                await log_event(ctx, role, name.split("__")[-1], "main thread tried a subagent-only tool",
+                                status="blocked", result_summary="denied: delegate instead")
+                return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                               "permissionDecisionReason": "Delegate this to the right subagent."}}
+            return {}
+        await log_event(ctx, role, name or "unknown_tool", "attempted a tool outside the allowlist", status="blocked",
+                        result_summary="denied by policy")
+        return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                       "permissionDecisionReason": "This tool is not available in this system."}}
+
+    return {"PreToolUse": [HookMatcher(hooks=[pre_tool])]}
+
+
+def _options(ctx: RunContext, *, model: str, system_prompt: str, tool_names: list[str], skills: list[str],
+             max_turns: int, max_budget_usd: float, main_role: str,
+             agents: dict[str, AgentDefinition] | None = None, extra_tools: list[str] | None = None,
+             ) -> ClaudeAgentOptions:
+    settings = get_settings()
+    WORKDIR.mkdir(parents=True, exist_ok=True)
+    all_tools = list(tool_names) + list(extra_tools or [])
+    allowed = {mcp_name(t) for t in all_tools}
+    return ClaudeAgentOptions(
+        model=model,
+        system_prompt=system_prompt,
+        tools=["Agent", "Skill"] if agents else ["Skill"],
+        allowed_tools=sorted(allowed) + (["Agent"] if agents else []),
+        disallowed_tools=BLOCKED_BUILTINS,
+        permission_mode="dontAsk",
+        mcp_servers={"leadtools": build_server(ctx, all_tools)},
+        strict_mcp_config=True,
+        setting_sources=[],
+        plugins=[{"type": "local", "path": str(PLUGIN_PATH)}],
+        skills=[_skill(s) for s in skills],
+        agents=agents,
+        hooks=_make_hooks(ctx, main_role, allowed, {mcp_name(t) for t in tool_names}),
+        max_turns=max_turns,
+        max_budget_usd=max_budget_usd,
+        cwd=str(WORKDIR),
+        env={"ANTHROPIC_API_KEY": settings.anthropic_api_key,
+             "CLAUDE_AGENT_SDK_CLIENT_APP": "koya-lead-agent/0.1"},
+        stderr=lambda line: log.debug("cli: %s", redact(line)[0][:300]),
+    )
+
+
+async def _consume(prompt: str, options: ClaudeAgentOptions) -> ResultMessage | None:
+    result = None
+    async for message in query(prompt=prompt, options=options):
+        if isinstance(message, ResultMessage):
+            result = message  # the last one carries the cumulative cost
+    return result
+
+
+def _record_cost(run_id: str, source: str, result: ResultMessage | None, fallback_model: str) -> Decimal:
+    if result is None:
+        return Decimal("0")
+    total = Decimal(str(result.total_cost_usd or 0))
+    per_model = result.model_usage or {}
+    if per_model:
+        for model, usage in per_model.items():
+            cost = Decimal(str(usage.get("costUSD") or 0))
+            if cost > 0:
+                db.record_spend(source, cost, ref_id=run_id, model=model,
+                                input_tokens=int(usage.get("inputTokens") or 0)
+                                + int(usage.get("cacheReadInputTokens") or 0)
+                                + int(usage.get("cacheCreationInputTokens") or 0),
+                                output_tokens=int(usage.get("outputTokens") or 0),
+                                note=f"{source} phase ({result.num_turns} turns, {result.subtype})")
+    elif total > 0:
+        db.record_spend(source, total, ref_id=run_id, model=fallback_model, note=f"{source} phase")
+    return total
+
+
+def _refresh_run_cost(run_id: str, turns_add: int = 0) -> None:
+    row = db.fetch_one(f"select coalesce(sum(cost_usd), 0) as s from {db.t('spend_ledger')} where ref_id = %s",
+                       (run_id,))
+    run = db.get_run(run_id)
+    db.update_run(run_id, cost_usd=Decimal(str(row["s"])), num_turns=int(run["num_turns"] or 0) + turns_add)
+
+
+# ---------------------------------------------------------------------------
+# Phase A
+# ---------------------------------------------------------------------------
+async def run_icp_phase(run_id: str) -> str:
+    """Returns the status the run is left in: needs_clarification | awaiting_confirmation | ready."""
+    settings = get_settings()
+    ctx = await db.run(RunContext.load, run_id)
+    run = await db.run(db.get_run, run_id)
+    spent = await db.run(db.total_spend)
+    assert_can_spend(spent, Decimal(str(ctx.limits["max_budget_usd"])) + GROUNDING_RESERVE_USD,
+                     settings.claude_budget_total_usd)
+
+    await db.run(db.set_status, run_id, "refining_icp", "Refining the objective into an ICP",
+                 started_at=datetime.now().astimezone())
+    parent = await db.run(db.get_run, str(run["parent_run_id"])) if run.get("parent_run_id") else None
+    options = _options(ctx, model=settings.model_icp, system_prompt=prompts.ICP_SYSTEM, tool_names=ICP_TOOLS,
+                       skills=["icp-refinement", "outreach-safety"], max_turns=ICP_PHASE_MAX_TURNS,
+                       max_budget_usd=ICP_PHASE_MAX_BUDGET_USD, main_role="icp-refiner")
+    result = await _consume(prompts.icp_user_prompt(run["objective"], parent and parent["objective"],
+                                                    "answered" if parent else None), options)
+    await db.run(_record_cost, run_id, "icp", result, settings.model_icp)
+    await db.run(_refresh_run_cost, run_id, result.num_turns if result else 0)
+
+    run = await db.run(db.get_run, run_id)
+    if run["clarification_question"] and not run["icp_signature"]:
+        await db.run(db.set_status, run_id, "needs_clarification",
+                     "The objective is too vague to search. Answer the question to continue.")
+        return "needs_clarification"
+    if not run["icp"]:
+        raise RunAborted("The ICP step finished without saving an ICP"
+                         + (f" ({result.subtype})" if result else ""))
+
+    match = await db.run(db.find_recent_run_by_signature, run["icp_signature"], settings.research_reuse_days, run_id)
+    if match and not run.get("repeat_choice"):
+        await db.run(db.set_status, run_id, "awaiting_confirmation",
+                     f"This matches a run from {match['created_at']:%b %d} "
+                     f"({(match['usage'] or {}).get('qualified', 0)} qualified). Choose how to continue.",
+                     duplicate_of_run_id=match["id"])
+        return "awaiting_confirmation"
+    return "ready"
+
+
+# ---------------------------------------------------------------------------
+# Phase B
+# ---------------------------------------------------------------------------
+async def run_research_phase(run_id: str) -> None:
+    settings = get_settings()
+    ctx = await db.run(RunContext.load, run_id)
+    run = await db.run(db.get_run, run_id)
+    remaining_budget = max(0.05, float(ctx.limits["max_budget_usd"]) - float(run["cost_usd"] or 0))
+    spent = await db.run(db.total_spend)
+    assert_can_spend(spent, Decimal(str(remaining_budget)) + GROUNDING_RESERVE_USD, settings.claude_budget_total_usd)
+    await db.run(db.set_status, run_id, "discovering", "Starting company discovery",
+                 models={"orchestrator": settings.model_orchestrator, "icp": settings.model_icp,
+                         "researcher": settings.model_researcher, "copywriter": settings.model_copywriter,
+                         "grounding": settings.model_grounding})
+    ctx.status_seen.add("discovering")
+
+    agents = {
+        "researcher": AgentDefinition(
+            description="Researches ONE candidate company and saves an evidence-based qualification decision.",
+            prompt=prompts.RESEARCHER_PROMPT,
+            tools=[mcp_name(t) for t in RESEARCHER_TOOLS] + ["Skill"],
+            skills=[_skill("lead-qualification"), _skill("outreach-safety")],
+            model=settings.model_researcher,
+            maxTurns=10,
+        ),
+        "copywriter": AgentDefinition(
+            description="Writes the 3-email sequence and LinkedIn message for ONE qualified lead.",
+            prompt=prompts.COPYWRITER_PROMPT,
+            tools=[mcp_name(t) for t in COPYWRITER_TOOLS] + ["Skill"],
+            skills=[_skill("outbound-copywriting"), _skill("outreach-safety")],
+            model=settings.model_copywriter,
+            maxTurns=10,
+        ),
+    }
+    options = _options(
+        ctx, model=settings.model_orchestrator, system_prompt=prompts.ORCHESTRATOR_SYSTEM,
+        tool_names=ORCHESTRATOR_TOOLS, extra_tools=RESEARCHER_TOOLS + COPYWRITER_TOOLS,
+        skills=["lead-list-quality", "outreach-safety", "lead-qualification", "outbound-copywriting"],
+        max_turns=int(ctx.limits["max_turns"]), max_budget_usd=remaining_budget, main_role="orchestrator",
+        agents=agents,
+    )
+    result = None
+    try:
+        result = await _consume(prompts.orchestrator_user_prompt(run), options)
+    finally:
+        await db.run(_record_cost, run_id, "run", result, settings.model_orchestrator)
+        await db.run(_refresh_run_cost, run_id, result.num_turns if result else 0)
+
+    if not ctx.finished:
+        await db.run(_force_finish, ctx, result)
+
+
+def _force_finish(ctx: RunContext, result: ResultMessage | None) -> None:
+    """The agent stopped without finish_run (limit hit or it just stopped): finalize from real counts (E-22, E-23)."""
+    scorecard, qualified, target = build_scorecard(ctx.run_id)
+    reason = (result.subtype if result else "no result")
+    why = {"error_max_budget_usd": "the per-run Claude budget was reached",
+           "error_max_turns": "the per-run turn limit was reached"}.get(reason, f"the agent stopped early ({reason})")
+    if qualified == 0:
+        db.set_status(ctx.run_id, "failed", f"Stopped: {why}; no qualified leads", error_message=f"Stopped: {why}.",
+                      quality_scorecard=scorecard)
+    else:
+        db.set_status(ctx.run_id, "completed_partial", f"{qualified} of {target} qualified (stopped: {why})",
+                      shortfall_reason=f"Stopped before finishing: {why}. The agent did not finalize; "
+                                       "counts are from saved records.",
+                      quality_scorecard=scorecard, summary="Finalized by the system.")
+
+
+async def execute_run(run_id: str, skip_icp: bool = False) -> None:
+    """Entry point used by the RunManager. Never raises: failures are stored on the run."""
+    try:
+        if not skip_icp:
+            state = await run_icp_phase(run_id)
+            if state != "ready":
+                return
+        await run_research_phase(run_id)
+    except BudgetExceeded as exc:
+        await db.run(db.set_status, run_id, "failed", "Refused before spending: budget", error_message=str(exc))
+    except RunAborted as exc:
+        await db.run(db.set_status, run_id, "failed", "Failed", error_message=str(exc))
+    except Exception as exc:  # noqa: BLE001 — visible failure, never silent
+        log.exception("run %s failed", run_id)
+        await db.run(db.set_status, run_id, "failed", "Failed unexpectedly",
+                     error_message=redact(f"{type(exc).__name__}: {exc}")[0][:900])
