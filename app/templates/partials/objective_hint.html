@@ -1,0 +1,6 @@
+{% if match %}
+<div class="callout info" role="status">
+  ℹ You ran this objective {{ match.created_at | ago }}: {{ (match.usage or {}).get('qualified', 0) }} qualified.
+  <a href="/runs/{{ match.id }}">View those results</a> (free), or start a new run anyway.
+</div>
+{% endif %}

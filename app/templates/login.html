@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Sign in · Koya Lead Research Agent{% endblock %}
+{% block banner %}{% if error %}{% set kind = "error" %}{% set message = error %}{% include "partials/banner.html" %}{% endif %}{% endblock %}
+{% block content %}
+<div class="card auth-card">
+  <h1>Sign in</h1>
+  <p class="muted">Research qualified leads and review-ready outreach drafts for Koya Talent.</p>
+  <form method="post" action="/login" class="stack">
+    <input type="hidden" name="next" value="{{ next or '/' }}">
+    <div class="field">
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" autocomplete="username" required value="{{ email or '' }}">
+    </div>
+    <div class="field">
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+    </div>
+    <button class="btn primary" type="submit" onclick="this.querySelector('.when-idle').hidden=true;this.querySelector('.when-loading').style.display='inline';">
+      <span class="when-idle">Sign in</span><span class="when-loading"><span class="spinner"></span> Signing in…</span>
+    </button>
+    <p class="help">Access is by invitation. Ask your admin if you need an account.</p>
+  </form>
+</div>
+{% endblock %}

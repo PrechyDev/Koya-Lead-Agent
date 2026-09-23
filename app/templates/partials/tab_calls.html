@@ -1,0 +1,38 @@
+{% extends "partials/tab_base.html" %}
+{% block tab %}
+<div class="row between" style="margin-bottom: 10px;">
+  <div class="chips" role="group" aria-label="Filter tool calls">
+    {% for key, label in [("", "All"), ("success", "Success"), ("error", "Errors"), ("blocked", "Blocked")] %}
+    <button type="button" class="chip" aria-pressed="{{ 'true' if filter == key else 'false' }}"
+      hx-get="/runs/{{ run.id }}/tab/calls{% if key %}?status={{ key }}{% endif %}" hx-target="#tab-panel" hx-swap="outerHTML">{{ label }}</button>
+    {% endfor %}
+  </div>
+  <span class="small muted">Logged by the system for every tool call, skill load and delegation, not by the agent.</span>
+</div>
+{% set shown = calls if not filter else calls | selectattr("status", "equalto", filter) | list %}
+{% if shown %}
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>#</th><th>Agent</th><th>Tool</th><th>Purpose</th><th>Input</th><th>Result</th><th>Status</th><th>ms</th></tr></thead>
+    <tbody>
+    {% for c in shown %}
+      {% set b = badge(c.status) %}
+      <tr class="{{ 'row-error' if c.status == 'error' else ('row-blocked' if c.status == 'blocked' else '') }}">
+        <td class="nums">{{ c.seq }}</td>
+        <td class="small">{{ c.agent_role }}</td>
+        <td class="mono">{{ c.tool_name }}</td>
+        <td class="small">{{ c.purpose or "" }}</td>
+        <td class="small mono">{{ c.input_summary or "" }}</td>
+        <td class="small">{{ c.result_summary or "" }}{% if c.error_message %}<div style="color: var(--danger);">{{ c.error_message }}</div>{% endif %}
+          {% if c.external_cost_usd %}<div class="muted">Apify/API cost ${{ "%.4f" | format(c.external_cost_usd) }}</div>{% endif %}</td>
+        <td><span class="badge {{ b[0] }}">{{ b[1] }}</span></td>
+        <td class="nums small">{{ c.duration_ms or "" }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="empty">{% if calls %}No calls with this status.{% else %}Tool calls appear here as the agent works.{% endif %}</div>
+{% endif %}
+{% endblock %}

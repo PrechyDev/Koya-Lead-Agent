@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Accept invite · Koya Lead Research Agent{% endblock %}
+{% block banner %}{% if error %}{% set kind = "error" %}{% set message = error %}{% include "partials/banner.html" %}{% endif %}{% endblock %}
+{% block content %}
+<div class="card auth-card">
+  <h1>Set up your account</h1>
+  <p class="muted">Choose your name and a password. Passwords need at least 10 characters.</p>
+  <div id="invite-missing" class="callout" hidden>This page needs the link from your invite email. Open the email and click the link again, or ask your admin for a new invite.</div>
+  <form method="post" action="/accept-invite" class="stack" id="invite-form">
+    <input type="hidden" name="access_token" id="access_token">
+    <input type="hidden" name="refresh_token" id="refresh_token">
+    <div class="field">
+      <label for="full_name">Your name</label>
+      <input id="full_name" name="full_name" type="text" maxlength="120" required value="{{ full_name or '' }}">
+    </div>
+    <div class="field">
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" minlength="10" autocomplete="new-password" required>
+    </div>
+    <div class="field">
+      <label for="confirm">Confirm password</label>
+      <input id="confirm" name="confirm" type="password" minlength="10" autocomplete="new-password" required>
+    </div>
+    <button class="btn primary" type="submit" id="invite-submit">Save and continue</button>
+  </form>
+</div>
+<script>
+  // Supabase puts the invite session in the URL fragment, which never reaches the server by itself.
+  (function () {
+    var params = new URLSearchParams(window.location.hash.slice(1));
+    var access = params.get("access_token"), refresh = params.get("refresh_token");
+    if (access) {
+      document.getElementById("access_token").value = access;
+      document.getElementById("refresh_token").value = refresh || "";
+      history.replaceState(null, "", window.location.pathname);
+    } else if (!document.getElementById("access_token").value) {
+      document.getElementById("invite-missing").hidden = false;
+      var btn = document.getElementById("invite-submit");
+      btn.disabled = true;
+      btn.title = "Open the link from your invite email first";
+    }
+  })();
+</script>
+{% endblock %}

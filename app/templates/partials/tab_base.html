@@ -1,0 +1,4 @@
+<div id="tab-panel" class="tab-panel" role="tabpanel"
+  {% if run.status in ACTIVE %}hx-get="/runs/{{ run.id }}/tab/{{ tab_name }}{% if filter %}?status={{ filter }}{% endif %}" hx-trigger="every 6s" hx-swap="outerHTML"{% endif %}>
+{% block tab %}{% endblock %}
+</div>

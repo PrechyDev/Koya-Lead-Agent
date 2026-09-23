@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% set active_nav = "runs" %}
+{% block title %}Run · Koya Lead Research Agent{% endblock %}
+{% block content %}
+<section class="card stack">
+  <div class="row between">
+    <h1>Research run</h1>
+    <a class="btn small" href="/">← All runs</a>
+  </div>
+  <div class="objective">{{ run.objective }}</div>
+  {% if run.parent_run_id %}<p class="small muted">Follows a clarification on <a href="/runs/{{ run.parent_run_id }}">an earlier run</a>.</p>{% endif %}
+  <div id="run-live" hx-get="/runs/{{ run.id }}/live" hx-trigger="load, every 3s" hx-swap="innerHTML">
+    <p class="muted small">Loading run status…</p>
+  </div>
+</section>
+
+<section class="card">
+  <div class="tabs" role="tablist" aria-label="Run details">
+    {% for key, label in [("leads", "Leads"), ("icp", "ICP"), ("calls", "Tool calls"), ("summary", "Summary")] %}
+    <button class="tab" role="tab" type="button" aria-selected="{{ 'true' if tab == key else 'false' }}"
+      hx-get="/runs/{{ run.id }}/tab/{{ key }}" hx-target="#tab-panel" hx-swap="outerHTML">{{ label }}</button>
+    {% endfor %}
+  </div>
+  <div id="tab-panel" class="tab-panel" role="tabpanel"
+    hx-get="/runs/{{ run.id }}/tab/{{ tab }}" hx-trigger="load" hx-swap="outerHTML">
+    <p class="muted small">Loading…</p>
+  </div>
+</section>
+{% endblock %}

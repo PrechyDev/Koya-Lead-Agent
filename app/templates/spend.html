@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% set active_nav = "spend" %}
+{% block title %}Spend · Koya Lead Research Agent{% endblock %}
+{% block content %}
+{% set pct = ((spent / budget) * 100) | round(0) if budget else 0 %}
+<section class="card stack">
+  <h1>Spend</h1>
+  <div class="bar {% if pct >= 90 %}full{% elif pct >= 70 %}warn{% endif %}" role="progressbar" aria-valuenow="{{ pct }}" aria-valuemin="0" aria-valuemax="100"><span style="width: {{ [pct, 100] | min }}%"></span></div>
+  <p class="nums">{{ spent | money }} of {{ budget | money }} Claude budget used. New runs are refused before any spend if they could go over.</p>
+</section>
+<section class="card">
+  <h2>By source and model</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Source</th><th>Model</th><th>Entries</th><th>Cost</th><th>Last</th></tr></thead>
+    <tbody>{% for s in by_source %}<tr><td>{{ s.source }}</td><td class="mono">{{ s.model }}</td><td class="nums">{{ s.entries }}</td><td class="nums">${{ "%.4f" | format(s.cost_usd) }}</td><td class="small muted">{{ s.last_at | ago }}</td></tr>
+    {% else %}<tr><td colspan="5" class="empty">No spend recorded yet.</td></tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+<section class="card">
+  <h2>By run</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Objective</th><th>Status</th><th>By</th><th>Claude</th><th>When</th></tr></thead>
+    <tbody>{% for r in by_run %}{% set b = badge(r.status) %}<tr class="clickable" tabindex="0" onclick="window.location='/runs/{{ r.id }}'">
+      <td>{{ r.objective[:90] }}</td><td><span class="badge {{ b[0] }}">{{ b[1] }}</span></td><td>{{ r.created_by_name or '—' }}</td>
+      <td class="nums">{{ r.cost_usd | money }}</td><td class="small muted">{{ r.created_at | ago }}</td></tr>
+    {% else %}<tr><td colspan="5" class="empty">No runs yet.</td></tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+<section class="card">
+  <h2>Apify (discovery)</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Run</th><th>Apify cost</th></tr></thead>
+    <tbody>{% for a in apify %}<tr><td>{{ a.objective[:90] }}</td><td class="nums">${{ "%.4f" | format(a.apify_usd or 0) }}</td></tr>
+    {% else %}<tr><td colspan="2" class="empty">No Apify runs recorded yet.</td></tr>{% endfor %}</tbody>
+  </table></div>
+  <p class="help">The Apify budget is shared across the cohort ($5 per person). Check the Apify console for the authoritative figure.</p>
+</section>
+{% endblock %}

@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Koya Lead Research Agent{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/htmx.min.js" defer></script>
+  <script src="/static/app.js" defer></script>
+</head>
+<body {% if csrf %}hx-headers='{"X-CSRF-Token": "{{ csrf }}"}'{% endif %}>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="/">Koya Lead Research Agent</a>
+      {% if member %}
+      <nav class="nav" aria-label="Main">
+        <a href="/" {% if active_nav == 'runs' %}aria-current="page"{% endif %}>Runs</a>
+        {% if member.is_admin %}
+        <a href="/team" {% if active_nav == 'team' %}aria-current="page"{% endif %}>Team</a>
+        <a href="/spend" {% if active_nav == 'spend' %}aria-current="page"{% endif %}>Spend</a>
+        {% endif %}
+      </nav>
+      <div class="usermenu">
+        <span class="small">{{ member.full_name }}</span>
+        <span class="badge {{ 'info' if member.is_admin else 'outline' }}">{{ member.role }}</span>
+        <form method="post" action="/logout"><button class="btn small" type="submit">Sign out</button></form>
+      </div>
+      {% endif %}
+    </div>
+  </header>
+  <main>
+    <div id="system-message" role="status" aria-live="polite">{% block banner %}{% endblock %}</div>
+    {% block content %}{% endblock %}
+  </main>
+  <div id="drawer"></div>
+</body>
+</html>

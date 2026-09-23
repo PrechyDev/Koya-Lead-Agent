@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% set active_nav = "team" %}
+{% block title %}Team · Koya Lead Research Agent{% endblock %}
+{% block content %}
+<section class="card stack">
+  <h1>Team</h1>
+  <p class="muted">Admins can invite people, change roles and see spend. Members run research and review drafts. Access is by invitation only.</p>
+  <form hx-post="/team/invite" hx-target="#system-message" hx-disabled-elt="find button" class="stack" style="max-width: 640px;">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <div class="grid-2">
+      <div class="field"><label for="inv-name">Name</label><input id="inv-name" name="full_name" type="text" maxlength="120" required></div>
+      <div class="field"><label for="inv-email">Email</label><input id="inv-email" name="email" type="email" required></div>
+    </div>
+    <div class="row">
+      <div class="field" style="max-width: 200px;"><label for="inv-role">Role</label>
+        <select id="inv-role" name="role"><option value="member" selected>Member</option><option value="admin">Admin</option></select></div>
+    </div>
+    <div><button class="btn primary" type="submit"><span class="when-idle">Invite teammate</span><span class="when-loading"><span class="spinner"></span> Inviting…</span></button></div>
+    <p class="help">People who already have an account in this workspace (e.g. from another Koya tool) are added without a new email; they sign in with their existing password.</p>
+  </form>
+</section>
+<section class="card">
+  <div id="team-table" hx-get="/team/table" hx-trigger="teamChanged from:body" hx-swap="innerHTML">
+    {% include "partials/team_table.html" %}
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,120 @@
+{% set b = badge(lead.qualification_status) %}{% set o = badge(lead.outreach_status) %}{% set r = badge(lead.review_status) %}
+{% set d = lead.discovery_data or {} %}
+<div class="drawer-backdrop" data-close-drawer></div>
+<aside class="drawer" role="dialog" aria-modal="true" aria-labelledby="lead-title">
+  <header>
+    <div class="row between">
+      <div class="stack" style="gap: 2px;">
+        <h2 id="lead-title" style="margin: 0;">{{ lead.company_name }}</h2>
+        <a href="https://{{ lead.company_domain }}" target="_blank" rel="noopener noreferrer">{{ lead.company_domain }} ↗</a>
+      </div>
+      <button class="btn small" type="button" data-close-drawer aria-label="Close details">✕ Close</button>
+    </div>
+    <div class="row" style="margin-top: 8px;">
+      <span class="badge {{ b[0] }}">{{ b[1] }}</span>
+      {% if lead.confidence is not none %}<span class="badge outline nums">Confidence {{ "%.2f" | format(lead.confidence) }}</span>{% endif %}
+      {% if lead.qualification_status == 'qualified' %}<span class="badge {{ o[0] }}">Drafts: {{ o[1] }}</span>{% endif %}
+      {% if lead.outreach_status == 'drafted' %}<span class="badge {{ r[0] }}">{{ r[1] }}{% if lead.reviewed_by_name %} · {{ lead.reviewed_by_name }}{% endif %}</span>{% endif %}
+    </div>
+  </header>
+
+  <div class="body">
+    {% if flash %}{% set kind = "success" %}{% set message = flash %}{% include "partials/banner.html" %}{% endif %}
+
+    <section class="card stack">
+      <h3>Why: qualification</h3>
+      {% if lead.hard_filter_checks %}
+      <ul class="check-list">
+        {% for c in lead.hard_filter_checks %}
+        <li><span aria-hidden="true">{{ '✓' if c.result == 'pass' else ('✕' if c.result == 'fail' else '?') }}</span>
+          <div><b>{{ c.filter }}</b>: <span class="badge {{ 'success' if c.result == 'pass' else ('danger' if c.result == 'fail' else 'warning') }}">{{ c.result }}</span>
+            <div class="small">{{ c.evidence or "No evidence recorded." }}{% if c.source_url %} · <a href="{{ c.source_url }}" target="_blank" rel="noopener noreferrer">source ↗</a>{% endif %}</div></div></li>
+        {% endfor %}
+      </ul>
+      {% elif lead.qualification_status == 'pending' %}
+      <p class="muted">Not researched yet.</p>
+      {% endif %}
+      {% if lead.fit_reasons %}<div><b>Fit reasons</b><ul class="clean">{% for f in lead.fit_reasons %}<li>{{ f }}</li>{% endfor %}</ul></div>{% endif %}
+      {% if lead.concerns %}<div class="callout"><b>Concerns</b><ul class="clean">{% for c in lead.concerns %}<li>{{ c }}</li>{% endfor %}</ul></div>{% endif %}
+      {% if lead.prescreen_result %}<p class="small muted">Pre-screen on discovery data: {{ lead.prescreen_result }}{% if lead.prescreen_reason %} ({{ lead.prescreen_reason }}){% endif %}</p>{% endif %}
+    </section>
+
+    <section class="card stack">
+      <h3>Sources</h3>
+      {% if lead.source_summary %}<p>{{ lead.source_summary }}</p>{% endif %}
+      <ul class="clean">{% for u in lead.source_urls or [] %}<li><a href="{{ u }}" target="_blank" rel="noopener noreferrer">{{ u }}</a></li>{% else %}<li class="muted">No sources cited yet.</li>{% endfor %}</ul>
+      <dl class="kv small">
+        <dt>LinkedIn size band</dt><dd>{% if d.employee_count_range %}{{ d.employee_count_range.start }}–{{ d.employee_count_range.end or '+' }}{% else %}—{% endif %} ({{ d.employee_count_linkedin if d.employee_count_linkedin is not none else '?' }} on LinkedIn)</dd>
+        <dt>HQ</dt><dd>{{ (d.hq or {}).get('text') or '—' }}</dd>
+        <dt>LinkedIn industry</dt><dd>{{ (d.industries or []) | join(', ') or '—' }}</dd>
+      </dl>
+      {% if d.injection_flags %}<div class="callout">⚠ This company's page contained text aimed at AI tools ({{ d.injection_flags | join(', ') }}). It was ignored and treated as data only.</div>{% endif %}
+    </section>
+
+    {% if lead.email_sequence %}
+    <section class="stack">
+      <div class="row between"><h3 style="margin: 0;">Outreach drafts</h3><span class="draft-label">Draft · not sent · requires human review</span></div>
+      {% if lead.outreach_status == 'failed_grounding' %}
+      <div class="callout">⚠ These drafts did not pass the automatic checks and need a human rewrite. See the check result below each email.</div>
+      {% endif %}
+      {% for e in lead.email_sequence %}
+      <article class="email-card">
+        <div class="head"><b>Email {{ e.step }}</b>
+          {% if lead.outreach_status == 'drafted' %}<span class="badge success">✓ Fact-check passed</span>{% else %}<span class="badge danger">✕ Fact-check failed</span>{% endif %}</div>
+        <div class="content">
+          <div><div class="small muted">Subject</div>
+            <div class="copy-block"><div class="text" id="subj-{{ lead.id }}-{{ e.step }}">{{ e.subject }}</div>
+              <button class="btn small" type="button" data-copy="subj-{{ lead.id }}-{{ e.step }}">Copy</button></div></div>
+          <div><div class="small muted">Body</div>
+            <div class="copy-block"><div class="text" id="body-{{ lead.id }}-{{ e.step }}">{{ e.body }}</div>
+              <button class="btn small" type="button" data-copy="body-{{ lead.id }}-{{ e.step }}">Copy</button></div></div>
+          <div class="meta-box"><b>Personalization note:</b> {{ e.personalization_note }}<br>
+            <b>Evidence:</b> <a href="{{ e.evidence_ref }}" target="_blank" rel="noopener noreferrer">{{ e.evidence_ref }}</a></div>
+        </div>
+      </article>
+      {% endfor %}
+      {% if lead.linkedin_message %}
+      <article class="email-card">
+        <div class="head"><b>LinkedIn message</b><span class="small muted nums">{{ lead.linkedin_message | length }}/300</span></div>
+        <div class="content"><div class="copy-block"><div class="text" id="li-{{ lead.id }}">{{ lead.linkedin_message }}</div>
+          <button class="btn small" type="button" data-copy="li-{{ lead.id }}">Copy</button></div></div>
+      </article>
+      {% endif %}
+      {% if lead.grounding_report %}
+      <details class="card"><summary><b>Fact-check details</b> <span class="small muted">(which claims were checked against the sources)</span></summary>
+        {% set gr = lead.grounding_report %}
+        {% if gr.deterministic_problems %}<p class="small"><b>Format problems:</b> {{ gr.deterministic_problems | join('; ') }}</p>{% endif %}
+        {% if gr.claims %}<ul class="clean small">{% for c in gr.claims %}<li>{{ '✓' if c.supported else '✕' }} <i>{{ c.about }}</i>: {{ c.text }} <span class="muted">({{ c.evidence }})</span></li>{% endfor %}</ul>{% endif %}
+        {% if gr.summary %}<p class="small muted">{{ gr.summary }} · checker: {{ gr.model }}</p>{% endif %}
+      </details>
+      {% endif %}
+    </section>
+    {% elif lead.qualification_status == 'qualified' %}
+    <p class="muted">Drafts appear here once the copywriter finishes.</p>
+    {% endif %}
+  </div>
+
+  {% if lead.outreach_status == 'drafted' %}
+  <footer>
+    <form hx-post="/leads/{{ lead.id }}/review" hx-target="#drawer" hx-swap="innerHTML" hx-disabled-elt="find button" class="stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <div class="field"><label for="note-{{ lead.id }}">Reviewer note <span class="small muted">(required to reject)</span></label>
+        <textarea id="note-{{ lead.id }}" name="reviewer_note" style="min-height: 56px;">{{ lead.reviewer_note or '' }}</textarea></div>
+      <div class="row">
+        {% if lead.review_status == 'approved' %}
+        <span class="badge success">✓ Approved{% if lead.reviewed_by_name %} by {{ lead.reviewed_by_name }}{% endif %}</span>
+        <button class="btn small" type="submit" name="review_status" value="pending_review">Undo approval</button>
+        {% else %}
+        <button class="btn primary" type="submit" name="review_status" value="approved"><span class="when-idle">Approve drafts</span><span class="when-loading"><span class="spinner"></span> Saving…</span></button>
+        {% endif %}
+        {% if lead.review_status != 'rejected' %}
+        <button class="btn danger" type="submit" name="review_status" value="rejected" hx-confirm="Reject these drafts? Add a note so the team knows why.">Reject</button>
+        {% else %}
+        <span class="badge danger">✕ Rejected{% if lead.reviewed_by_name %} by {{ lead.reviewed_by_name }}{% endif %}</span>
+        {% endif %}
+      </div>
+      <p class="help">Approving marks the drafts as reviewed. Nothing is ever sent from this app.</p>
+    </form>
+  </footer>
+  {% endif %}
+</aside>

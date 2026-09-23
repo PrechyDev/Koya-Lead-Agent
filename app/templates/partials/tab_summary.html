@@ -1,0 +1,49 @@
+{% extends "partials/tab_base.html" %}
+{% block tab %}
+{% set usage = run.usage or {} %}
+<div class="grid-2">
+  <div class="stack">
+    <h3>Outcome</h3>
+    <dl class="kv">
+      <dt>Status</dt><dd>{% set b = badge(run.status) %}<span class="badge {{ b[0] }}">{{ b[1] }}</span></dd>
+      <dt>Qualified</dt><dd class="nums">{{ usage.get('qualified', 0) }} of {{ (run.limits or {}).get('target_qualified') }}</dd>
+      <dt>Needs review</dt><dd class="nums">{{ counts.get('needs_review', 0) }}</dd>
+      <dt>Not qualified</dt><dd class="nums">{{ counts.get('not_qualified', 0) }} ({{ usage.get('prescreen_rejected', 0) }} on pre-screen)</dd>
+      <dt>Skipped (researched ≤ 30 days ago)</dt><dd class="nums">{{ usage.get('skipped_seen_recently', 0) }}</dd>
+      <dt>Agent summary</dt><dd>{{ run.summary or "—" }}</dd>
+      {% if run.shortfall_reason %}<dt>Why fewer leads</dt><dd>{{ run.shortfall_reason }}</dd>{% endif %}
+      {% if run.error_message %}<dt>Error</dt><dd style="color: var(--danger);">{{ run.error_message }}</dd>{% endif %}
+    </dl>
+  </div>
+  <div class="stack">
+    <h3>Cost & usage</h3>
+    <dl class="kv">
+      <dt>Claude cost</dt><dd class="nums">{{ run.cost_usd | money }} (cap {{ (run.limits or {}).get('max_budget_usd') | money }})</dd>
+      <dt>Agent turns</dt><dd class="nums">{{ run.num_turns }}</dd>
+      <dt>Companies fetched</dt><dd class="nums">{{ usage.get('candidates_found', 0) }} in {{ usage.get('discovery_calls', 0) }} search(es)</dd>
+      <dt>Pages scraped</dt><dd class="nums">{{ usage.get('scrapes', 0) }} (+ {{ usage.get('cache_hits', 0) }} from cache)</dd>
+      <dt>Models</dt><dd class="small">{% for role, m in (run.models or {}).items() %}{{ role }}: {{ m }}{% if not loop.last %} · {% endif %}{% else %}—{% endfor %}</dd>
+      <dt>Started / finished</dt><dd class="small">{{ run.started_at.strftime('%b %d %H:%M') if run.started_at else '—' }} / {{ run.finished_at.strftime('%b %d %H:%M') if run.finished_at else '—' }}</dd>
+    </dl>
+  </div>
+</div>
+{% if run.quality_scorecard %}
+<h3 style="margin-top: 14px;">List-quality scorecard</h3>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Dimension</th><th>Result</th><th>Note</th></tr></thead>
+    <tbody>
+    {% for key, v in run.quality_scorecard.items() %}
+      <tr><td>{{ key.replace('_', ' ') | capitalize }}</td>
+        <td><span class="badge {{ 'success' if v.pass else 'danger' }}">{{ '✓ Pass' if v.pass else '✕ Fail' }}</span></td>
+        <td class="small">{{ v.note }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+<div class="row" style="margin-top: 12px;">
+  <a class="btn" href="/runs/{{ run.id }}/export.csv">Download CSV</a>
+  <a class="btn" href="/runs/{{ run.id }}/export.json">Download sample pack (JSON)</a>
+</div>
+{% endblock %}

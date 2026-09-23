@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% set active_nav = "runs" %}
+{% block content %}
+<section class="card" aria-labelledby="new-run-title">
+  <h1 id="new-run-title">New research run</h1>
+  <form hx-post="/runs" hx-disabled-elt="#start-run" hx-indicator="#start-run" class="stack">
+    <input type="hidden" name="idempotency_key" value="{{ idempotency_key }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <div class="field">
+      <label for="objective">Qualification objective</label>
+      <textarea id="objective" name="objective" maxlength="1000" data-counter required
+        placeholder="e.g. Find 10 US B2B SaaS companies with 10 to 100 employees that may need AI automation support."
+        hx-get="/objective-check" hx-trigger="keyup changed delay:600ms" hx-target="#objective-hint"
+        hx-include="#objective" hx-swap="innerHTML"></textarea>
+      <div class="row between">
+        <div class="chips" role="group" aria-label="Example objectives">
+          <span class="small muted">Examples:</span>
+          <button type="button" class="chip" data-target="objective"
+            data-fill="Find companies that might need AI automation help">Vague</button>
+          <button type="button" class="chip" data-target="objective"
+            data-fill="Find 10 US B2B SaaS companies with 10 to 100 employees that may need AI automation support.">PRD example</button>
+          <button type="button" class="chip" data-target="objective"
+            data-fill="Find 10 US-based B2B SaaS companies with 20 to 80 employees selling to healthcare providers; exclude agencies.">Specific</button>
+        </div>
+        <span id="objective-count" class="small muted nums" aria-live="polite">0 / 1000</span>
+      </div>
+      <div id="objective-hint" class="hint"></div>
+    </div>
+    <div class="row">
+      <div class="field" style="max-width: 220px;">
+        <label for="target_qualified">Target qualified leads</label>
+        <select id="target_qualified" name="target_qualified">
+          {% for n in range(1, 11) %}<option value="{{ n }}" {% if n == limits.target_qualified %}selected{% endif %}>{{ n }}</option>{% endfor %}
+        </select>
+      </div>
+    </div>
+    <div class="limits" aria-label="Run limits (set by the system)">
+      <span>Limits: ≤ {{ limits.max_candidates }} companies</span>
+      <span>≤ {{ limits.max_scrapes }} site pages</span>
+      <span>≤ {{ limits.max_budget_usd | money }} Claude per run</span>
+      <span>≤ ${{ "%.2f" | format(limits.apify_max_charge_usd) }} Apify per search</span>
+      {% if settings.dev_limits %}<span class="badge warning">Test limits on</span>{% endif %}
+    </div>
+    <div class="row">
+      {% if active %}
+      <button id="start-run" class="btn primary" type="submit" disabled data-locked aria-describedby="start-run-reason">Start research run</button>
+      <span id="start-run-reason" class="disabled-reason">A run is in progress. <a href="/runs/{{ active.id }}">View it</a>. Only one runs at a time.</span>
+      {% elif mine_today >= daily_cap %}
+      <button id="start-run" class="btn primary" type="submit" disabled data-locked aria-describedby="start-run-reason">Start research run</button>
+      <span id="start-run-reason" class="disabled-reason">You've used your {{ daily_cap }} runs for today.</span>
+      {% else %}
+      <button id="start-run" class="btn primary" type="submit" disabled aria-describedby="start-run-reason">
+        <span class="when-idle">Start research run</span><span class="when-loading"><span class="spinner"></span> Starting…</span>
+      </button>
+      <span id="start-run-reason" class="disabled-reason">Enter at least 5 characters to start.</span>
+      {% endif %}
+    </div>
+    <p class="help">Drafts are never sent. A human reviews every company and every email before anything is used.</p>
+  </form>
+</section>
+
+{% if member.is_admin and spent is not none %}
+{% set pct = ((spent / budget) * 100) | round(0) if budget else 0 %}
+<section class="card" aria-label="Project budget">
+  <div class="row between"><h2>Claude budget</h2><a class="btn small" href="/spend">Spend details</a></div>
+  <div class="bar {% if pct >= 90 %}full{% elif pct >= 70 %}warn{% endif %}" role="progressbar" aria-valuenow="{{ pct }}" aria-valuemin="0" aria-valuemax="100">
+    <span style="width: {{ [pct, 100] | min }}%"></span>
+  </div>
+  <p class="small muted nums">{{ spent | money }} of {{ budget | money }} used</p>
+</section>
+{% endif %}
+
+<section class="card" aria-labelledby="runs-title">
+  <h2 id="runs-title">Recent runs</h2>
+  {% if runs %}
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Objective</th><th>Status</th><th>Qualified</th><th>By</th><th>Started</th><th></th></tr></thead>
+      <tbody>
+      {% for r in runs %}
+        {% set b = badge(r.status) %}
+        <tr class="clickable" tabindex="0" onclick="window.location='/runs/{{ r.id }}'">
+          <td>{{ r.objective[:110] }}{% if r.objective|length > 110 %}…{% endif %}</td>
+          <td><span class="badge {{ b[0] }}">{{ b[1] }}</span></td>
+          <td class="nums">{{ (r.usage or {}).get('qualified', 0) }} / {{ (r.limits or {}).get('target_qualified', '—') }}</td>
+          <td>{{ r.created_by_name or ('script' if r.run_kind == 'dev' else '—') }}</td>
+          <td class="small muted">{{ r.created_at | ago }}</td>
+          <td></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty">No runs yet. Start one above.</div>
+  {% endif %}
+</section>
+{% endblock %}

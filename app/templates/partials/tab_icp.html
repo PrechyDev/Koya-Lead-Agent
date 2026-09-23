@@ -1,0 +1,41 @@
+{% extends "partials/tab_base.html" %}
+{% block tab %}
+{% set icp = run.icp %}
+{% if not icp %}
+  <div class="empty">The ICP appears here once the agent has refined your objective.</div>
+{% else %}
+<div class="grid-2">
+  <div class="stack">
+    <h3>Refined ICP</h3>
+    <dl class="kv">
+      <dt>Company type</dt><dd>{{ icp.target_company_type or "—" }}</dd>
+      <dt>Industries</dt><dd>{{ (icp.industries or []) | join(", ") or "—" }}</dd>
+      <dt>Geography</dt><dd>{{ (icp.geography or []) | join(", ") or "—" }}</dd>
+      <dt>Headcount</dt><dd>{{ icp.headcount_range or "—" }}</dd>
+      <dt>Buyer persona</dt><dd>{{ icp.buyer_persona or "—" }}</dd>
+      <dt>Business problem</dt><dd>{{ icp.business_problem or "—" }}</dd>
+      {% if icp.requested_lead_count %}<dt>Requested leads</dt><dd>{{ icp.requested_lead_count }} (the run limit decides the final number)</dd>{% endif %}
+    </dl>
+  </div>
+  <div class="stack">
+    <h3>Hard filters <span class="small muted">(must all be true)</span></h3>
+    <ul class="clean">{% for f in icp.hard_filters or [] %}<li>{{ f }}</li>{% endfor %}</ul>
+    <h3>Disqualifiers</h3>
+    <ul class="clean">{% for f in icp.disqualifiers or [] %}<li>{{ f }}</li>{% else %}<li class="muted">None</li>{% endfor %}</ul>
+    <h3>Soft preferences <span class="small muted">(improve fit, never disqualify)</span></h3>
+    <ul class="clean">{% for f in icp.soft_preferences or [] %}<li>{{ f }}</li>{% else %}<li class="muted">None</li>{% endfor %}</ul>
+  </div>
+</div>
+<div class="grid-2" style="margin-top: 12px;">
+  <div class="callout">
+    <b>Assumptions the agent made</b>
+    <ul class="clean">{% for a in icp.assumptions or [] %}<li>{{ a }}</li>{% else %}<li>None: the objective was specific.</li>{% endfor %}</ul>
+  </div>
+  <div class="callout info">
+    <b>Your constraints preserved</b>
+    <ul class="clean">{% for c in icp.user_constraints_preserved or [] %}<li>{{ c }}</li>{% else %}<li>None stated</li>{% endfor %}</ul>
+  </div>
+</div>
+<p class="small muted" style="margin-top: 8px;">Search queries planned: {{ (icp.discovery_query_plan or []) | join(" · ") }}</p>
+{% endif %}
+{% endblock %}

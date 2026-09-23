@@ -1,0 +1,86 @@
+{#- Polled every 3s while the run is active. Status/errors show in banners here, never inside results. -#}
+{% set usage = run.usage or {} %}
+{% set limits = run.limits or {} %}
+{% if run.status in ACTIVE %}
+  {% set kind = "info" %}{% set message = (run.status_detail or "Working…") ~ ". Runs usually take 5–15 minutes; you can leave this page." %}
+  {% include "partials/banner.html" %}
+{% elif run.status == "completed" %}
+  {% set kind = "success" %}{% set message = "Run completed: " ~ (run.status_detail or "") %}{% include "partials/banner.html" %}
+{% elif run.status == "completed_partial" %}
+  {% set kind = "warning" %}{% set message = "Completed with fewer leads than the target. " ~ (run.shortfall_reason or "") %}{% include "partials/banner.html" %}
+{% elif run.status == "failed" %}
+  {% set kind = "error" %}{% set message = "Run failed: " ~ (run.error_message or run.status_detail or "unknown error") ~ ". Anything saved before the failure is kept below." %}{% include "partials/banner.html" %}
+{% elif run.status == "cancelled" %}
+  {% set kind = "warning" %}{% set message = run.status_detail or "Run cancelled." %}{% include "partials/banner.html" %}
+{% elif run.status == "superseded" %}
+  {% set kind = "info" %}{% set message = "You chose to open the previous matching run instead of paying for a new one." %}{% include "partials/banner.html" %}
+{% endif %}
+
+<ol class="stepper" aria-label="Progress">
+  {% for s in steps %}
+  <li class="{{ s.state }}"><span class="dot" aria-hidden="true">{% if s.state == 'done' %}✓{% elif s.state == 'failed' %}✕{% elif s.state == 'current' %}<span class="spinner"></span>{% else %}{{ loop.index }}{% endif %}</span>
+    <span>{{ s.label }}<span class="sr-only">{% if s.state == 'current' %} (in progress){% endif %}</span></span></li>
+  {% endfor %}
+</ol>
+
+<div class="row between">
+  <div class="counters" aria-label="Usage">
+    <span class="counter">Companies <b>{{ usage.get('candidates_found', 0) }} / {{ limits.get('max_candidates') }}</b></span>
+    <span class="counter">Pages scraped <b>{{ usage.get('scrapes', 0) }} / {{ limits.get('max_scrapes') }}</b></span>
+    <span class="counter">Qualified <b>{{ usage.get('qualified', 0) }} / {{ limits.get('target_qualified') }}</b></span>
+    <span class="counter">Claude <b>{{ run.cost_usd | money }} / {{ limits.get('max_budget_usd') | money }}</b></span>
+  </div>
+  <div class="row">
+    {% if run.status in ACTIVE %}<span id="live-stamp" class="live-stamp">Updating every few seconds</span>{% endif %}
+    {% if can_control and run.status in ACTIVE %}
+    <form hx-post="/runs/{{ run.id }}/cancel" hx-confirm="Cancel this run? Work done so far is kept." hx-disabled-elt="find button" hx-target="#system-message">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <button class="btn danger small" type="submit"><span class="when-idle">Cancel run</span><span class="when-loading"><span class="spinner"></span> Cancelling…</span></button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+
+{% if run.status == "awaiting_confirmation" %}
+<div class="stack">
+  <div class="callout">⚠ <b>You've researched this before.</b> This objective matches
+    {% if duplicate %}<a href="/runs/{{ duplicate.id }}">a run from {{ duplicate.created_at | ago }}</a> ({{ (duplicate.usage or {}).get('qualified', 0) }} qualified){% else %}an earlier run{% endif %}.
+    Nothing has been spent on searching yet. Choose how to continue:</div>
+  {% if can_control %}
+  <div class="gate-actions">
+    {% for choice, label, help, cls in [
+        ("open_previous", "Open it", "Free. See the earlier results.", "primary"),
+        ("find_new", "Find new companies", "New search; skips companies researched in the last 30 days.", ""),
+        ("refresh_same", "Refresh the same companies", "Re-research them with fresh data. Costs a full run.", ""),
+        ("cancel", "Cancel", "Stop here. Nothing more is spent.", "danger")] %}
+    <form hx-post="/runs/{{ run.id }}/confirm" hx-disabled-elt="find button">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <input type="hidden" name="choice" value="{{ choice }}">
+      <button class="btn {{ cls }}" type="submit"><span class="when-idle">{{ label }}</span><span class="when-loading"><span class="spinner"></span> Working…</span></button>
+      <span class="help">{{ help }}</span>
+    </form>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="help">Only the person who started this run, or an admin, can choose.</p>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if run.status == "needs_clarification" %}
+<div class="stack">
+  <div class="callout">⚠ <b>The agent needs more detail before spending on searches.</b></div>
+  <p><b>Question:</b> {{ run.clarification_question }}</p>
+  <form hx-post="/runs" hx-disabled-elt="find button" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <input type="hidden" name="idempotency_key" value="clarify-{{ run.id }}">
+    <input type="hidden" name="parent_run_id" value="{{ run.id }}">
+    <input type="hidden" name="target_qualified" value="{{ limits.get('target_qualified', 10) }}">
+    <div class="field">
+      <label for="clarified">Your answer, as a fuller objective</label>
+      <textarea id="clarified" name="objective" maxlength="1000" required>{{ run.objective }} — </textarea>
+    </div>
+    <div><button class="btn primary" type="submit"><span class="when-idle">Continue with this answer</span><span class="when-loading"><span class="spinner"></span> Starting…</span></button></div>
+  </form>
+</div>
+{% endif %}

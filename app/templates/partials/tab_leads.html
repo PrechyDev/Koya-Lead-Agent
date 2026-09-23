@@ -1,0 +1,43 @@
+{% extends "partials/tab_base.html" %}
+{% block tab %}
+{% set counts = {} %}
+{% for l in leads %}{% set _ = counts.update({l.qualification_status: counts.get(l.qualification_status, 0) + 1}) %}{% endfor %}
+<div class="row between" style="margin-bottom: 10px;">
+  <div class="chips" role="group" aria-label="Filter leads">
+    {% for key, label in [("", "All"), ("qualified", "Qualified"), ("needs_review", "Needs review"), ("not_qualified", "Not qualified"), ("pending", "Pending")] %}
+    <button type="button" class="chip" aria-pressed="{{ 'true' if filter == key else 'false' }}"
+      hx-get="/runs/{{ run.id }}/tab/leads{% if key %}?status={{ key }}{% endif %}" hx-target="#tab-panel" hx-swap="outerHTML">
+      {{ label }} ({{ leads | length if not key else counts.get(key, 0) }})</button>
+    {% endfor %}
+  </div>
+  <div class="row">
+    <a class="btn small" href="/runs/{{ run.id }}/export.csv">Download CSV</a>
+    <a class="btn small" href="/runs/{{ run.id }}/export.json">Download sample pack (JSON)</a>
+  </div>
+</div>
+{% set shown = leads if not filter else leads | selectattr("qualification_status", "equalto", filter) | list %}
+{% if shown %}
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Company</th><th>Domain</th><th>Status</th><th>Confidence</th><th>Drafts</th><th>Review</th><th></th></tr></thead>
+    <tbody>
+    {% for l in shown %}
+      {% set b = badge(l.qualification_status) %}{% set o = badge(l.outreach_status) %}{% set r = badge(l.review_status) %}
+      <tr class="clickable" tabindex="0" hx-get="/leads/{{ l.id }}" hx-target="#drawer" hx-swap="innerHTML">
+        <td>{{ l.company_name }}</td>
+        <td><a href="https://{{ l.company_domain }}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">{{ l.company_domain }} ↗</a></td>
+        <td><span class="badge {{ b[0] }}">{{ b[1] }}</span></td>
+        <td class="nums">{{ "%.2f" | format(l.confidence) if l.confidence is not none else "—" }}</td>
+        <td>{% if l.qualification_status == 'qualified' %}<span class="badge {{ o[0] }}">{{ o[1] }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td>{% if l.outreach_status == 'drafted' %}<span class="badge {{ r[0] }}">{{ r[1] }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+<p class="help">Click a company to see the evidence, sources and drafts. Pre-screened companies were rejected on discovery data before any scraping (no cost).</p>
+{% else %}
+<div class="empty">{% if leads %}No companies with this status.{% elif run.status in ACTIVE %}Companies appear here once discovery finishes.{% else %}No companies were found in this run.{% endif %}</div>
+{% endif %}
+{% endblock %}
