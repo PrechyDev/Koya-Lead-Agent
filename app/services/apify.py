@@ -18,6 +18,7 @@ from apify_client import ApifyClientAsync
 from apify_client.errors import ApifyApiError
 
 from app.config import get_settings
+from app.failures import classify_apify
 from app.lib.domain import normalize_domain
 from app.lib.sanitize import redact, redact_obj
 
@@ -32,9 +33,11 @@ LOCATION_NAMES = {"us": "United States", "gb": "United Kingdom", "ca": "Canada",
 
 
 class DiscoveryError(Exception):
-    def __init__(self, code: str, message: str, apify_run_id: str | None = None):
+    """`failure_code` is a key of app.failures.CATALOGUE (None for 'no slots left', which isn't a failure)."""
+
+    def __init__(self, code: str, message: str, apify_run_id: str | None = None, failure_code: str | None = None):
         super().__init__(message)
-        self.code, self.message, self.apify_run_id = code, message, apify_run_id
+        self.code, self.message, self.apify_run_id, self.failure_code = code, message, apify_run_id, failure_code
 
 
 @dataclass
@@ -80,14 +83,15 @@ def normalize_company(item: dict) -> dict | None:
             break
     description = redact((item.get("description") or "")[:800])[0]
     return {
-        "name": (item.get("name") or domain).strip(),
+        "name": redact((item.get("name") or domain).strip())[0][:200],
         "domain": domain,
         "website": item.get("website"),
         "linkedin_url": item.get("linkedinUrl"),
         "tagline": redact(item.get("tagline") or "")[0],
+        # Everything text-like from Apify is redacted before storage or the model (E-11).
         "description": description,
-        "industries": [i.get("name") for i in (item.get("industries") or []) if i.get("name")],
-        "specialities": (item.get("specialities") or [])[:8],
+        "industries": [redact(i.get("name"))[0] for i in (item.get("industries") or []) if i.get("name")],
+        "specialities": [redact(str(s))[0] for s in (item.get("specialities") or [])[:8]],
         "employee_count_linkedin": item.get("employeeCount"),
         "employee_count_range": item.get("employeeCountRange"),
         "hq": hq,
@@ -156,14 +160,14 @@ async def find_companies(
             break
         except ApifyApiError as exc:
             status = getattr(exc, "status_code", None)
-            if status in (401, 403):
-                raise DiscoveryError("auth", "Apify rejected the token (check APIFY_TOKEN is the team token).") from exc
-            if attempt == 0 and (status is None or status >= 500):
+            failure = classify_apify(status, f"{getattr(exc, 'type', '')} {exc}")
+            if failure == "apify_unavailable" and attempt == 0:
                 await asyncio.sleep(2)  # start request failed before any run existed: safe to retry once
                 continue
-            raise DiscoveryError("apify_error", f"Apify API error ({status}).") from exc
+            raise DiscoveryError(failure, f"Apify API error ({status}): {str(exc)[:200]}", failure_code=failure) from exc
         except TimeoutError as exc:
-            raise DiscoveryError("timeout", "Apify did not answer in time. Check the Apify console before re-running.") from exc
+            raise DiscoveryError("timeout", "Apify did not answer in time. Check the Apify console before re-running.",
+                                 failure_code="apify_unavailable") from exc
 
     if run is None:
         raise DiscoveryError("apify_error", "Apify returned no run.")
@@ -175,7 +179,7 @@ async def find_companies(
         raise DiscoveryError(
             "actor_" + str(status or "unknown").lower(),
             f"Apify run {run_id} ended {status}. Check it in the Apify console before re-running.",
-            apify_run_id=run_id,
+            apify_run_id=run_id, failure_code="apify_run_failed",
         )
     listing = await client.dataset(r["defaultDatasetId"]).list_items(limit=int(max_items))
     raw = listing.items or []

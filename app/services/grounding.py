@@ -16,6 +16,7 @@ import anthropic
 from pydantic import BaseModel, Field
 
 from app.config import get_settings
+from app.failures import classify_claude_error
 from app.lib.budget import cost_from_usage
 
 SYSTEM = """You are a strict fact-checker for cold outreach drafts.
@@ -57,6 +58,7 @@ class GroundingResult:
     input_tokens: int
     output_tokens: int
     error: str | None = None
+    failure_code: str | None = None  # set when the checker itself was unavailable (not the draft's fault)
 
     def report(self) -> dict:
         return {
@@ -95,12 +97,13 @@ async def check_grounding(
             messages=[{"role": "user", "content": build_prompt(source_context, steps, linkedin_message)}],
             output_format=GroundingVerdict,
         )
-    except anthropic.RateLimitError:
-        return GroundingResult(False, None, [], Decimal("0"), model, 0, 0, "grounding check rate-limited; retry later")
     except anthropic.APIStatusError as exc:
-        return GroundingResult(False, None, [], Decimal("0"), model, 0, 0, f"grounding check failed ({exc.status_code})")
+        code = classify_claude_error(exc.status_code, str(exc))
+        return GroundingResult(False, None, [], Decimal("0"), model, 0, 0,
+                               f"fact-checker unavailable ({exc.status_code})", failure_code=code)
     except anthropic.APIConnectionError:
-        return GroundingResult(False, None, [], Decimal("0"), model, 0, 0, "grounding check could not reach the API")
+        return GroundingResult(False, None, [], Decimal("0"), model, 0, 0, "fact-checker could not reach the API",
+                               failure_code="anthropic_unavailable")
 
     usage = response.usage
     cost = cost_from_usage(

@@ -26,6 +26,34 @@ _TYPE_SYNONYMS = {
 }
 
 
+def objective_problem(text: str) -> str | None:
+    """Free check before any AI call: None if it could be a lead objective, else a plain-language reason.
+
+    Deliberately simple: it only stops obvious junk (symbols, keyboard mashing, one or two words). Whether the
+    request is actually a *lead search* is decided next by the ICP step's request_type (cheap AI call).
+    """
+    t = (text or "").strip()
+    if len(t) < 5:
+        return "Describe the companies you want to find (at least a few words)."
+    if len(t) > 1000:
+        return "Keep the objective under 1,000 characters."
+    visible = [c for c in t if not c.isspace()]
+    letters = sum(c.isalpha() for c in visible)
+    if not visible or letters / len(visible) < 0.6:
+        return "That looks like mostly symbols or numbers. Describe the companies you want to find in words."
+    words = re.findall(r"[^\W\d_]{2,}", t)
+    if len(words) < 3:
+        return ("Please describe the companies in a short sentence, e.g. "
+                "\"Find US B2B SaaS companies with 10 to 100 employees\".")
+    if re.search(r"(.)\1{5,}", t):
+        return "That looks like repeated characters. Describe the companies you want to find."
+    vowelless = [w for w in words if len(w) >= 4 and not re.search(r"[aeiouyAEIOUY]", w)]
+    long_mash = [w for w in words if len(w) >= 13 and len(set(w.lower())) <= 6]
+    if len(vowelless) > len(words) / 2 or long_mash:
+        return "That doesn't look like a sentence. Describe the companies you want to find."
+    return None
+
+
 def normalize_text(text: str) -> str:
     text = (text or "").lower()
     text = re.sub(r"[^\w\s]", " ", text)

@@ -9,13 +9,17 @@
 {% elif run.status == "completed_partial" %}
   {% set kind = "warning" %}{% set message = "Completed with fewer leads than the target. " ~ (run.shortfall_reason or "") %}{% include "partials/banner.html" %}
 {% elif run.status == "failed" %}
-  {% set kind = "error" %}{% set message = "Run failed: " ~ (run.error_message or run.status_detail or "unknown error") ~ ". Anything saved before the failure is kept below." %}{% include "partials/banner.html" %}
+  {% set kind = "error" %}{% set message = run.error_message or run.status_detail or "The run couldn't finish. Anything saved before the problem is kept below." %}{% include "partials/banner.html" %}
 {% elif run.status == "cancelled" %}
   {% set kind = "warning" %}{% set message = run.status_detail or "Run cancelled." %}{% include "partials/banner.html" %}
 {% elif run.status == "superseded" %}
   {% set kind = "info" %}{% set message = "You chose to open the previous matching run instead of paying for a new one." %}{% include "partials/banner.html" %}
 {% endif %}
 
+{% if member and member.is_admin and run.error_detail %}
+<details class="small"><summary>Technical detail (admins only)</summary><p class="mono">{{ run.error_detail }}</p>
+  <p><a href="/system">Open System issues</a></p></details>
+{% endif %}
 <ol class="stepper" aria-label="Progress">
   {% for s in steps %}
   <li class="{{ s.state }}"><span class="dot" aria-hidden="true">{% if s.state == 'done' %}✓{% elif s.state == 'failed' %}✕{% elif s.state == 'current' %}<span class="spinner"></span>{% else %}{{ loop.index }}{% endif %}</span>

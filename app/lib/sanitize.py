@@ -13,6 +13,12 @@ from dataclasses import dataclass, field
 from typing import Any
 
 EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
+# Disguised emails: "jane [at] acme [dot] io", "jane(at)acme(dot)io", "jane at acme dot io", "jane AT acme DOT io".
+OBFUSCATED_EMAIL_RE = re.compile(
+    r"\b[A-Za-z0-9._%+\-]+\s*(?:\[\s*at\s*\]|\(\s*at\s*\)|\{\s*at\s*\}|\s+at\s+)\s*[A-Za-z0-9\-]+"
+    r"(?:\s*(?:\[\s*dot\s*\]|\(\s*dot\s*\)|\{\s*dot\s*\}|\s+dot\s+)\s*[A-Za-z0-9\-]+)+\b",
+    re.I,
+)
 # Phone-shaped numbers only (separators or a leading +), so years/prices survive.
 PHONE_RE = re.compile(
     r"(?<!\w)(?:\+\d{1,3}[\s.\-]?)?(?:\(\d{2,4}\)[\s.\-]?|\d{2,4}[\s.\-])\d{3,4}[\s.\-]\d{3,4}(?!\w)"
@@ -57,6 +63,7 @@ def redact(text: str) -> tuple[str, dict[str, int]]:
         return new
 
     text = _sub(EMAIL_RE, "email", text)
+    text = _sub(OBFUSCATED_EMAIL_RE, "email", text)
     text = _sub(TOKEN_RE, "token", text)
     text = _sub(PHONE_RE, "phone", text)
     return text, counts
@@ -106,4 +113,4 @@ def redact_obj(value: Any) -> Any:
 
 
 def contains_contact_details(text: str) -> bool:
-    return bool(EMAIL_RE.search(text or "") or PHONE_RE.search(text or ""))
+    return bool(EMAIL_RE.search(text or "") or OBFUSCATED_EMAIL_RE.search(text or "") or PHONE_RE.search(text or ""))

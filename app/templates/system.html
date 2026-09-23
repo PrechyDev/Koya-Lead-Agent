@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% set active_nav = "system" %}
+{% block title %}System issues · Koya Lead Research Agent{% endblock %}
+{% block content %}
+<section class="card stack">
+  <div class="row between">
+    <h1>System issues</h1>
+    <form hx-post="/system/test-alert" hx-target="#system-message" hx-disabled-elt="find button">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <button class="btn small" type="submit" {% if not webhook %}disabled title="Set ALERT_WEBHOOK_URL to enable email alerts"{% endif %}>
+        <span class="when-idle">Send a test alert</span><span class="when-loading"><span class="spinner"></span> Sending…</span></button>
+    </form>
+  </div>
+  <p class="muted">Problems with outside services (AI, company search, website research, database, budget). Team members only see a
+    plain message; the detail and the fix are here. {% if webhook %}New issues are also emailed to you via the alert webhook.{% else %}
+    <b>Email alerts are off</b>: set <span class="mono">ALERT_WEBHOOK_URL</span> to your n8n webhook to get emails.{% endif %}</p>
+</section>
+<section class="card">
+  {% if events %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Status</th><th>Severity</th><th>Service</th><th>What happened and how to fix it</th><th>Seen</th><th>Run</th><th></th></tr></thead>
+    <tbody>
+    {% for e in events %}
+      <tr class="{{ 'row-error' if e.severity == 'critical' and not e.resolved_at else ('row-blocked' if e.severity == 'warning' and not e.resolved_at else '') }}">
+        <td>{% if e.resolved_at %}<span class="badge success">✓ Resolved</span><div class="small muted">{{ e.resolved_by_name or '' }}</div>{% else %}<span class="badge warning">Open</span>{% endif %}</td>
+        <td><span class="badge {{ 'danger' if e.severity == 'critical' else ('warning' if e.severity == 'warning' else 'info') }}">{{ e.severity }}</span></td>
+        <td>{{ e.service }}<div class="small mono muted">{{ e.code }}</div></td>
+        <td class="small">{{ e.message }}</td>
+        <td class="small nums">{{ e.last_seen_at | ago }}{% if e.occurrences > 1 %}<div class="muted">×{{ e.occurrences }}</div>{% endif %}{% if e.notified_at %}<div class="muted">emailed</div>{% endif %}</td>
+        <td>{% if e.run_id %}<a href="/runs/{{ e.run_id }}">View run</a>{% endif %}</td>
+        <td>{% if not e.resolved_at %}
+          <form hx-post="/system/{{ e.id }}/resolve" hx-disabled-elt="find button">
+            <input type="hidden" name="csrf_token" value="{{ csrf }}">
+            <button class="btn small" type="submit">Mark fixed</button></form>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}
+  <div class="empty">No issues. Everything is working.</div>
+  {% endif %}
+</section>
+{% endblock %}

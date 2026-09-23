@@ -18,6 +18,7 @@
         {% if member.is_admin %}
         <a href="/team" {% if active_nav == 'team' %}aria-current="page"{% endif %}>Team</a>
         <a href="/spend" {% if active_nav == 'spend' %}aria-current="page"{% endif %}>Spend</a>
+        <a href="/system" {% if active_nav == 'system' %}aria-current="page"{% endif %}>System issues{% if open_issues %} <span class="badge danger">{{ open_issues }}</span>{% endif %}</a>
         {% endif %}
       </nav>
       <div class="usermenu">
@@ -29,6 +30,10 @@
     </div>
   </header>
   <main>
+    {% if member and member.is_admin and open_issues and active_nav != 'system' %}
+    <div class="banner warning" role="status"><span class="icon" aria-hidden="true">⚠</span>
+      <div class="msg">{{ open_issues }} system issue{{ 's' if open_issues != 1 }} need{{ 's' if open_issues == 1 }} attention (e.g. a service out of credit). <a href="/system">View and fix</a></div></div>
+    {% endif %}
     <div id="system-message" role="status" aria-live="polite">{% block banner %}{% endblock %}</div>
     {% block content %}{% endblock %}
   </main>

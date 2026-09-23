@@ -11,7 +11,11 @@ from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from app import auth, db
+import uuid as _uuid
+
+import psycopg
+
+from app import alerts, auth, db
 from app.config import get_settings
 from app.runs import manager, recover_orphans
 from app.web.templating import templates
@@ -118,6 +122,34 @@ async def http_error(request: Request, exc: HTTPException):
         return JSONResponse({"error": {"code": exc.status_code, "message": message}}, status_code=exc.status_code)
     return templates.TemplateResponse(request, "error.html", {"title": "Can't do that", "message": message},
                                       status_code=exc.status_code)
+
+
+@app.exception_handler(psycopg.OperationalError)
+async def database_down(request: Request, exc: psycopg.OperationalError):
+    await db.run(alerts.raise_alert, "database_unavailable", str(exc)[:300])
+    return _friendly_error(request, "Database unavailable",
+                           "The app can't reach its database right now. Please try again in a few minutes.", 503)
+
+
+@app.exception_handler(Exception)
+async def unexpected_error(request: Request, exc: Exception):
+    if isinstance(exc, psycopg.OperationalError):  # raised in middleware, outside the specific handler
+        return await database_down(request, exc)
+    ref = _uuid.uuid4().hex[:8]
+    log.exception("unexpected error ref=%s path=%s", ref, request.url.path)
+    await db.run(alerts.raise_alert, "unexpected", f"ref {ref} on {request.url.path}: {type(exc).__name__}: {exc}"[:500])
+    return _friendly_error(request, "Something went wrong",
+                           f"Something went wrong on our side. Your admin has been told (reference {ref}).", 500)
+
+
+def _friendly_error(request: Request, title: str, message: str, status: int):
+    if _is_htmx(request):
+        return templates.TemplateResponse(request, "partials/banner.html", {"kind": "error", "message": message},
+                                          status_code=status, headers={"HX-Retarget": "#system-message",
+                                                                       "HX-Reswap": "innerHTML"})
+    if request.url.path.endswith(".json"):
+        return JSONResponse({"error": {"code": status, "message": message}}, status_code=status)
+    return templates.TemplateResponse(request, "error.html", {"title": title, "message": message}, status_code=status)
 
 
 @app.get("/health")

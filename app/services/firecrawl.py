@@ -24,10 +24,18 @@ USEFUL_PATH_RE = re.compile(r"/(?:about|company|team|who-we-are|our-story|custom
 PARKED_RE = re.compile(r"\b(?:this domain (?:is|may be) for sale|buy this domain|domain parking|parked free)\b", re.I)
 
 
+FATAL_SCRAPE_CODES = {"credits_exhausted": "firecrawl_no_credit", "auth": "firecrawl_auth"}
+
+
 class ScrapeError(Exception):
     def __init__(self, code: str, message: str, status_code: int | None = None):
         super().__init__(message)
         self.code, self.message, self.status_code = code, message, status_code
+
+    @property
+    def failure_code(self) -> str | None:
+        """Catalogue code if this failure means scraping can't work for anyone (stop the run)."""
+        return FATAL_SCRAPE_CODES.get(self.code)
 
 
 @dataclass

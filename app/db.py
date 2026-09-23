@@ -37,6 +37,7 @@ RUN_COLUMNS = {
     "icp", "icp_assumptions", "icp_signature", "clarification_question", "duplicate_of_run_id",
     "repeat_choice", "cross_run_dedupe", "usage", "models", "status", "status_detail", "error_message",
     "summary", "shortfall_reason", "quality_scorecard", "cost_usd", "num_turns", "started_at", "finished_at",
+    "request_type", "error_detail",
 }
 LEAD_COLUMNS = {
     "company_name", "linkedin_url", "discovery_data", "prescreen_result", "prescreen_reason",

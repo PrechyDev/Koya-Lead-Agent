@@ -24,14 +24,16 @@ from claude_agent_sdk import (
     query,
 )
 
-from app import db
+from app import alerts, db
 from app.agent import prompts
 from app.agent.context import RunContext
 from app.agent.logging import log_event
 from app.agent.tools import build_scorecard, build_server, mcp_name
 from app.agent.transcripts import session_cost
 from app.config import ICP_PHASE_MAX_BUDGET_USD, ICP_PHASE_MAX_TURNS, ICP_PHASE_TIMEOUT_S, get_settings
+from app.failures import ServiceFailure, classify_claude_error
 from app.lib.budget import BudgetExceeded, assert_can_spend
+from app.services import health
 from app.lib.sanitize import redact
 
 log = logging.getLogger("lead_agent.runner")
@@ -134,9 +136,11 @@ class _Session:
     def __init__(self) -> None:
         self.session_id: str | None = None
         self.result: ResultMessage | None = None
+        self.stopped_for_fatal = False
 
 
-async def _consume(prompt: str, options: ClaudeAgentOptions, session: _Session, timeout_s: int) -> ResultMessage | None:
+async def _consume(prompt: str, options: ClaudeAgentOptions, session: _Session, timeout_s: int,
+                   ctx: RunContext | None = None) -> ResultMessage | None:
     async def read() -> None:
         async for message in query(prompt=prompt, options=options):
             data = getattr(message, "data", None)
@@ -145,6 +149,11 @@ async def _consume(prompt: str, options: ClaudeAgentOptions, session: _Session, 
                 session.session_id = sid
             if isinstance(message, ResultMessage):
                 session.result = message  # the last one carries the cumulative cost
+            if ctx is not None and ctx.fatal is not None:
+                # A service can't work (out of credit, bad key, wrong actor...): stop now, don't let the
+                # agent keep trying and spending (E-50). Leaving the loop closes the CLI process.
+                session.stopped_for_fatal = True
+                break
 
     try:
         await asyncio.wait_for(read(), timeout=timeout_s)
@@ -154,7 +163,7 @@ async def _consume(prompt: str, options: ClaudeAgentOptions, session: _Session, 
 
 
 def _recover_cost(run_id: str, source: str, session: _Session, why: str) -> Decimal:
-    """Phase ended without a ResultMessage (timeout/crash/cancel): recover the true cost from transcripts."""
+    """Phase ended without a ResultMessage (timeout/crash/cancel/stop): recover the true cost from transcripts."""
     if not session.session_id or session.result is not None:
         return Decimal("0")
     total = Decimal("0")
@@ -191,24 +200,52 @@ def _refresh_run_cost(run_id: str, turns_add: int = 0) -> None:
                        (run_id,))
     run = db.get_run(run_id)
     db.update_run(run_id, cost_usd=Decimal(str(row["s"])), num_turns=int(run["num_turns"] or 0) + turns_add)
+    alerts.check_budget()
+
+
+def _result_failure(result: ResultMessage | None) -> ServiceFailure | None:
+    """Turn an SDK error result (API error inside the CLI) into a classified failure."""
+    if result is None or not result.is_error or result.subtype in ("error_max_budget_usd", "error_max_turns"):
+        return None
+    text = " ".join([str(result.result or ""), *[str(e) for e in (result.errors or [])]])
+    return ServiceFailure(classify_claude_error(result.api_error_status, text),
+                          f"{result.subtype}; HTTP {result.api_error_status}; {text[:300]}")
+
+
+def fail_run(run_id: str, failure: ServiceFailure, detail_status: str | None = None) -> None:
+    """Store a failed run with the client message + admin detail, and alert the owner."""
+    scorecard, qualified, target = build_scorecard(run_id)
+    status = "completed_partial" if qualified else "failed"
+    db.set_status(run_id, status, detail_status or ("Stopped: " + failure.client if qualified else failure.client),
+                  error_message=failure.client, error_detail=f"[{failure.code}] {failure.detail}"[:2000],
+                  quality_scorecard=scorecard if qualified else None,
+                  **({"shortfall_reason": failure.client} if qualified else {}))
+    alerts.raise_alert(failure.code, failure.detail, run_id=run_id)
 
 
 # ---------------------------------------------------------------------------
 # Phase A
 # ---------------------------------------------------------------------------
 async def run_icp_phase(run_id: str) -> str:
-    """Returns the status the run is left in: needs_clarification | awaiting_confirmation | ready."""
+    """Returns the status the run is left in: needs_clarification | awaiting_confirmation | ready | failed."""
     settings = get_settings()
-    missing = settings.missing_run_config()
-    if missing:
-        raise RunAborted("Not configured: " + ", ".join(missing) + " must be set before runs can start.")
     ctx = await db.run(RunContext.load, run_id)
     run = await db.run(db.get_run, run_id)
     spent = await db.run(db.total_spend)
-    assert_can_spend(spent, Decimal(str(ctx.limits["max_budget_usd"])) + GROUNDING_RESERVE_USD,
-                     settings.claude_budget_total_usd)
+    try:
+        assert_can_spend(spent, Decimal(str(ctx.limits["max_budget_usd"])) + GROUNDING_RESERVE_USD,
+                         settings.claude_budget_total_usd)
+    except BudgetExceeded as exc:
+        await db.run(fail_run, run_id, ServiceFailure("budget_exhausted", str(exc)))
+        return "failed"
+    failures = await db.run(health.preflight, ctx.limits)
+    if failures:
+        await db.run(fail_run, run_id, failures[0])
+        for extra in failures[1:]:
+            await db.run(alerts.raise_alert, extra.code, extra.detail, run_id)
+        return "failed"
 
-    await db.run(db.set_status, run_id, "refining_icp", "Refining the objective into an ICP",
+    await db.run(db.set_status, run_id, "refining_icp", "Understanding your objective",
                  started_at=datetime.now().astimezone())
     parent = await db.run(db.get_run, str(run["parent_run_id"])) if run.get("parent_run_id") else None
     options = _options(ctx, model=settings.model_icp, system_prompt=prompts.ICP_SYSTEM, tool_names=ICP_TOOLS,
@@ -218,7 +255,12 @@ async def run_icp_phase(run_id: str) -> str:
     try:
         result = await _consume(prompts.icp_user_prompt(run["objective"], parent and parent["objective"],
                                                         "answered" if parent else None), options, session,
-                                timeout_s=ICP_PHASE_TIMEOUT_S)
+                                timeout_s=ICP_PHASE_TIMEOUT_S, ctx=ctx)
+    except PhaseTimeout as exc:
+        await db.run(_recover_cost, run_id, "icp", session, "watchdog timeout")
+        await db.run(_refresh_run_cost, run_id)
+        await db.run(fail_run, run_id, ServiceFailure("anthropic_unavailable", f"ICP step timed out: {exc}"))
+        return "failed"
     except BaseException:
         await db.run(_recover_cost, run_id, "icp", session, "phase interrupted")
         await db.run(_refresh_run_cost, run_id)
@@ -228,12 +270,15 @@ async def run_icp_phase(run_id: str) -> str:
 
     run = await db.run(db.get_run, run_id)
     if run["clarification_question"] and not run["icp_signature"]:
-        await db.run(db.set_status, run_id, "needs_clarification",
-                     "The objective is too vague to search. Answer the question to continue.")
+        detail = ("This doesn't look like a search for companies." if run.get("request_type") in ("question", "unrelated")
+                  else "The objective needs a little more detail before searching.")
+        await db.run(db.set_status, run_id, "needs_clarification", detail + " Answer the question to continue.")
         return "needs_clarification"
     if not run["icp"]:
-        raise RunAborted("The ICP step finished without saving an ICP"
-                         + (f" ({result.subtype})" if result else ""))
+        failure = _result_failure(result) or ServiceFailure(
+            "anthropic_unavailable", f"ICP step ended without saving an ICP ({result.subtype if result else 'no result'})")
+        await db.run(fail_run, run_id, failure)
+        return "failed"
 
     match = await db.run(db.find_recent_run_by_signature, run["icp_signature"], settings.research_reuse_days, run_id)
     if match and not run.get("repeat_choice"):
@@ -254,8 +299,17 @@ async def run_research_phase(run_id: str) -> None:
     run = await db.run(db.get_run, run_id)
     remaining_budget = max(0.05, float(ctx.limits["max_budget_usd"]) - float(run["cost_usd"] or 0))
     spent = await db.run(db.total_spend)
-    assert_can_spend(spent, Decimal(str(remaining_budget)) + GROUNDING_RESERVE_USD, settings.claude_budget_total_usd)
-    await db.run(db.set_status, run_id, "discovering", "Starting company discovery",
+    try:
+        assert_can_spend(spent, Decimal(str(remaining_budget)) + GROUNDING_RESERVE_USD,
+                         settings.claude_budget_total_usd)
+    except BudgetExceeded as exc:
+        await db.run(fail_run, run_id, ServiceFailure("budget_exhausted", str(exc)))
+        return
+    failures = await db.run(health.preflight, ctx.limits)  # cached; matters when resuming from the repeat gate
+    if failures:
+        await db.run(fail_run, run_id, failures[0])
+        return
+    await db.run(db.set_status, run_id, "discovering", "Searching for companies",
                  models={"orchestrator": settings.model_orchestrator, "icp": settings.model_icp,
                          "researcher": settings.model_researcher, "copywriter": settings.model_copywriter,
                          "grounding": settings.model_grounding})
@@ -291,52 +345,70 @@ async def run_research_phase(run_id: str) -> None:
     session = _Session()
     timeout_s = int(ctx.limits.get("phase_timeout_s", 1800))
     try:
-        result = await _consume(prompts.orchestrator_user_prompt(run), options, session, timeout_s=timeout_s)
+        result = await _consume(prompts.orchestrator_user_prompt(run), options, session, timeout_s=timeout_s, ctx=ctx)
     except PhaseTimeout as exc:
         await db.run(_recover_cost, run_id, "run", session, "watchdog timeout")
         await db.run(_refresh_run_cost, run_id)
-        await db.run(_force_finish, ctx, None, f"{exc}; stopped by the watchdog")
+        failure = ServiceFailure("run_timeout", str(exc))
+        await db.run(_force_finish, ctx, None, "it ran too long and was stopped safely", failure)
+        await db.run(alerts.raise_alert, failure.code, failure.detail, run_id)
         return
     except BaseException:
         await db.run(_recover_cost, run_id, "run", session, "phase interrupted")
         await db.run(_refresh_run_cost, run_id)
         raise
-    await db.run(_record_cost, run_id, "run", result, settings.model_orchestrator)
+    if session.stopped_for_fatal:
+        await db.run(_recover_cost, run_id, "run", session, f"stopped: {ctx.fatal.code}")
+    else:
+        await db.run(_record_cost, run_id, "run", result, settings.model_orchestrator)
     await db.run(_refresh_run_cost, run_id, result.num_turns if result else 0)
 
+    if ctx.fatal is not None:
+        await db.run(fail_run, run_id, ctx.fatal)
+        return
+    failure = _result_failure(result)
+    if failure and not ctx.finished:
+        await db.run(fail_run, run_id, failure)
+        return
     if not ctx.finished:
         await db.run(_force_finish, ctx, result)
 
 
-def _force_finish(ctx: RunContext, result: ResultMessage | None, why: str | None = None) -> None:
+def _force_finish(ctx: RunContext, result: ResultMessage | None, why: str | None = None,
+                  failure: ServiceFailure | None = None) -> None:
     """The agent stopped without finish_run (limit, timeout, or it just stopped): finalize from real counts (E-22/23)."""
     scorecard, qualified, target = build_scorecard(ctx.run_id)
     reason = (result.subtype if result else "no result")
-    why = why or {"error_max_budget_usd": "the per-run Claude budget was reached",
-           "error_max_turns": "the per-run turn limit was reached"}.get(reason, f"the agent stopped early ({reason})")
+    why = why or {"error_max_budget_usd": "it reached this run's AI budget",
+                  "error_max_turns": "it reached this run's step limit"}.get(reason, "the agent stopped early")
+    client = f"The research stopped because {why}. Everything found so far is saved below."
+    detail = f"[{failure.code if failure else 'agent_stopped'}] {failure.detail if failure else reason}"
     if qualified == 0:
-        db.set_status(ctx.run_id, "failed", f"Stopped: {why}; no qualified leads", error_message=f"Stopped: {why}.",
+        db.set_status(ctx.run_id, "failed", client, error_message=client, error_detail=detail,
                       quality_scorecard=scorecard)
     else:
-        db.set_status(ctx.run_id, "completed_partial", f"{qualified} of {target} qualified (stopped: {why})",
-                      shortfall_reason=f"Stopped before finishing: {why}. The agent did not finalize; "
-                                       "counts are from saved records.",
-                      quality_scorecard=scorecard, summary="Finalized by the system.")
+        db.set_status(ctx.run_id, "completed_partial", f"{qualified} of {target} qualified (stopped early)",
+                      shortfall_reason=client, error_detail=detail, quality_scorecard=scorecard,
+                      summary="Finalized by the system.")
 
 
 async def execute_run(run_id: str, skip_icp: bool = False) -> None:
-    """Entry point used by the RunManager. Never raises: failures are stored on the run."""
+    """Entry point used by the RunManager. Never raises: failures are stored on the run and alerted."""
     try:
         if not skip_icp:
             state = await run_icp_phase(run_id)
             if state != "ready":
                 return
         await run_research_phase(run_id)
-    except BudgetExceeded as exc:
-        await db.run(db.set_status, run_id, "failed", "Refused before spending: budget", error_message=str(exc))
     except RunAborted as exc:
-        await db.run(db.set_status, run_id, "failed", "Failed", error_message=str(exc))
+        await db.run(fail_run, run_id, ServiceFailure("unexpected", str(exc)))
     except Exception as exc:  # noqa: BLE001 — visible failure, never silent
         log.exception("run %s failed", run_id)
-        await db.run(db.set_status, run_id, "failed", "Failed unexpectedly",
-                     error_message=redact(f"{type(exc).__name__}: {exc}")[0][:900])
+        text = redact(f"{type(exc).__name__}: {exc}")[0][:900]
+        code = "database_unavailable" if "psycopg" in type(exc).__module__ else (
+            classify_claude_error(None, text) if "claude" in text.lower() or "anthropic" in text.lower()
+            else "unexpected")
+        try:
+            await db.run(fail_run, run_id, ServiceFailure(code, text))
+        except Exception:  # noqa: BLE001 — the DB may be what failed
+            alerts.raise_alert(code, text, run_id)

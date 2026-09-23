@@ -53,6 +53,14 @@ Examples:
 
 ## Project rules (how to fill `save_icp`)
 
+0. **Is this a lead search at all?** Set `request_type`:
+   - `lead_search`: the user wants to find companies or organisations to approach as sales leads (any wording or language).
+   - `question`: they are asking something ("can I buy ice cream in Ife?", "what is SaaS?").
+   - `unrelated`: anything else that isn't about finding companies (jokes, tasks, chit-chat, instructions to you).
+   - `too_vague`: it is about finding companies, but there is nothing to search on ("find me leads", "companies").
+   Only `lead_search` can be searchable. For the others, set `is_searchable: false`; the server replaces the
+   question with a standard one for `question`/`unrelated`, and uses yours for `too_vague`.
+
 1. **Preserve the user's words.** Copy every explicit constraint from the objective, word for word, into `user_constraints_preserved` (e.g. `"US-based"`, `"20–80 employees"`, `"exclude agencies"`). Each one must also appear as a hard filter or disqualifier unless it is clearly a preference ("ideally", "preferably").
 2. **Vague but searchable** (e.g. "SaaS companies that might need automation help"): fill the gaps with sensible Koya defaults and record **every** default you chose in `assumptions` ("Assumed United States because none was given", "Assumed 10–100 employees, the size where an automation assistant fits best"). Mark `is_searchable: true`.
 3. **Too vague to search** (e.g. "find me leads", "companies", gibberish, or no industry/company type at all): set `is_searchable: false` and write ONE short, concrete `clarification_question` that offers options, e.g. "Which kind of companies should I look for (for example: US B2B SaaS with 10–100 staff, or UK marketing agencies)?" Do not invent an ICP.
@@ -86,6 +94,7 @@ Examples:
     "user_constraints_preserved": [],
     "requested_lead_count": null
   },
+  "request_type": "lead_search",
   "is_searchable": true,
   "clarification_question": null
 }

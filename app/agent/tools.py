@@ -18,6 +18,7 @@ from app import db
 from app.agent.context import RunContext
 from app.agent.logging import Outcome, blocked, failure, logged_call, success
 from app.config import get_settings
+from app.failures import ServiceFailure
 from app.lib.budget import BudgetExceeded, assert_can_spend
 from app.lib.domain import homepage_url, normalize_domain
 from app.lib.limits import next_discovery_batch
@@ -30,6 +31,13 @@ from app.services import firecrawl as fc
 from app.services.grounding import check_grounding
 
 SERVER_NAME = "leadtools"
+OUT_OF_SCOPE_QUESTION = {
+    "question": "This tool finds companies for Koya's outbound team; it can't answer general questions. Which "
+                "companies would you like to find? For example: \"US B2B SaaS companies with 10 to 100 employees\".",
+    "unrelated": "This request doesn't look like a search for sales leads. Which kind of companies should the "
+                 "agent find (industry, location, size)? For example: \"UK marketing agencies with 20 to 50 staff\".",
+    "too_vague": "",
+}
 GROUNDING_CALL_CAP_USD = 0.03
 STANDARD_PATHS = {"/", "/about", "/about-us", "/company", "/careers", "/jobs", "/customers", "/team"}
 
@@ -59,6 +67,7 @@ class ICPModel(BaseModel):
 
 class SaveICPInput(BaseModel):
     purpose: str = ""
+    request_type: Literal["lead_search", "question", "unrelated", "too_vague"] = "lead_search"
     icp: ICPModel
     is_searchable: bool
     clarification_question: str | None = None
@@ -125,10 +134,13 @@ SAVE_ICP_SCHEMA = {
                          "soft_preferences", "disqualifiers", "discovery_query_plan", "assumptions",
                          "user_constraints_preserved"],
         },
+        "request_type": {"type": "string", "enum": ["lead_search", "question", "unrelated", "too_vague"],
+                         "description": "lead_search only if the objective asks to find companies/organisations "
+                                        "as sales leads"},
         "is_searchable": {"type": "boolean"},
         "clarification_question": {"type": ["string", "null"]},
     },
-    "required": ["purpose", "icp", "is_searchable"],
+    "required": ["purpose", "request_type", "icp", "is_searchable"],
 }
 DISCOVER_SCHEMA = {
     "type": "object",
@@ -223,12 +235,16 @@ def build_handlers(ctx: RunContext) -> dict:
         if err:
             return err
         icp = parsed.icp.model_dump()
+        if parsed.request_type != "lead_search":
+            # Server rule: only a lead search may proceed, whatever else the model decided (E-50).
+            parsed.is_searchable = False
+            parsed.clarification_question = OUT_OF_SCOPE_QUESTION[parsed.request_type]
         if not parsed.is_searchable and not (parsed.clarification_question or "").strip():
             return failure("is_searchable is false, so clarification_question is required.")
         if parsed.is_searchable and (not icp["hard_filters"] or not icp["discovery_query_plan"]):
             return failure("A searchable ICP needs at least one hard filter and one discovery query.")
         icp = redact_obj(icp)
-        fields = {"icp": icp, "icp_assumptions": icp["assumptions"]}
+        fields = {"icp": icp, "icp_assumptions": icp["assumptions"], "request_type": parsed.request_type}
         if parsed.is_searchable:
             fields["icp_signature"] = icp_signature(icp)
             fields["clarification_question"] = None
@@ -270,8 +286,12 @@ def build_handlers(ctx: RunContext) -> dict:
                 max_charge_usd=float(limits["apify_max_charge_usd"]), start_page=start_page,
             )
         except apify_svc.DiscoveryError as exc:
-            out = failure(exc.message, apify_run_id=exc.apify_run_id)
+            if exc.failure_code:
+                ctx.fatal = ServiceFailure(exc.failure_code, exc.message)
+            out = failure("Company search failed and the run is stopping. Don't retry; call nothing else.",
+                          apify_run_id=exc.apify_run_id)
             out.summary = f"Apify discovery failed ({exc.code}) for '{query}'; run {exc.apify_run_id or '-'}"
+            out.error = exc.message
             return out
 
         await db.run(db.add_usage, ctx.run_id, "candidates_found", result.raw_count)
@@ -391,8 +411,9 @@ def build_handlers(ctx: RunContext) -> dict:
             try:
                 page = await fc.scrape(url)
             except fc.ScrapeError as exc:
-                if exc.code in ("credits_exhausted", "auth"):
+                if exc.failure_code:
                     ctx.scraping_disabled_reason = exc.message
+                    ctx.fatal = ServiceFailure(exc.failure_code, exc.message)
                 data["scraped_pages"] = scraped + [path]
                 await db.run(db.update_lead, str(lead["id"]), discovery_data=data)
                 advice = ("Mark this company needs_review with the concern "
@@ -528,6 +549,17 @@ def build_handlers(ctx: RunContext) -> dict:
                              input_tokens=result.input_tokens, output_tokens=result.output_tokens,
                              note=f"grounding {lead['company_domain']} attempt {attempts}")
             report.update(result.report())
+            if result.failure_code:
+                # The checker failed, not the draft: give the attempt back (E-51).
+                await db.run(db.update_lead, str(lead["id"]), outreach_attempts=attempts - 1)
+                ctx.grounding_outages += 1
+                if result.failure_code in ("anthropic_no_credit", "anthropic_auth") or ctx.grounding_outages >= 3:
+                    ctx.fatal = ServiceFailure(result.failure_code, result.error or "fact-checker unavailable")
+                out = failure("The fact-checker is temporarily unavailable. This attempt was not counted. "
+                              "Try save_outreach once more with the same drafts; if it fails again, stop.")
+                out.summary = f"{lead['company_domain']}: fact-checker unavailable ({result.failure_code})"
+                out.error = result.error
+                return out
             if result.error:
                 problems = [f"Grounding check unavailable: {result.error}"]
             elif not result.passed:

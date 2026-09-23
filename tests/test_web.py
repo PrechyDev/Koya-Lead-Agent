@@ -86,7 +86,7 @@ def test_objective_validation_goes_to_banner(client_as):
     r = client_as(ADMIN).post("/runs", data={"objective": "abc", "idempotency_key": str(uuid.uuid4()),
                                              "csrf_token": token}, headers={"HX-Request": "true"})
     assert r.status_code == 400 and r.headers["HX-Retarget"] == "#system-message"
-    assert "at least 5 characters" in r.text
+    assert "at least a few words" in r.text
 
 
 def test_double_submit_goes_to_existing_run(client_as, a_run):

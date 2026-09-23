@@ -54,6 +54,8 @@ class Settings(BaseSettings):
     max_runs_per_user_per_day: int = 2
     max_runs_per_admin_per_day: int = 5
     render_external_url: str = ""
+    alert_webhook_url: str = ""
+    alert_webhook_secret: str = ""
     cookie_secure: bool | None = Field(default=None)
 
     @field_validator("apify_actor_id", "model_orchestrator", "model_icp", "model_researcher", "model_copywriter",

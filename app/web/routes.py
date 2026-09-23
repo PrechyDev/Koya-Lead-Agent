@@ -9,11 +9,13 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 
-from app import auth, db
+from app import alerts, auth, db
 from app.auth import Member, current_member, require_admin
 from app.config import get_settings, limits_for_run
 from app.lib.budget import BudgetExceeded, assert_can_spend
-from app.lib.objective import objective_hash
+from app.failures import ServiceFailure
+from app.lib.objective import objective_hash, objective_problem
+from app.services import health
 from app.main import limiter
 from app.runs import manager
 from app.web.templating import ACTIVE, stepper, templates
@@ -29,7 +31,8 @@ FINISHED = {"completed", "completed_partial", "failed", "cancelled", "superseded
 def _ctx(request: Request, **extra) -> dict:
     member = getattr(request.state, "member", None)
     csrf = auth.csrf_token_for(member.user_id) if member else ""
-    return {"member": member, "csrf": csrf, "settings": get_settings(), **extra}
+    open_issues = alerts.open_issue_count() if member and member.is_admin else 0
+    return {"member": member, "csrf": csrf, "settings": get_settings(), "open_issues": open_issues, **extra}
 
 
 def _check_csrf(request: Request, member: Member, form_token: str | None) -> None:
@@ -185,16 +188,11 @@ async def create_run(request: Request, objective: str = Form(""), target_qualifi
     _check_csrf(request, member, csrf_token)
     settings = get_settings()
     objective = re.sub(r"\s+", " ", objective).strip()
-    if len(objective) < 5:
-        return _banner(request, "error", "Enter an objective of at least 5 characters.", 400)
-    if len(objective) > 1000:
-        return _banner(request, "error", "Keep the objective under 1,000 characters.", 400)
+    problem = objective_problem(objective)  # free: stops junk before any AI call (E-50)
+    if problem:
+        return _banner(request, "warning", problem, 400)
     if not 1 <= target_qualified <= 10:
         return _banner(request, "error", "Target qualified leads must be between 1 and 10.", 400)
-    missing = settings.missing_run_config()
-    if missing:
-        return _banner(request, "error", "The app isn't fully configured yet (missing: " + ", ".join(missing) +
-                       "). An admin must set these on the server.", 503)
 
     existing = await db.run(db.fetch_one, f"select id from {db.t('runs')} where idempotency_key = %s",
                             (idempotency_key,))
@@ -215,7 +213,14 @@ async def create_run(request: Request, objective: str = Form(""), target_qualifi
     try:
         assert_can_spend(await db.run(db.total_spend), limits.max_budget_usd + 0.10, settings.claude_budget_total_usd)
     except BudgetExceeded as exc:
-        return _banner(request, "error", str(exc), 402)
+        failure = ServiceFailure("budget_exhausted", str(exc))
+        await db.run(alerts.raise_alert, failure.code, failure.detail)
+        return _banner(request, "error", failure.client, 402)
+    failures = await db.run(health.preflight, limits.to_dict())  # free checks; cached for 10 minutes
+    if failures:
+        for f in failures:
+            await db.run(alerts.raise_alert, f.code, f.detail)
+        return _banner(request, "error", failures[0].client, 503)
 
     parent = None
     if parent_run_id:
@@ -484,6 +489,42 @@ async def spend_page(request: Request, member: Member = Depends(require_admin)):
             from {db.t('tool_calls')} t join {db.t('runs')} r on r.id = t.run_id
             where t.tool_name = 'discover_companies' and t.external_cost_usd is not null
             group by r.id, r.objective order by max(t.created_at) desc limit 50""")))
+
+
+# ---------------------------------------------------------------------------
+# System issues (admin): alerts about credit, keys, failures
+# ---------------------------------------------------------------------------
+@router.get("/system", response_class=HTMLResponse)
+async def system_page(request: Request, member: Member = Depends(require_admin)):
+    events = await db.run(alerts.list_events, 100)
+    return templates.TemplateResponse(request, "system.html", _ctx(
+        request, events=events, webhook=bool(get_settings().alert_webhook_url)))
+
+
+@router.post("/system/{event_id}/resolve")
+@limiter.limit("30/minute")
+async def resolve_event(request: Request, event_id: str, csrf_token: str = Form(""),
+                        member: Member = Depends(require_admin)):
+    _check_csrf(request, member, csrf_token)
+    try:
+        uuid.UUID(event_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Issue not found.")
+    await db.run(alerts.resolve, event_id, member.user_id)
+    health.clear_cache()  # re-check services on the next run after a fix
+    return Response(status_code=204, headers={"HX-Redirect": "/system"})
+
+
+@router.post("/system/test-alert")
+@limiter.limit("5/hour")
+async def test_alert(request: Request, csrf_token: str = Form(""), member: Member = Depends(require_admin)):
+    _check_csrf(request, member, csrf_token)
+    ok = await db.run(alerts._post_webhook, alerts._payload("test_alert", "Test alert from the Koya Lead Research "
+                                                           "Agent. If you got this, alerts work.", None, "info",
+                                                           "app", 1))
+    return _banner(request, "success" if ok else "error",
+                   "Test alert sent to the webhook." if ok else
+                   "The webhook didn't accept the test (check ALERT_WEBHOOK_URL and that the n8n workflow is active).")
 
 
 # ---------------------------------------------------------------------------

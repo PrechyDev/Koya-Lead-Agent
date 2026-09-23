@@ -1,6 +1,7 @@
 """Per-run state shared by the tools of ONE run (each run builds its own tools)."""
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from app import db
 
@@ -14,6 +15,8 @@ class RunContext:
     finished: bool = False
     scraping_disabled_reason: str | None = None
     status_seen: set[str] = field(default_factory=set)
+    fatal: Any = None  # app.failures.ServiceFailure once a service can't work; the runner stops the run
+    grounding_outages: int = 0
 
     @classmethod
     def load(cls, run_id: str) -> "RunContext":
