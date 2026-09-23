@@ -94,34 +94,42 @@
     if (close) close.closest(".banner").remove();
   });
 
-  // Required inputs (design.md §4): a submit button stays disabled until every required field in its form is
-  // valid, with the reason shown beside it. Buttons can add their own condition with data-requires="<field id>"
-  // (e.g. Reject needs a note). Buttons marked data-locked (server decided) or data-custom-enable (own script)
-  // are left alone.
+  // Required inputs (design.md §2): a submit button stays disabled until every required field in its form is
+  // valid. An EMPTY field needs no message (people can see it); a message appears only for problems they can't
+  // see: a malformed email, a short password, passwords that differ. Buttons can add their own condition with
+  // data-requires="<field id>" (e.g. Reject needs a note). Buttons marked data-locked (server decided) or
+  // data-custom-enable (own script) are left alone.
   function fieldName(el) {
     var label = el.id && document.querySelector('label[for="' + el.id + '"]');
     return label ? label.textContent.replace(/\(.*?\)/g, "").trim() : (el.name || "a field");
   }
 
+  // Returns {blocked, message}: blocked disables the button; message (may be "") explains a non-obvious problem.
   function formProblem(form) {
     var fields = Array.prototype.filter.call(form.querySelectorAll("input, textarea, select"), function (el) {
       return !el.disabled && el.type !== "hidden";
     });
-    var missing = fields.filter(function (el) { return el.required && !el.value.trim(); });
-    if (missing.length) return "Fill in: " + missing.map(fieldName).join(", ") + ".";
-    var invalid = fields.filter(function (el) { return !el.checkValidity(); });
+    var filled = fields.filter(function (el) { return el.value.trim(); });
+    var invalid = filled.filter(function (el) { return !el.checkValidity(); });
     if (invalid.length) {
       var el = invalid[0];
-      if (el.minLength > 0 && el.value.length < el.minLength) return fieldName(el) + " needs at least " + el.minLength + " characters.";
-      if (el.type === "email") return "Enter a valid email address.";
-      return "Check " + fieldName(el) + ".";
+      // Explain only once the person has left the field, so the message doesn't nag while they type.
+      if (!el.hasAttribute("data-touched")) return { blocked: true, message: "" };
+      if (el.type === "email") return { blocked: true, message: "Enter a valid email address, like name@company.com." };
+      if (el.minLength > 0 && el.value.length < el.minLength) {
+        return { blocked: true, message: fieldName(el) + " needs at least " + el.minLength + " characters." };
+      }
+      return { blocked: true, message: "Check " + fieldName(el) + "." };
     }
-    var mismatch = fields.filter(function (el) {
+    var mismatch = filled.filter(function (el) {
       var other = el.getAttribute("data-match") && document.getElementById(el.getAttribute("data-match"));
-      return other && el.value !== other.value;
+      return other && other.value && el.value !== other.value;
     });
-    if (mismatch.length) return "The passwords don't match.";
-    return "";
+    if (mismatch.length) {
+      return { blocked: true, message: mismatch[0].hasAttribute("data-touched") ? "The passwords don't match." : "" };
+    }
+    var missing = fields.filter(function (el) { return el.required && !el.value.trim(); });
+    return { blocked: missing.length > 0, message: "" };
   }
 
   function reasonSlot(form) {
@@ -147,20 +155,25 @@
     var guarded = form.querySelector("[required], [minlength], [data-match]");
     var withOwnRule = buttons.filter(function (b) { return b.hasAttribute("data-requires"); });
     if (!guarded && !withOwnRule.length) return;
-    var problem = guarded ? formProblem(form) : "";
-    var reasons = problem ? [problem] : [];
+    var problem = guarded ? formProblem(form) : { blocked: false, message: "" };
     buttons.forEach(function (b) {
       var need = b.getAttribute("data-requires") && document.getElementById(b.getAttribute("data-requires"));
-      var ownProblem = need && !need.value.trim() ? (b.getAttribute("data-requires-reason") || ("Fill in " + fieldName(need) + ".")) : "";
-      if (ownProblem && reasons.indexOf(ownProblem) < 0) reasons.push(ownProblem);
-      b.disabled = Boolean(problem || ownProblem);
+      b.disabled = problem.blocked || Boolean(need && !need.value.trim());
     });
-    reasonSlot(form).textContent = reasons.join(" ");
+    reasonSlot(form).textContent = problem.message;
   }
 
   function refreshAll(root) {
     (root || document).querySelectorAll("form").forEach(refreshForm);
   }
+  document.addEventListener("focusout", function (event) {
+    var el = event.target;
+    if (el.matches && el.matches("input, textarea, select") && el.value.trim()) {
+      el.setAttribute("data-touched", "");
+      var form = el.closest("form");
+      if (form) refreshForm(form);
+    }
+  });
   ["input", "change"].forEach(function (type) {
     document.addEventListener(type, function (event) {
       var form = event.target.closest && event.target.closest("form");

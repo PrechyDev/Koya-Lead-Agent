@@ -583,7 +583,8 @@ Lowercase · strip protocol, `www.`, path, query and port · IDNA-encode · reje
 | E-59 | An email with no company-specific fact | Fact-checker tags claims per draft; code rejects an email with no supported company claim (D-50) | test_grounding_rejects_unsupported_company_claims |
 | E-60 | More subagents started at once than allowed | The hook denies delegations beyond `max_parallel_subagents` (= 1); the `target_reached` reservation is atomic anyway (D-49) | test_parallel_subagent_cap_is_enforced_by_code |
 | E-61 | LinkedIn returns 0 for a query | First empty search per run is given back (D-54) | test_empty_search_is_given_back_once_and_queries_append |
-| E-62 | A submit button is clicked with required inputs missing | Buttons stay disabled, with the reason shown, until the form is valid; the loading state starts only on a validated submit (design.md) | test_buttons_wait_for_required_inputs + real-Chrome check |
+| E-62 | A submit button is clicked with required inputs missing | Buttons stay disabled until the form is valid (a message only for problems you can't see, shown after leaving the field); the loading state starts only on a validated submit (design.md) | test_buttons_wait_for_required_inputs + real-Chrome checks |
+| E-63 | An email without a proper domain (`sam@acme`) | One shared rule (`app/lib/validation.py`): the field's `pattern` in the browser and a server check on login and invites | test_email_rule, test_login_rejects_malformed_email_before_supabase |
 
 ---
 

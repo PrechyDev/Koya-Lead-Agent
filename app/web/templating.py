@@ -5,6 +5,8 @@ from pathlib import Path
 
 from fastapi.templating import Jinja2Templates
 
+from app.lib.validation import EMAIL_PATTERN
+
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
@@ -85,6 +87,6 @@ def stepper(status: str, last_active_step: int = 0) -> list[dict]:
     return out
 
 
-templates.env.globals.update(badge=badge, ago=ago, money=money, ACTIVE=ACTIVE)
+templates.env.globals.update(badge=badge, ago=ago, money=money, ACTIVE=ACTIVE, EMAIL_PATTERN=EMAIL_PATTERN)
 templates.env.filters["money"] = money
 templates.env.filters["ago"] = ago

@@ -150,3 +150,22 @@ def test_buttons_wait_for_required_inputs():
     assert 'value="rejected" data-requires="note-' in detail
     js = (root / "static" / "app.js").read_text(encoding="utf-8")
     assert 'addEventListener("submit"' in js and "formProblem" in js and 'data-requires' in js
+
+
+@pytest.mark.parametrize("email, ok", [
+    ("weknofn@wowi", False), ("sam@acme.", False), ("sam@acme.c", False), ("@acme.io", False), ("sam@@acme.io", False),
+    ("wefppq@pfpqn.iwe", True), ("xxx@xxx.xxxx.xxxx", True), ("first.last+tag@mail.acme.co.uk", True),
+])
+def test_email_rule(email, ok):
+    from app.lib.validation import is_valid_email
+    assert is_valid_email(email) is ok
+
+
+def test_login_rejects_malformed_email_before_supabase(client_as, monkeypatch):
+    from app import auth
+    called = []
+    monkeypatch.setattr(auth, "password_sign_in", lambda *a: called.append(a))
+    r = client_as(None).post("/login", data={"email": "weknofn@wowi", "password": "x", "next": "/"})
+    assert r.status_code == 400 and "valid email" in r.text and called == []
+    page = client_as(None).get("/login").text
+    assert 'pattern="' in page  # the browser uses the same rule

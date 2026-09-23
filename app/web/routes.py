@@ -15,13 +15,13 @@ from app.config import get_settings, limits_for_run
 from app.failures import ServiceFailure, admin_message_from_detail, message_for
 from app.lib.budget import BudgetExceeded, assert_can_spend
 from app.lib.objective import objective_hash, objective_problem
+from app.lib.validation import EMAIL_HINT, is_valid_email
 from app.main import limiter
 from app.runs import manager
 from app.services import health
 from app.web.templating import ACTIVE, stepper, templates
 
 router = APIRouter()
-EMAIL_FORM_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 FINISHED = {"completed", "completed_partial", "failed", "cancelled", "superseded", "needs_clarification"}
 
 
@@ -95,6 +95,9 @@ async def login_page(request: Request, next: str = "/"):
 @router.post("/login")
 @limiter.limit("5/15minutes")
 async def login_submit(request: Request, email: str = Form(...), password: str = Form(...), next: str = Form("/")):
+    if not is_valid_email(email):  # same rule as the form; saves a Supabase call (and a rate-limit slot)
+        return templates.TemplateResponse(request, "login.html", _ctx(request, next=next, error=EMAIL_HINT,
+                                                                      email=email), status_code=400)
     try:
         tokens = await db.run(auth.password_sign_in, email, password)
     except auth.AuthError as exc:
@@ -426,8 +429,8 @@ async def team_invite(request: Request, email: str = Form(...), full_name: str =
                       csrf_token: str = Form(""), member: Member = Depends(require_admin)):
     _check_csrf(request, member, csrf_token)
     email, full_name = email.strip().lower(), full_name.strip()
-    if not EMAIL_FORM_RE.match(email):
-        return _banner(request, "error", "Enter a valid email address.", 400)
+    if not is_valid_email(email):
+        return _banner(request, "error", EMAIL_HINT, 400)
     if not full_name or len(full_name) > 120:
         return _banner(request, "error", "Enter the person's name.", 400)
     if role not in {"admin", "member"}:

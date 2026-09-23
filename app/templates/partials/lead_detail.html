@@ -140,7 +140,7 @@
         {% endif %}
         {% if lead.review_status != 'rejected' %}
         <button class="btn danger" type="submit" name="review_status" value="rejected" data-requires="note-{{ lead.id }}"
-          data-requires-reason="Add a reviewer note to reject." hx-confirm="Reject these drafts?">Reject</button>
+          hx-confirm="Reject these drafts?">Reject</button>
         {% else %}
         <span class="badge danger">✕ Rejected{% if lead.reviewed_by_name %} by {{ lead.reviewed_by_name }}{% endif %}</span>
         {% endif %}

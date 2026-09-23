@@ -9,7 +9,7 @@
     <input type="hidden" name="csrf_token" value="{{ csrf }}">
     <div class="grid-2">
       <div class="field"><label for="inv-name">Name</label><input id="inv-name" name="full_name" type="text" maxlength="120" required></div>
-      <div class="field"><label for="inv-email">Email</label><input id="inv-email" name="email" type="email" required></div>
+      <div class="field"><label for="inv-email">Email</label><input id="inv-email" name="email" type="email" required pattern="{{ EMAIL_PATTERN }}"></div>
     </div>
     <div class="row">
       <div class="field" style="max-width: 200px;"><label for="inv-role">Role</label>
