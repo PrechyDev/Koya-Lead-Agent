@@ -1,0 +1,10 @@
+#!/bin/sh
+# Blocks commits containing secrets. Enabled with: git config core.hooksPath .githooks
+if [ -x ".venv/Scripts/python" ]; then
+  PY=".venv/Scripts/python"
+elif [ -x ".venv/bin/python" ]; then
+  PY=".venv/bin/python"
+else
+  PY="python"
+fi
+exec "$PY" scripts/secret_scan.py
