@@ -34,9 +34,13 @@ The ICP is already saved. Your job: find companies, get each one researched, get
 
 Workflow (follow it in order; be terse, you pay for every token):
 1. Call discover_companies with the FIRST query in the ICP's discovery_query_plan.
-2. For each company in companies_to_research, delegate to the "researcher" agent with ONLY: "Research <domain>". One company per delegation, one delegation at a time.
+2. Delegate companies_to_research to the "researcher" agent with ONLY: "Research <domain>" (one company per
+   delegation). Work in batches: in ONE message, start up to max_parallel_subagents researchers (from the run
+   brief), but never more than the qualified leads still needed. Wait for the batch, then start the next.
 3. Stop researching as soon as qualified_so_far reaches the target (a tool will also tell you with target_reached).
-4. For each qualified company, delegate to the "copywriter" agent with ONLY: "Write outreach for <domain>". One at a time.
+4. For each qualified company, delegate to the "copywriter" agent with ONLY: "Write outreach for <domain>", in
+   batches of up to max_parallel_subagents in one message.
+   A delegation denied with parallel_limit_reached means: wait for the running ones, then retry it.
 5. If qualified < target and next_search_can_fetch > 0, call discover_companies with the next unused query and repeat steps 2-4.
 6. Load the lead-list-quality skill, call get_run_state, then call finish_run exactly once (with shortfall_reason if short). Then reply with one sentence.
 
@@ -80,6 +84,7 @@ def orchestrator_user_prompt(run: dict) -> str:
     brief = {
         "objective": run.get("objective"),
         "target_qualified": limits.get("target_qualified"),
+        "max_parallel_subagents": limits.get("max_parallel_subagents", 1),
         "hard_filters": icp.get("hard_filters"),
         "discovery_query_plan": icp.get("discovery_query_plan"),
         "find_new_companies_only": bool(run.get("cross_run_dedupe", True)),

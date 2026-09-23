@@ -197,3 +197,32 @@ async def test_unsearchable_icp_needs_question(run_ctx):
                                                "clarification_question": "Which industry?"})
     run = db.get_run(run_ctx.run_id)
     assert data["saved"] and run["clarification_question"] == "Which industry?" and not run["icp_signature"]
+
+
+async def test_empty_search_is_given_back_once_and_queries_append(run_ctx, monkeypatch):
+    await call(run_ctx, "save_icp", ICP_ARGS)
+
+    async def empty(**kwargs):
+        return apify_svc.DiscoveryResult(companies=[], raw_count=0, dropped_no_domain=0, apify_run_id="e", cost_usd=0.001)
+    monkeypatch.setattr(T.apify_svc, "find_companies", empty)
+    for q in ("q one", "q two"):
+        await call(run_ctx, "discover_companies", {"purpose": "x", "search_query": q})
+    usage = db.get_run(run_ctx.run_id)["usage"]
+    assert usage["queries"] == ["q one", "q two"]
+    assert usage["discovery_calls"] == 1 and usage["empty_searches"] == 1  # only the first empty search refunded
+
+
+async def test_parallel_subagent_cap_is_enforced_by_code(run_ctx):
+    from app.agent.runner import _make_hooks
+    run_ctx.limits = {**run_ctx.limits, "max_parallel_subagents": 2}
+    hooks = _make_hooks(run_ctx, "orchestrator", set(), set())
+    pre, post = hooks["PreToolUse"][0].hooks[0], hooks["PostToolUse"][0].hooks[0]
+    agent = {"tool_name": "Agent", "tool_input": {"subagent_type": "researcher", "prompt": "Research a.com"}}
+    assert await pre(agent, "t1", None) == {} and await pre(agent, "t2", None) == {}
+    denied = await pre(agent, "t3", None)
+    assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "parallel_limit_reached" in denied["hookSpecificOutput"]["permissionDecisionReason"]
+    await post({"tool_name": "Agent"}, "t1", None)
+    assert await pre(agent, "t3", None) == {}  # a slot freed up
+    blocked_rows = [c for c in db.list_tool_calls(run_ctx.run_id) if c["status"] == "blocked"]
+    assert blocked_rows and "already working" in blocked_rows[0]["result_summary"]

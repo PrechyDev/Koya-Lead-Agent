@@ -69,6 +69,9 @@ def _make_hooks(ctx: RunContext, main_role: str, allowed: set[str], main_thread_
     copywriting to subagents instead of doing it itself (keeps its context, and cost, small).
     """
 
+    parallel_cap = max(1, int(ctx.limits.get("max_parallel_subagents", 1)))
+    in_flight: set[str] = set()  # tool_use_ids of subagents currently working
+
     async def pre_tool(input_data, tool_use_id, context):
         name = input_data.get("tool_name", "")
         tool_input = input_data.get("tool_input") or {}
@@ -80,8 +83,21 @@ def _make_hooks(ctx: RunContext, main_role: str, allowed: set[str], main_thread_
         if name == "Agent":
             sub = str(tool_input.get("subagent_type") or "?")
             brief = str(tool_input.get("prompt") or tool_input.get("description") or "")[:200]
+            if len(in_flight) >= parallel_cap:
+                # Code owns the parallel limit (D-49): the model can't start more workers than the run allows.
+                await log_event(ctx, role, f"Delegate:{sub}", brief, status="blocked",
+                                result_summary=f"denied: {parallel_cap} subagents already working")
+                return {"hookSpecificOutput": {
+                    "hookEventName": "PreToolUse", "permissionDecision": "deny",
+                    "permissionDecisionReason": f"parallel_limit_reached: {parallel_cap} subagents are already "
+                                                "working. Delegate this one after they report back."}}
+            in_flight.add(tool_use_id or f"anon-{len(in_flight)}")
             await log_event(ctx, role, f"Delegate:{sub}", brief, purpose=str(tool_input.get("description") or "")[:200])
             return {}
+        if input_data.get("agent_id") is None:
+            # The main thread only acts again after its foreground subagents have reported back, so nothing is in
+            # flight any more (a safety net in case a completion hook was missed).
+            in_flight.clear()
         if name in allowed:
             if input_data.get("agent_id") is None and name not in main_thread_tools:
                 await log_event(ctx, role, name.split("__")[-1], "main thread tried a subagent-only tool",
@@ -94,7 +110,14 @@ def _make_hooks(ctx: RunContext, main_role: str, allowed: set[str], main_thread_
         return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                        "permissionDecisionReason": "This tool is not available in this system."}}
 
-    return {"PreToolUse": [HookMatcher(hooks=[pre_tool])]}
+    async def agent_done(input_data, tool_use_id, context):
+        if input_data.get("tool_name") == "Agent":
+            in_flight.discard(tool_use_id)
+        return {}
+
+    return {"PreToolUse": [HookMatcher(hooks=[pre_tool])],
+            "PostToolUse": [HookMatcher(matcher="Agent", hooks=[agent_done])],
+            "PostToolUseFailure": [HookMatcher(matcher="Agent", hooks=[agent_done])]}
 
 
 def _options(ctx: RunContext, *, model: str, system_prompt: str, tool_names: list[str], skills: list[str],

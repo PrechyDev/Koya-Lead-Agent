@@ -117,6 +117,7 @@ class RunLimits:
     max_outreach_rewrites: int
     max_tool_calls: int
     phase_timeout_s: int
+    max_parallel_subagents: int = 1  # researchers/copywriters working at the same time (D-49)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -136,6 +137,7 @@ FULL_LIMITS = RunLimits(
     max_outreach_rewrites=2,
     max_tool_calls=120,
     phase_timeout_s=1800,
+    max_parallel_subagents=3,
 )
 
 DEV_LIMITS = RunLimits(
@@ -152,6 +154,7 @@ DEV_LIMITS = RunLimits(
     max_outreach_rewrites=1,
     max_tool_calls=40,
     phase_timeout_s=900,
+    max_parallel_subagents=2,
 )
 
 ICP_PHASE_MAX_TURNS = 6
