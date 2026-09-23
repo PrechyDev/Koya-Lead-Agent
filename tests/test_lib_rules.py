@@ -107,8 +107,8 @@ def test_invalid_sources_flags_urls_never_fetched():
 
 # --- pre-screen (E-31, E-15, E-45) --------------------------------------------------
 def _disc(country="US", start=11, end=50, members=20):
-    return {"locations": [{"headquarter": True, "parsed": {"countryCode": country}}],
-            "employeeCountRange": {"start": start, "end": end}, "employeeCount": members}
+    return {"hq": {"country_code": country}, "employee_count_range": {"start": start, "end": end},
+            "employee_count_linkedin": members}
 
 
 def test_prescreen_pass_reject_unknown():
@@ -117,7 +117,7 @@ def test_prescreen_pass_reject_unknown():
     assert prescreen(_disc(start=201, end=500, members=300), ICP)[0] == "rejected:headcount"
     assert prescreen(_disc(start=51, end=200, members=60), ICP)[0] == "unknown"      # straddles 100
     assert prescreen(_disc(start=51, end=200, members=150), ICP)[0] == "rejected:headcount"
-    assert prescreen({"locations": []}, ICP)[0] == "unknown"
+    assert prescreen({"hq": None}, ICP)[0] == "unknown"
 
 
 def test_prescreen_notes_large_headcount_disagreement():

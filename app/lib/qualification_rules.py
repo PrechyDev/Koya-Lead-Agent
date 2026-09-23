@@ -29,6 +29,22 @@ class HardFilterCheck(BaseModel):
     source_url: str | None = None
 
 
+class DisqualifierCheck(BaseModel):
+    """'Does this disqualifier apply?' yes = disqualified; no needs evidence; unknown = can't confirm."""
+    disqualifier: str = Field(min_length=1)
+    applies: Literal["yes", "no", "unknown"]
+    evidence: str = ""
+    source_url: str | None = None
+
+
+class SoftPreferenceCheck(BaseModel):
+    """Soft preferences improve fit and confidence; they never change the qualification status."""
+    preference: str = Field(min_length=1)
+    result: Literal["matched", "not_matched", "unknown"]
+    evidence: str = ""
+    source_url: str | None = None
+
+
 def invalid_sources(source_urls: list[str], allowed_urls: list[str]) -> list[str]:
     return [u for u in source_urls if not any(same_url(u, a) for a in allowed_urls)]
 
@@ -38,10 +54,28 @@ def decide_status(
     checks: list[HardFilterCheck],
     confidence: float,
     required_filters: list[str] | None = None,
+    disqualifier_checks: list[DisqualifierCheck] | None = None,
+    required_disqualifiers: list[str] | None = None,
 ) -> tuple[Status, list[str]]:
     """Return the status the server will actually store, plus notes explaining any change."""
     notes: list[str] = []
     effective: list[str] = []
+    for d in disqualifier_checks or []:
+        if d.applies == "yes":
+            notes.append(f'disqualifier applies: "{d.disqualifier}"')
+            effective.append("fail")
+        elif d.applies == "no" and (d.evidence.strip() and d.source_url):
+            effective.append("pass")
+        else:
+            if d.applies == "no":
+                notes.append(f'"{d.disqualifier}" was marked not applying without evidence, so it counts as unknown')
+            effective.append("unknown")
+    if required_disqualifiers:
+        covered = {d.disqualifier.strip().lower() for d in disqualifier_checks or []}
+        missing = [d for d in required_disqualifiers if d.strip().lower() not in covered]
+        if missing:
+            notes.append("no check for disqualifier(s): " + "; ".join(missing))
+            effective += ["unknown"] * len(missing)
     for c in checks:
         result = c.result
         if result == "pass" and (not c.evidence.strip() or not c.source_url):
@@ -76,15 +110,8 @@ def decide_status(
 # Pre-screen on discovery data (no scrape, no Claude).
 # ---------------------------------------------------------------------------
 def _hq_country(discovery: dict) -> str | None:
-    for loc in discovery.get("locations") or []:
-        if loc.get("headquarter"):
-            parsed = loc.get("parsed") or {}
-            return (parsed.get("countryCode") or loc.get("country") or "").lower() or None
-    locs = discovery.get("locations") or []
-    if len(locs) == 1:
-        parsed = locs[0].get("parsed") or {}
-        return (parsed.get("countryCode") or locs[0].get("country") or "").lower() or None
-    return None
+    code = ((discovery.get("hq") or {}).get("country_code") or "").lower()
+    return code or None
 
 
 def prescreen(discovery: dict, icp: dict) -> tuple[str, str]:
@@ -103,9 +130,9 @@ def prescreen(discovery: dict, icp: dict) -> tuple[str, str]:
 
     low, high = parse_headcount_range(icp.get("headcount_range"))
     if low is not None or high is not None:
-        band = discovery.get("employeeCountRange") or {}
+        band = discovery.get("employee_count_range") or {}
         b_low, b_high = band.get("start"), band.get("end")
-        members = discovery.get("employeeCount")
+        members = discovery.get("employee_count_linkedin")
         if b_low is not None and high is not None and b_low > high:
             return "rejected:headcount", f"stated size {b_low}-{b_high or '+'} is above {high}"
         if b_high is not None and low is not None and b_high < low:

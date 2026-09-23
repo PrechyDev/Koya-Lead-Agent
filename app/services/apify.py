@@ -20,7 +20,7 @@ from apify_client.errors import ApifyApiError
 from app.config import get_settings
 from app.failures import classify_apify
 from app.lib.domain import normalize_domain
-from app.lib.sanitize import redact, redact_obj
+from app.lib.sanitize import redact
 
 # LinkedIn's fixed headcount bands (the actor's `companySize` enum).
 SIZE_BANDS: list[tuple[str, int, int | None]] = [
@@ -74,13 +74,13 @@ def normalize_company(item: dict) -> dict | None:
     if not domain:
         return None
     hq = None
-    for loc in item.get("locations") or []:
-        if loc.get("headquarter"):
-            parsed = loc.get("parsed") or {}
-            hq = {"city": loc.get("city"), "state": parsed.get("state") or loc.get("geographicArea"),
-                  "country_code": (parsed.get("countryCode") or loc.get("country") or "").upper() or None,
-                  "text": parsed.get("text")}
-            break
+    locations = item.get("locations") or []
+    chosen = next((loc for loc in locations if loc.get("headquarter")), locations[0] if len(locations) == 1 else None)
+    if chosen:
+        parsed = chosen.get("parsed") or {}
+        hq = {"city": chosen.get("city"), "state": parsed.get("state") or chosen.get("geographicArea"),
+              "country_code": (parsed.get("countryCode") or chosen.get("country") or "").upper() or None,
+              "text": redact(parsed.get("text") or "")[0] or None}
     description = redact((item.get("description") or "")[:800])[0]
     return {
         "name": redact((item.get("name") or domain).strip())[0][:200],
@@ -96,10 +96,6 @@ def normalize_company(item: dict) -> dict | None:
         "employee_count_range": item.get("employeeCountRange"),
         "hq": hq,
         "founded_year": (item.get("foundedOn") or {}).get("year"),
-        # Raw fields the pre-screen reads (redacted copies).
-        "locations": redact_obj(item.get("locations") or []),
-        "employeeCountRange": item.get("employeeCountRange"),
-        "employeeCount": item.get("employeeCount"),
     }
 
 

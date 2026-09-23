@@ -274,3 +274,52 @@ def test_service_down_gives_plain_message_not_jargon(client_as, monkeypatch):
 def test_system_issues_page_is_admin_only(client_as):
     assert client_as(ADMIN).get("/system").status_code == 200
     assert client_as(MEMBER).get("/system").status_code == 403
+
+
+# --- disqualifiers, soft preferences, tool fingerprints, scope pre-check ----------------------
+from app.lib.qualification_rules import DisqualifierCheck, HardFilterCheck, decide_status  # noqa: E402
+from app.lib.tech_signals import detect_tools  # noqa: E402
+from app.services import scope as scope_svc  # noqa: E402
+
+SRC = "https://acme.io/"
+PASS = [HardFilterCheck(filter="US", result="pass", evidence="HQ Austin", source_url=SRC)]
+
+
+def test_disqualifier_that_applies_means_not_qualified():
+    d = [DisqualifierCheck(disqualifier="Agency", applies="yes", evidence="sells agency services", source_url=SRC)]
+    assert decide_status("qualified", PASS, 0.9, disqualifier_checks=d, required_disqualifiers=["Agency"])[0] == "not_qualified"
+
+
+def test_disqualifier_unknown_or_unevidenced_means_needs_review():
+    d = [DisqualifierCheck(disqualifier="Agency", applies="no", evidence="", source_url=None)]
+    assert decide_status("qualified", PASS, 0.9, disqualifier_checks=d, required_disqualifiers=["Agency"])[0] == "needs_review"
+    assert decide_status("qualified", PASS, 0.9, disqualifier_checks=[], required_disqualifiers=["Agency"])[0] == "needs_review"
+
+
+def test_disqualifier_confirmed_not_applying_allows_qualified():
+    d = [DisqualifierCheck(disqualifier="Agency", applies="no", evidence="own SaaS product", source_url=SRC)]
+    assert decide_status("qualified", PASS, 0.9, disqualifier_checks=d, required_disqualifiers=["Agency"])[0] == "qualified"
+
+
+def test_tool_fingerprints_found_in_html():
+    html = ('<script src="https://js.hs-scripts.com/123.js"></script>'
+            '<script src="https://widget.intercom.io/widget/abc"></script><a href="https://jobs.lever.co/acme">Jobs</a>')
+    assert [t["name"] for t in detect_tools(html)] == ["HubSpot", "Intercom", "Lever"]
+    assert detect_tools("<html><p>We use HubSpot</p></html>") == []  # a word in the text is not a fingerprint
+    assert detect_tools(None) == []
+
+
+class _FakeScopeClient:
+    def __init__(self, verdict):
+        self.messages = self
+        self.verdict = verdict
+
+    async def parse(self, **kwargs):
+        assert kwargs["model"] == "claude-haiku-4-5"
+        return SimpleNamespace(parsed_output=self.verdict, usage=SimpleNamespace(input_tokens=400, output_tokens=40))
+
+
+async def test_scope_precheck_is_cheap_and_classifies():
+    verdict = scope_svc.ScopeVerdict(request_type="question", reason="asks where to buy ice cream")
+    res = await scope_svc.check_scope("can I buy icecream in ife?", client=_FakeScopeClient(verdict))
+    assert res.verdict.request_type == "question" and float(res.cost_usd) == pytest.approx(0.0006)

@@ -44,11 +44,13 @@ LEAD_COLUMNS = {
     "qualification_status", "confidence", "hard_filter_checks", "fit_reasons", "concerns", "source_urls",
     "source_summary", "email_sequence", "linkedin_message", "outreach_status", "outreach_attempts",
     "grounding_report", "review_status", "reviewer_note", "reviewed_by", "reviewed_at", "fetched_urls",
+    "disqualifier_checks", "soft_preference_checks", "tools_detected",
 }
 MEMBER_COLUMNS = {"full_name", "role", "is_active"}
 JSON_COLUMNS = {
     "icp", "icp_assumptions", "usage", "models", "quality_scorecard", "discovery_data", "hard_filter_checks",
     "fit_reasons", "concerns", "email_sequence", "grounding_report", "injection_flags", "expected", "actual",
+    "disqualifier_checks", "soft_preference_checks", "tools_detected",
 }
 
 
@@ -405,15 +407,18 @@ def get_cached_page(url: str, max_age_days: int) -> dict | None:
 
 
 def put_cached_page(*, url: str, domain: str, final_url: str | None, title: str | None, content: str,
-                    truncated: bool, status_code: int | None, injection_flags: list[str]) -> None:
+                    truncated: bool, status_code: int | None, injection_flags: list[str],
+                    tools_detected: list[dict] | None = None) -> None:
     execute(
         f"""insert into {t('scrape_cache')} (url, domain, final_url, title, content, truncated, status_code,
-                                           injection_flags, fetched_at)
-            values (%s, %s, %s, %s, %s, %s, %s, %s, now())
+                                           injection_flags, tools_detected, fetched_at)
+            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, now())
             on conflict (url) do update set final_url = excluded.final_url, title = excluded.title,
               content = excluded.content, truncated = excluded.truncated, status_code = excluded.status_code,
-              injection_flags = excluded.injection_flags, fetched_at = now()""",
-        (url, domain, final_url, title, content, truncated, status_code, Jsonb(injection_flags)),
+              injection_flags = excluded.injection_flags, tools_detected = excluded.tools_detected,
+              fetched_at = now()""",
+        (url, domain, final_url, title, content, truncated, status_code, Jsonb(injection_flags),
+         Jsonb(tools_detected or [])),
     )
 
 

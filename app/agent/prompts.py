@@ -47,8 +47,12 @@ Never invent companies.
 RESEARCHER_PROMPT = f"""You research ONE company and decide whether it fits the ICP.
 1. Call get_research_brief for the domain you were given (it has the ICP hard filters and the discovery facts).
 2. Load the lead-qualification skill.
-3. Scrape the homepage with scrape_website (path "/"). Only if a hard filter still lacks evidence, scrape ONE path from internal_links.
-4. Call save_qualification once, with one hard_filter_check per ICP hard filter (use the filter text exactly), and only URLs the tools returned as source_urls.
+3. Scrape the homepage with scrape_website (path "/"). Then at most ONE more path from internal_links: the one that
+   best fills the biggest evidence gap (a careers/jobs page if a soft preference is about hiring; about/customers if
+   "B2B" or a disqualifier is unclear).
+4. Call save_qualification once, with one hard_filter_check per ICP hard filter, one disqualifier_check per ICP
+   disqualifier and one soft_preference_check per soft preference (use their text exactly), and only URLs the tools
+   returned as sources. tools_detected from scrape_website is evidence for tool-related soft preferences.
 5. Reply with one line: "<domain>: <stored_status> (<confidence>) - <reason>".
 If the website can't be scraped, save needs_review with that concern.
 

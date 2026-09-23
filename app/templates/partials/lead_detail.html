@@ -34,6 +34,30 @@
       {% elif lead.qualification_status == 'pending' %}
       <p class="muted">Not researched yet.</p>
       {% endif %}
+      {% if lead.disqualifier_checks %}
+      <div><b>Exclusions</b> <span class="small muted">(any that applies disqualifies)</span>
+      <ul class="check-list">
+        {% for d in lead.disqualifier_checks %}
+        <li><span aria-hidden="true">{{ '✕' if d.applies == 'yes' else ('✓' if d.applies == 'no' else '?') }}</span>
+          <div><b>{{ d.disqualifier }}</b>: <span class="badge {{ 'danger' if d.applies == 'yes' else ('success' if d.applies == 'no' else 'warning') }}">{{ 'applies' if d.applies == 'yes' else ('does not apply' if d.applies == 'no' else 'unknown') }}</span>
+            <div class="small">{{ d.evidence or "No evidence recorded." }}{% if d.source_url %} · <a href="{{ d.source_url }}" target="_blank" rel="noopener noreferrer">source ↗</a>{% endif %}</div></div></li>
+        {% endfor %}
+      </ul></div>
+      {% endif %}
+      {% if lead.soft_preference_checks %}
+      <div><b>Nice-to-haves</b> <span class="small muted">(improve fit, never disqualify)</span>
+      <ul class="check-list">
+        {% for p in lead.soft_preference_checks %}
+        <li><span aria-hidden="true">{{ '★' if p.result == 'matched' else ('–' if p.result == 'not_matched' else '?') }}</span>
+          <div>{{ p.preference }}: <span class="badge {{ 'success' if p.result == 'matched' else ('neutral' if p.result == 'not_matched' else 'outline') }}">{{ p.result.replace('_', ' ') }}</span>
+            <div class="small">{{ p.evidence or "No evidence found." }}{% if p.source_url %} · <a href="{{ p.source_url }}" target="_blank" rel="noopener noreferrer">source ↗</a>{% endif %}</div></div></li>
+        {% endfor %}
+      </ul></div>
+      {% endif %}
+      {% if lead.tools_detected %}
+      <p class="small"><b>Tools seen on their site:</b> {% for t in lead.tools_detected %}<span class="badge outline">{{ t.name }}</span> {% endfor %}
+        <span class="muted">(found in page code; not seeing a tool doesn't mean they don't use it)</span></p>
+      {% endif %}
       {% if lead.fit_reasons %}<div><b>Fit reasons</b><ul class="clean">{% for f in lead.fit_reasons %}<li>{{ f }}</li>{% endfor %}</ul></div>{% endif %}
       {% if lead.concerns %}<div class="callout"><b>Concerns</b><ul class="clean">{% for c in lead.concerns %}<li>{{ c }}</li>{% endfor %}</ul></div>{% endif %}
       {% if lead.prescreen_result %}<p class="small muted">Pre-screen on discovery data: {{ lead.prescreen_result }}{% if lead.prescreen_reason %} ({{ lead.prescreen_reason }}){% endif %}</p>{% endif %}

@@ -28,12 +28,14 @@ from app import alerts, db
 from app.agent import prompts
 from app.agent.context import RunContext
 from app.agent.logging import log_event
-from app.agent.tools import build_scorecard, build_server, mcp_name
+from app.agent.tools import OUT_OF_SCOPE_QUESTION, build_scorecard, build_server, mcp_name
 from app.agent.transcripts import session_cost
 from app.config import ICP_PHASE_MAX_BUDGET_USD, ICP_PHASE_MAX_TURNS, ICP_PHASE_TIMEOUT_S, get_settings
 from app.failures import ServiceFailure, classify_claude_error
 from app.lib.budget import BudgetExceeded, assert_can_spend
+from app.lib.objective import objective_problem
 from app.services import health
+from app.services import scope as scope_svc
 from app.lib.sanitize import redact
 
 log = logging.getLogger("lead_agent.runner")
@@ -231,6 +233,11 @@ async def run_icp_phase(run_id: str) -> str:
     settings = get_settings()
     ctx = await db.run(RunContext.load, run_id)
     run = await db.run(db.get_run, run_id)
+    problem = objective_problem(run["objective"])  # free gate again: runs can also start from scripts
+    if problem:
+        await db.run(db.update_run, run_id, request_type="too_vague", clarification_question=problem)
+        await db.run(db.set_status, run_id, "needs_clarification", "The objective needs rewording before searching.")
+        return "needs_clarification"
     spent = await db.run(db.total_spend)
     try:
         assert_can_spend(spent, Decimal(str(ctx.limits["max_budget_usd"])) + GROUNDING_RESERVE_USD,
@@ -247,6 +254,26 @@ async def run_icp_phase(run_id: str) -> str:
 
     await db.run(db.set_status, run_id, "refining_icp", "Understanding your objective",
                  started_at=datetime.now().astimezone())
+
+    # Cheap scope check first (Haiku, ~$0.002): only lead searches may start the full ICP step (D-34).
+    scope = await scope_svc.check_scope(run["objective"])
+    if scope.cost_usd:
+        await db.run(db.record_spend, "icp", scope.cost_usd, ref_id=run_id, model=scope_svc.MODEL,
+                     input_tokens=scope.input_tokens, output_tokens=scope.output_tokens, note="scope pre-check")
+        await db.run(_refresh_run_cost, run_id)
+    if scope.failure_code in ("anthropic_no_credit", "anthropic_auth"):
+        await db.run(fail_run, run_id, ServiceFailure(scope.failure_code, "scope pre-check"))
+        return "failed"
+    if scope.verdict and scope.verdict.request_type != "lead_search":
+        kind = scope.verdict.request_type
+        question = (scope.verdict.clarification_question if kind == "too_vague" and scope.verdict.clarification_question
+                    else OUT_OF_SCOPE_QUESTION.get(kind) or OUT_OF_SCOPE_QUESTION["unrelated"])
+        await db.run(db.update_run, run_id, request_type=kind, clarification_question=question[:500])
+        detail = ("This doesn't look like a search for companies." if kind in ("question", "unrelated")
+                  else "The objective needs a little more detail before searching.")
+        await db.run(db.set_status, run_id, "needs_clarification", detail + " Answer the question to continue.")
+        return "needs_clarification"
+
     parent = await db.run(db.get_run, str(run["parent_run_id"])) if run.get("parent_run_id") else None
     options = _options(ctx, model=settings.model_icp, system_prompt=prompts.ICP_SYSTEM, tool_names=ICP_TOOLS,
                        skills=["icp-refinement", "outreach-safety"], max_turns=ICP_PHASE_MAX_TURNS,

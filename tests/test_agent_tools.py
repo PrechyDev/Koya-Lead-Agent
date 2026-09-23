@@ -36,8 +36,7 @@ def _company(domain, country="US", start=11, end=50, members=20, name=None):
     return {"name": name or domain.split(".")[0].title(), "domain": domain, "website": f"https://{domain}",
             "linkedin_url": f"https://www.linkedin.com/company/{domain.split('.')[0]}/", "description": "Makes SaaS",
             "employee_count_range": {"start": start, "end": end}, "employee_count_linkedin": members,
-            "locations": [{"headquarter": True, "parsed": {"countryCode": country}}],
-            "employeeCountRange": {"start": start, "end": end}, "employeeCount": members}
+            "hq": {"country_code": country}}
 
 
 @pytest.fixture
@@ -125,9 +124,21 @@ async def test_full_tool_flow(run_ctx, fake_apify, fake_scrape, monkeypatch):
     data, err = await call(ctx, "save_qualification", {**base, "hard_filter_checks": checks,
                                                        "source_urls": ["https://alpha-tooltest.com/secret"]})
     assert err and "never fetched" in data["error"]
+    # The ICP has a disqualifier ("agencies"): without a check for it the server refuses to qualify.
     data, _ = await call(ctx, "save_qualification", {**base, "hard_filter_checks": checks,
                                                      "source_urls": ["https://alpha-tooltest.com/"]})
+    assert data["stored_status"] == "needs_review" and any("disqualifier" in n for n in data["server_notes"])
+    db.update_lead(str(db.get_lead_by_domain(ctx.run_id, "alpha-tooltest.com")["id"]), qualification_status="pending")
+    db.add_usage(ctx.run_id, "needs_review", -1)
+    no_agency = [{"disqualifier": "agencies", "applies": "no", "evidence": "sells its own SaaS",
+                  "source_url": "https://alpha-tooltest.com/"}]
+    soft = [{"preference": "hiring ops roles", "result": "unknown", "evidence": "no careers page", "source_url": None}]
+    data, _ = await call(ctx, "save_qualification", {**base, "hard_filter_checks": checks, "disqualifier_checks":
+                                                     no_agency, "soft_preference_checks": soft,
+                                                     "source_urls": ["https://alpha-tooltest.com/"]})
     assert data["stored_status"] == "qualified"
+    stored = db.get_lead_by_domain(ctx.run_id, "alpha-tooltest.com")
+    assert stored["disqualifier_checks"][0]["applies"] == "no" and stored["soft_preference_checks"][0]["result"] == "unknown"
     lead = db.get_lead_by_domain(ctx.run_id, "alpha-tooltest.com")
     assert any("instructions aimed at AI tools" in c for c in lead["concerns"])  # injection noted (E-14)
 

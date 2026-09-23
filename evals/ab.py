@@ -33,7 +33,7 @@ from app.agent.tools import ICPModel  # noqa: E402
 from app.config import get_settings  # noqa: E402
 from app.lib.budget import cost_from_usage  # noqa: E402
 from app.lib.outreach_checks import check_outreach  # noqa: E402
-from app.lib.qualification_rules import HardFilterCheck  # noqa: E402
+from app.lib.qualification_rules import DisqualifierCheck, HardFilterCheck, SoftPreferenceCheck  # noqa: E402
 
 FIXTURES = ROOT / "evals" / "fixtures"
 SKILLS = ROOT / "agent_plugin" / "skills"
@@ -71,6 +71,8 @@ class QualOut(BaseModel):
     status: Literal["qualified", "not_qualified", "needs_review"]
     confidence: float = Field(ge=0, le=1)
     hard_filter_checks: list[HardFilterCheck]
+    disqualifier_checks: list[DisqualifierCheck]
+    soft_preference_checks: list[SoftPreferenceCheck]
     fit_reasons: list[str]
     concerns: list[str]
     source_summary: str
@@ -191,6 +193,7 @@ def _company_block(c: dict) -> str:
 def qual_request(model: str, c: dict, icp: dict, effort: str | None = None) -> dict:
     system = prompts.RESEARCHER_PROMPT + "\n\n" + skill("lead-qualification")
     user = (f"ICP hard filters (use the text exactly): {json.dumps(icp.get('hard_filters'))}\n"
+            f"Disqualifiers: {json.dumps(icp.get('disqualifiers'))}\n"
             f"Soft preferences: {json.dumps(icp.get('soft_preferences'))}\n\n{_company_block(c)}\n\n"
             "Return your qualification decision. Allowed source URLs: the LinkedIn URL and the page URLs above.")
     return _params(model, system, user, QualOut, effort=effort)

@@ -15,6 +15,7 @@ import httpx
 
 from app.config import get_settings
 from app.lib.sanitize import sanitize_page
+from app.lib.tech_signals import detect_tools
 
 API_URL = "https://api.firecrawl.dev/v2/scrape"
 IMAGE_RE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
@@ -50,6 +51,7 @@ class ScrapedPage:
     redactions: dict[str, int] = field(default_factory=dict)
     parked: bool = False
     links: list[str] = field(default_factory=list)
+    tools: list[dict] = field(default_factory=list)
 
 
 def internal_links(markdown: str, base_url: str, limit: int = 12) -> list[str]:
@@ -78,7 +80,9 @@ def denoise(markdown: str) -> str:
 
 async def scrape(url: str, *, max_chars: int = 6000, client: httpx.AsyncClient | None = None) -> ScrapedPage:
     settings = get_settings()
-    payload = {"url": url, "formats": ["markdown"], "onlyMainContent": True, "timeout": 30000,
+    # rawHtml costs nothing extra (1 credit/page, verified 2026-09-23); it's only scanned for tool fingerprints
+    # and thrown away — never stored, never shown to the model.
+    payload = {"url": url, "formats": ["markdown", "rawHtml"], "onlyMainContent": True, "timeout": 30000,
                "blockAds": True, "removeBase64Images": True}
     headers = {"Authorization": f"Bearer {settings.firecrawl_api_key}"}
     own_client = client is None
@@ -137,4 +141,5 @@ async def scrape(url: str, *, max_chars: int = 6000, client: httpx.AsyncClient |
         truncated=clean.truncated, status_code=site_status, injection_flags=clean.injection_flags,
         redactions=clean.redactions, parked=bool(PARKED_RE.search(text[:3000])),
         links=internal_links(raw_markdown, final_url),
+        tools=detect_tools(data.get("rawHtml")),
     )

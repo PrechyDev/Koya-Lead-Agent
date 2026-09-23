@@ -131,6 +131,10 @@ async def test_find_companies_caps_normalizes_and_redacts(monkeypatch):
     assert call["run_input"]["maxItems"] == 12 and call["run_input"]["locations"] == ["United States"]
     assert [c["domain"] for c in res.companies] == ["acme.io"]
     assert res.dropped_no_domain == 2 and "sales@acme.io" not in res.companies[0]["description"]
+    # Each field is stored once, under the normalized name the pre-screen reads.
+    c = res.companies[0]
+    assert c["hq"]["country_code"] == "US" and c["employee_count_range"] == {"start": 11, "end": 50}
+    assert not {"locations", "employeeCountRange", "employeeCount"} & set(c)
     assert res.cost_usd == 0.013  # settled cost re-read after the run (charges post late)
 
 
