@@ -108,6 +108,22 @@ class ServiceFailure(Exception):
         return self.kind.fatal
 
 
+def message_for(failure: "ServiceFailure", is_admin: bool) -> str:
+    """What a person sees: admins get the cause + the fix (they ARE the admin); members get the plain version."""
+    if is_admin:
+        return f"{failure.kind.admin} (Detail: {failure.detail})" if failure.detail else failure.kind.admin
+    return failure.client
+
+
+def admin_message_from_detail(error_detail: str | None) -> str | None:
+    """Runs store error_detail as "[code] detail"; rebuild the admin message for the run page."""
+    m = re.match(r"\[([a-z_]+)\]\s*(.*)", error_detail or "", re.S)
+    if not m or m.group(1) not in CATALOGUE:
+        return None
+    kind = CATALOGUE[m.group(1)]
+    return kind.admin + (f" (Detail: {m.group(2)[:300]})" if m.group(2) else "")
+
+
 def classify_claude_error(status: int | None, text: str | None) -> str:
     """Map an Anthropic/Agent SDK error (status code and/or message text) to a catalogue code."""
     t = (text or "").lower()

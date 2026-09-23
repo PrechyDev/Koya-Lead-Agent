@@ -7,9 +7,9 @@
 {% elif run.status == "completed" %}
   {% set kind = "success" %}{% set message = "Run completed: " ~ (run.status_detail or "") %}{% include "partials/banner.html" %}
 {% elif run.status == "completed_partial" %}
-  {% set kind = "warning" %}{% set message = "Completed with fewer leads than the target. " ~ (run.shortfall_reason or "") %}{% include "partials/banner.html" %}
+  {% set kind = "warning" %}{% set message = "Completed with fewer leads than the target. " ~ (admin_message or run.shortfall_reason or "") %}{% include "partials/banner.html" %}
 {% elif run.status == "failed" %}
-  {% set kind = "error" %}{% set message = run.error_message or run.status_detail or "The run couldn't finish. Anything saved before the problem is kept below." %}{% include "partials/banner.html" %}
+  {% set kind = "error" %}{% set message = (admin_message ~ " Anything saved before the problem is kept below.") if admin_message else (run.error_message or run.status_detail or "The run couldn't finish. Anything saved before the problem is kept below.") %}{% include "partials/banner.html" %}
 {% elif run.status == "cancelled" %}
   {% set kind = "warning" %}{% set message = run.status_detail or "Run cancelled." %}{% include "partials/banner.html" %}
 {% elif run.status == "superseded" %}

@@ -323,3 +323,26 @@ async def test_scope_precheck_is_cheap_and_classifies():
     verdict = scope_svc.ScopeVerdict(request_type="question", reason="asks where to buy ice cream")
     res = await scope_svc.check_scope("can I buy icecream in ife?", client=_FakeScopeClient(verdict))
     assert res.verdict.request_type == "question" and float(res.cost_usd) == pytest.approx(0.0006)
+
+
+def test_admins_get_the_fix_members_get_the_plain_message():
+    from app.failures import admin_message_from_detail, message_for
+    f = ServiceFailure("apify_no_credit", "$4.99 of $5.00 used")
+    assert "Your admin has been told" in message_for(f, is_admin=False)
+    admin = message_for(f, is_admin=True)
+    assert "Your admin has been told" not in admin and "Apify Console" in admin and "$4.99" in admin
+    assert "Apify Console" in admin_message_from_detail("[apify_no_credit] $4.99 of $5.00 used")
+    assert admin_message_from_detail("no code here") is None
+
+
+@pytest.mark.db
+def test_admin_sees_fix_when_a_service_is_down(client_as, monkeypatch):
+    import app.web.routes as routes
+    monkeypatch.setattr(routes.health, "preflight", lambda limits: [ServiceFailure("apify_no_credit", "HTTP 402")])
+    monkeypatch.setattr(routes.alerts, "raise_alert", lambda *a, **k: None)
+    monkeypatch.setattr(routes.db, "active_run", lambda: None)
+    r = client_as(ADMIN).post("/runs", data={"objective": "Find US B2B SaaS companies with 10 to 100 employees",
+                                             "idempotency_key": str(uuid.uuid4()),
+                                             "csrf_token": auth.csrf_token_for(ADMIN.user_id)},
+                              headers={"HX-Request": "true"})
+    assert r.status_code == 503 and "Apify Console" in r.text and "Your admin has been told" not in r.text

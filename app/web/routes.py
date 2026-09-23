@@ -13,7 +13,7 @@ from app import alerts, auth, db
 from app.auth import Member, current_member, require_admin
 from app.config import get_settings, limits_for_run
 from app.lib.budget import BudgetExceeded, assert_can_spend
-from app.failures import ServiceFailure
+from app.failures import ServiceFailure, admin_message_from_detail, message_for
 from app.lib.objective import objective_hash, objective_problem
 from app.services import health
 from app.main import limiter
@@ -215,12 +215,13 @@ async def create_run(request: Request, objective: str = Form(""), target_qualifi
     except BudgetExceeded as exc:
         failure = ServiceFailure("budget_exhausted", str(exc))
         await db.run(alerts.raise_alert, failure.code, failure.detail)
-        return _banner(request, "error", failure.client, 402)
+        return _banner(request, "error", message_for(failure, member.is_admin), 402)
     failures = await db.run(health.preflight, limits.to_dict())  # free checks; cached for 10 minutes
     if failures:
         for f in failures:
             await db.run(alerts.raise_alert, f.code, f.detail)
-        return _banner(request, "error", failures[0].client, 503)
+        return _banner(request, "error", " ".join(message_for(f, member.is_admin) for f in failures)
+                       if member.is_admin else failures[0].client, 503)
 
     parent = None
     if parent_run_id:
@@ -255,7 +256,8 @@ async def run_live(request: Request, run_id: str, member: Member = Depends(curre
     duplicate = await db.run(db.get_run, str(run["duplicate_of_run_id"])) if run.get("duplicate_of_run_id") else None
     response = templates.TemplateResponse(request, "partials/run_live.html", _ctx(
         request, run=run, counts=counts, steps=stepper(run["status"], _last_active_step(run)),
-        can_control=_can_control(member, run), duplicate=duplicate, now=datetime.now()))
+        can_control=_can_control(member, run), duplicate=duplicate, now=datetime.now(),
+        admin_message=admin_message_from_detail(run.get("error_detail")) if member.is_admin else None))
     if run["status"] not in ACTIVE:
         response.status_code = 286  # HTMX: stop polling
     return response
