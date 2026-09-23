@@ -103,15 +103,21 @@ Models are set per role via `MODEL_ORCHESTRATOR`, `MODEL_ICP`, `MODEL_RESEARCHER
 
 ## Commands
 
-_(Fill in during build step 1.1.)_
+```
+py -3.12 -m venv .venv && .venv/Scripts/python -m pip install -r requirements.txt   # + pytest pytest-asyncio respx ruff
+.venv/Scripts/python -m uvicorn app.main:app --reload --port 8000   # run locally
+.venv/Scripts/python -m pytest -q                                   # 75 tests (real DB, paid APIs faked)
+.venv/Scripts/python scripts/migrate.py                             # apply DB migrations (admin DSN, laptop only)
+.venv/Scripts/python scripts/dev_run.py "<objective>"               # a DEV-limits run from the terminal (spends!)
+.venv/Scripts/python evals/ab.py estimate --name <fixtures>         # A/B pre-flight (free); run/reference need --yes
+.venv/Scripts/python scripts/secret_scan.py --all                   # scan everything tracked
+```
 
-```
-uv sync                                   # or: pip install -e ".[dev]"
-uvicorn app.main:app --reload             # run locally
-pytest                                    # tests
-python scripts/migrate.py                 # apply DB migrations
-python evals/run_ab.py --stage all --yes  # A/B (spends Claude $, self-capped)
-```
+Agent SDK gotchas learned the hard way (see ../docs/progress.md §4):
+- never put `"Task"` in `disallowed_tools` (it disables subagents)
+- subagents must be `background=False` in this headless app
+- always keep `setting_sources=[]` (isolation)
+- every phase has a watchdog, and a killed phase's cost is recovered from transcripts.
 
 ## Environment variables (names only)
 

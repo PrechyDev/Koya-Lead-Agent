@@ -533,6 +533,11 @@ Lowercase · strip protocol, `www.`, path, query and port · IDNA-encode · reje
 | E-42 | Cross-site form post (CSRF) | CSRF token check → 403 | unit |
 | E-43 | Budget exhausted when the grader/client runs | refused before any spend; the banner states spent/remaining and that an admin must raise the budget | T-budget |
 | E-44 | Rate limit hit | 429 → friendly banner "Too many requests, wait a minute" | unit |
+| E-45 | Headcount sources disagree (LinkedIn member count far below the stated band) | Stated band is primary evidence; a big gap becomes a concern | unit |
+| E-46 | A blank `.env` value overrides a default (`APIFY_ACTOR_ID=`) | Blank → default; preflight config check before any spend | unit |
+| E-47 | Agent session hangs (background subagent never returns) | Foreground subagents + per-phase watchdog → finalize from records | live (fixed) |
+| E-48 | Phase killed before reporting cost | Recover cost from Claude Code transcripts into the ledger | live ($0.19 recovered) |
+| E-49 | Orchestrator tries to research itself | Hook denies research/copy tools on the main thread | live |
 | E-35 | Supabase project paused (inactivity) | Daily `/health` cron through the grading window; `/health` reports DB down clearly | 12.3 |
 
 ---
@@ -577,7 +582,7 @@ Lowercase · strip protocol, `www.`, path, query and port · IDNA-encode · reje
 | D-12 | Scrape cache (7 days), which doubles as the A/B fixture store | Default | Re-runs and evals don't pay again | No cache |
 | D-13 | `{{first_name}}` placeholders | Default | No contact finding in scope | Guessing names |
 | D-14 | Sequential researchers | Default | 512 MB RAM; simpler counters; the run is still < 15 min | Parallel subagents |
-| D-15 | Apify actor: _TBD in step 0.3_ | Open | Must be **pay-per-event or pay-per-result** (the PRD prefers pay-per-event, charged per result; **never rental**), accept item + $ caps, return domain + headcount + HQ + industry, and **not** be an email finder | Rental actors; "leads finder" actors that return emails |
+| D-15 | Apify actor: **`harvestapi/linkedin-company-search`** (provisional; owner to confirm). ~$0.004/company + $0.001/start; `maxItems`, `locations`, `companySize` bands, `startPage` | Default | Must be **pay-per-event or pay-per-result** (the PRD prefers pay-per-event, charged per result; **never rental**), accept item + $ caps, return domain + headcount + HQ + industry, and **not** be an email finder | Rental actors; "leads finder" actors that return emails |
 | D-16 | Final objective = the PRD example | Confirmed | Recognisable to graders; realistic yield | A narrower niche |
 | D-17 | No automatic Apify actor re-runs; human checks the console first | Default (PRD rule) | PRD: "stop and ask before re-running" | Auto-retry of failed actor runs |
 | D-18 | Least-privilege `lead_agent_app` DB role (no DELETE/DROP, no other schemas) | Default | Enforces "no destructive DB actions"; protects Week 3/4 data in the same project | Deploying the `postgres` superuser DSN |
@@ -589,6 +594,12 @@ Lowercase · strip protocol, `www.`, path, query and port · IDNA-encode · reje
 | D-25 | HTTP rate limiting with `slowapi` + per-user daily run caps | Confirmed | Protects Render free capacity and the budget | Run caps only |
 | D-26 | No `auth.users` trigger in Week 5; membership only via the invite flow; guard the Week 4 trigger (pending OK) | Default | Stops cross-app access leaks in a shared Supabase project | Relying on manual clean-up |
 | D-27 | Grader runs use normal limits ("like the client") | Confirmed | Realistic client experience | Demo-only limits for graders |
+| D-28 | Skills packaged as a local plugin (`agent_plugin/`) with SDK isolation (`setting_sources=[]`, `strict_mcp_config`) | Default | Keeps dev CLAUDE.md files and the machine's Claude Code config out of the agent | Project `.claude/skills` (would also load CLAUDE.md) |
+| D-29 | Subagents run in the foreground (`background=False`); never block the `Task` built-in | Default (from real bugs) | Background subagents hung a headless run; blocking Task disabled delegation | Background/async subagents |
+| D-30 | Per-phase watchdog + transcript cost recovery | Default | A hang can't block the run slot forever; the ledger never under-counts | Trusting the SDK to always finish |
+| D-31 | Researcher gets `get_research_brief` (hard filters + facts from the DB); orchestrator's own thread is denied research/copy tools | Default | Exact filter wording; forced delegation keeps the orchestrator context small | Orchestrator copies filters into prompts |
+| D-32 | Sync psycopg pool called via `asyncio.to_thread`; Python 3.12 | Default | Works on Windows and Linux alike (event-loop conflict); matches Docker | psycopg async |
+| D-33 | Grader/client runs use full limits on Render (`DEV_LIMITS=false`) | Confirmed | "Use it like the client would" | Demo limits |
 | D-22 | Grounding check = a direct Anthropic Messages call inside `save_outreach`, not an SDK agent | Default (awaiting owner confirmation) | It's a validator inside a tool, not agent reasoning; the agent runtime itself is 100% Agent SDK. Cheaper, guaranteed structured output, can't be skipped | A one-shot SDK query (more overhead, weaker output guarantees) |
 
 ---
