@@ -6,7 +6,7 @@ to check it worked. Nothing here needs code changes.
 **Already verified locally in Docker (2026-09-23):** the image builds (727 MB, most of it the bundled Claude Code
 CLI); it runs as a non-root user; `/health` reaches Supabase through the Session pooler; logged-out visitors are
 redirected to `/login`; a wrong password gets a friendly 401 from real Supabase Auth; static files and security
-headers are served; idle memory is **122 MB** (Render free allows 512 MB); an ICP phase ran **inside the container**
+headers are served; idle memory is **122 MB** (Render free allows 512 MB); a DEV run under a hard 512 MB limit peaked at 456 MB without being killed (run a1f525ef); an ICP phase ran **inside the container**
 (CLI + plugin skills + our MCP tools) for $0.029.
 
 ---
@@ -61,9 +61,9 @@ Import `n8n/alert-email-workflow.json`, set the Gmail credential, email and secr
 | 5.1 | Gibberish objective (`,,,,huovivp`) | $0 | Free input gate |
 | 5.2 | "Can I buy ice cream in Ife?" | ~$0.001 | Haiku scope check → clarification |
 | 5.3 | "Find me leads" | ~$0.001 | too_vague → clarification question (PRD test 1 companion) |
-| 5.4 | One **DEV** run of a new objective (target 2) | $0.30 Claude + $0.05 Apify | Live proof of **parallel subagents (D-49)**, **`check_drafts` before saving (D-50)** and the rewrite path (errors log #7), all still pending live verification. Check `tool_calls`: `Delegate:researcher` rows with the same timestamp; `check_drafts` before `save_outreach` |
+| 5.4 | One **DEV** run of a new objective (target 2) | $0.30 Claude + $0.05 Apify | Live proof of **`check_drafts` before saving (D-50)** and the rewrite path (errors log #7). Check `tool_calls`: `check_drafts` before `save_outreach` |
 | 5.5 | Set `FIXTURE_MODE=true`, run the injection fixture page, then set it back to `false` | ~$0.10 | Prompt injection over a real public URL (PRD "untrusted input") |
-| 5.6 | Watch Render → Metrics → Memory during 5.4 | — | Parallel subagents stay under 512 MB. If memory goes above ~450 MB, set the env var `MAX_PARALLEL_SUBAGENTS=2` (no code change; applies to new runs) |
+| 5.6 | Watch Render → Metrics → Memory during 5.4 | — | Stays under 512 MB. Measured locally under a hard 512 MB limit: peak 456 MB with 2 parallel researchers **plus** a separate 131 MB script process Render doesn't have; expected on Render ≈ 330–400 MB, sequential |
 
 Then set **`DEV_LIMITS=false`** (full limits: 10 leads, 20 companies, $1.25 per run) and redeploy **between runs**.
 
@@ -93,6 +93,6 @@ Then set **`DEV_LIMITS=false`** (full limits: 10 leads, 20 companies, $1.25 per 
 | Limit | Effect | Mitigation |
 | --- | --- | --- |
 | One uvicorn worker, one run at a time | A second user waits (409 + message) | Fine for one team (D-46) |
-| Render free 512 MB | Parallel subagents add CLI memory | Cap 3; watch metrics; lower to 2 if needed |
+| Render free 512 MB | The Claude CLI uses ~260 MB during research | Sequential subagents; `MALLOC_ARENA_MAX=2`; watch metrics |
 | Cold starts | First page after idle is slow | Keep-alive during runs; daily cron in the grading window |
 | Image 727 MB | Slower builds (~2–4 min) | Build cache; `autoDeploy: false` |
