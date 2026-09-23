@@ -34,7 +34,7 @@ py -3.12 -m venv .venv
 cp .env.example .env                       # fill in (see comments in the file)
 git config core.hooksPath .githooks        # secret scan before every commit
 
-.venv/Scripts/python scripts/create_app_role.py   # creates the least-privilege DB user, writes SUPABASE_DB_DSN
+.venv/Scripts/python scripts/create_app_role.py   # creates the least-privilege DB user from the SUPABASE_DB_DSN you put in .env (read-only)
 .venv/Scripts/python scripts/migrate.py           # applies db/migrations in order (safe to re-run)
 .venv/Scripts/python scripts/bootstrap_owner.py you@example.com "Your Name" --owner   # give yourself access
 .venv/Scripts/python -m uvicorn app.main:app --reload --port 8000                    # http://localhost:8000
