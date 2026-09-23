@@ -5,8 +5,8 @@ import pytest
 from app.config import DEV_LIMITS, FULL_LIMITS, limits_for_run
 from app.lib.budget import BudgetExceeded, assert_can_spend, cost_from_usage
 from app.lib.limits import next_discovery_batch, qualified_slots_left
-from app.lib.objective import icp_signature, normalize_headcount, objective_hash, parse_headcount_range
-from app.lib.outreach_checks import check_outreach
+from app.lib.objective import country_code, icp_signature, normalize_headcount, objective_hash, parse_headcount_range
+from app.lib.outreach_checks import check_outreach, measure
 from app.lib.qualification_rules import HardFilterCheck, decide_status, invalid_sources, prescreen
 
 SRC = "https://acme.io/"
@@ -120,6 +120,22 @@ def test_prescreen_pass_reject_unknown():
     assert prescreen({"hq": None}, ICP)[0] == "unknown"
 
 
+def test_prescreen_geography_handles_any_country_and_regions():
+    kenya = {**ICP, "geography": ["Kenya"]}
+    assert prescreen(_disc(country="KE"), kenya)[0] == "passed"       # was wrongly rejected (not in the old table)
+    assert prescreen(_disc(country="NG"), kenya)[0] == "rejected:geography"
+    assert prescreen(_disc(country="US"), {**ICP, "geography": ["USA"]})[0] == "passed"
+    result, reason = prescreen(_disc(country="DE"), {**ICP, "geography": ["Europe"]})
+    assert result == "unknown" and "Europe" in reason                  # a region is never a free rejection
+    assert prescreen(_disc(country="GB"), {**ICP, "geography": ["UK", "Europe"]})[0] == "passed"
+
+
+def test_country_codes():
+    got = [country_code(g) for g in ["United States", "USA", "U.S.", "uk", "England", "Kenya", "DE", "Europe", ""]]
+    assert got == ["us", "us", "us", "gb", "gb", "ke", "de", None, None]
+    assert country_code("America") is None  # ambiguous on purpose
+
+
 def test_prescreen_notes_large_headcount_disagreement():
     result, reason = prescreen(_disc(start=11, end=50, members=1), ICP)
     assert result == "passed" and "verify headcount" in reason
@@ -128,9 +144,9 @@ def test_prescreen_notes_large_headcount_disagreement():
 # --- outreach checks (E-24) -----------------------------------------------------------
 def _good_steps():
     return [
-        {"subject": "Onboarding for dental clinics", "body": "Hi {{first_name}}, your site says Acme onboards 40 new clinics a month. Is setup still manual?", "personalization_note": "onboarding volume", "evidence_ref": SRC},
-        {"subject": "Support ticket triage", "body": "Hi {{first_name}}, with a 3-person support team, routing tickets by clinic tier could be automated.", "personalization_note": "team size", "evidence_ref": SRC},
-        {"subject": "Wrong timing?", "body": "Hi {{first_name}}, if this isn't a priority right now, just say so. — {{sender_name}}", "personalization_note": "close", "evidence_ref": SRC},
+        {"step": 1, "subject": "Onboarding for dental clinics", "body": "Hi {{first_name}}, your site says Acme onboards 40 new clinics a month. Is setup still manual? {{sender_name}}", "personalization_note": "onboarding volume", "evidence_ref": SRC},
+        {"step": 2, "subject": "Support ticket triage", "body": "Hi {{first_name}}, with a 3-person support team, routing tickets by clinic tier could be automated. {{sender_name}}", "personalization_note": "team size", "evidence_ref": SRC},
+        {"step": 3, "subject": "Wrong timing?", "body": "Hi {{first_name}}, if this isn't a priority right now, just say so. — {{sender_name}}", "personalization_note": "close", "evidence_ref": SRC},
     ]
 
 
@@ -149,6 +165,24 @@ def test_bad_outreach_is_caught():
     for expected in ["exactly 3", "words", "email address", "banned phrase", "subject is 80", "evidence_ref",
                      "URL", "unknown placeholder", "{{first_name}}", "LinkedIn message is 301"]:
         assert expected in text, expected
+
+
+def test_template_structure_is_enforced():
+    steps = _good_steps()
+    steps[0]["body"] = steps[0]["body"].replace("?", ".")          # email 1 must ask a question
+    steps[1]["subject"] = steps[0]["subject"]                       # subjects must differ
+    steps[2]["body"] = "Hi {{first_name}}, " + "short " * 85 + "{{sender_name}}"  # final email must be brief
+    steps[1]["body"] = steps[1]["body"].replace("{{sender_name}}", "")        # every email signed
+    text = "\n".join(check_outreach(steps, "Hi {{first_name}}, a question?", [SRC]))
+    for expected in ["low-pressure question", "its own subject", "email 3 is 88 words", "email 2 must be signed"]:
+        assert expected in text, expected
+    reordered = [_good_steps()[1], _good_steps()[0], _good_steps()[2]]
+    assert any("numbered step 1, 2, 3" in p for p in check_outreach(reordered, "hi?", [SRC]))
+
+
+def test_measure_gives_exact_counts():
+    counts = measure(_good_steps(), "x" * 316)
+    assert counts["linkedin_chars"] == 316 and counts["emails"][0] == {"step": 1, "subject_chars": 29, "body_words": 17}
 
 
 def test_blank_env_values_fall_back_to_defaults(monkeypatch):

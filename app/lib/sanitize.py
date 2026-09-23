@@ -86,11 +86,19 @@ def truncate(text: str, max_chars: int = DEFAULT_MAX_CHARS) -> tuple[str, bool]:
     return cut.rstrip() + " …", True
 
 
+def fence(tag: str, text: str, **attrs: str) -> str:
+    """Wrap text that didn't come from us (a page, a user's objective, drafts built from pages) in <tag>…</tag>.
+
+    Any <tag> or </tag> inside the text is removed first, so the text can't close the fence early and put
+    words outside it, where the model would read them as part of our prompt.
+    """
+    body = re.sub(rf"</?\s*{re.escape(tag)}\b[^>]*>", "[tag removed]", text or "", flags=re.I)
+    attr_text = "".join(f' {k}="{str(v).replace(chr(34), "%22")}"' for k, v in attrs.items())
+    return f"<{tag}{attr_text}>\n{body}\n</{tag}>"
+
+
 def wrap_untrusted(url: str, text: str) -> str:
-    safe_url = url.replace('"', "%22")
-    # Neutralise any attempt to close our wrapper from inside the page.
-    body = re.sub(r"</?\s*untrusted_website_content[^>]*>", "[tag removed]", text, flags=re.I)
-    return f'<untrusted_website_content url="{safe_url}">\n{body}\n</untrusted_website_content>'
+    return fence("untrusted_website_content", text, url=url)
 
 
 def sanitize_page(text: str, max_chars: int = DEFAULT_MAX_CHARS) -> Sanitized:

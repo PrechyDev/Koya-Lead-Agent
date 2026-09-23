@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from app.config import get_settings
 from app.failures import classify_claude_error
 from app.lib.budget import cost_from_usage
+from app.lib.sanitize import fence
 
 MODEL = "claude-haiku-4-5"
 
@@ -53,7 +54,7 @@ async def check_scope(objective: str, client: anthropic.AsyncAnthropic | None = 
     try:
         response = await client.messages.parse(
             model=MODEL, max_tokens=300, system=SYSTEM,
-            messages=[{"role": "user", "content": f"<request>\n{objective[:1000]}\n</request>"}],
+            messages=[{"role": "user", "content": fence("request", objective[:1000])}],
             output_format=ScopeVerdict,
         )
     except anthropic.APIStatusError as exc:

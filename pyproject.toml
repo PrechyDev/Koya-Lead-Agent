@@ -17,6 +17,7 @@ dependencies = [
   "pydantic-settings>=2.4",
   "python-dotenv>=1.0",
   "tldextract>=5.1",
+  "pycountry>=24.6",
   "slowapi>=0.1.9",
   "pyjwt[crypto]>=2.9",
   "itsdangerous>=2.2",

@@ -16,7 +16,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from app.lib.domain import same_url
-from app.lib.objective import normalize_geo, parse_headcount_range
+from app.lib.objective import country_code, parse_headcount_range
 
 QUALIFIED_MIN_CONFIDENCE = 0.70
 Status = Literal["qualified", "not_qualified", "needs_review"]
@@ -119,14 +119,23 @@ def prescreen(discovery: dict, icp: dict) -> tuple[str, str]:
     reasons: list[str] = []
     unknown = False
 
-    geos = {normalize_geo(g) for g in (icp.get("geography") or []) if g}
-    if geos:
+    wanted = [g for g in (icp.get("geography") or []) if g and str(g).strip()]
+    codes = {c for c in (country_code(g) for g in wanted) if c}
+    regions = [g for g in wanted if country_code(g) is None]  # "Europe", "North America": not checkable here
+    if wanted:
         country = _hq_country(discovery)
         if country is None:
             unknown = True
             reasons.append("HQ country not in discovery data")
-        elif country not in geos:
-            return "rejected:geography", f"HQ country is {country.upper()}, outside {sorted(geos)}"
+        elif country in codes:
+            pass
+        elif regions:
+            # Never reject on a region we can't map to countries; the researcher checks it from evidence.
+            unknown = True
+            reasons.append(f"HQ country is {country.upper()}; can't confirm it is in {', '.join(regions)} "
+                           "from discovery data")
+        else:
+            return "rejected:geography", f"HQ country is {country.upper()}, outside {sorted(codes)}"
 
     low, high = parse_headcount_range(icp.get("headcount_range"))
     if low is not None or high is not None:

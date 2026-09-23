@@ -11,14 +11,22 @@ import hashlib
 import json
 import re
 
-_GEO_SYNONYMS = {
-    "us": "us", "usa": "us", "u.s.": "us", "u.s.a.": "us", "united states": "us",
-    "united states of america": "us", "america": "us",
-    "uk": "gb", "u.k.": "gb", "united kingdom": "gb", "great britain": "gb", "england": "gb",
-    "canada": "ca", "ca": "ca", "germany": "de", "france": "fr", "australia": "au",
-    "nigeria": "ng", "india": "in", "ireland": "ie", "netherlands": "nl",
+import pycountry
+
+# Names people use that ISO 3166 (pycountry) doesn't list. Everything else ("United States", "USA", "Kenya",
+# "DE") is resolved by pycountry. "America" is deliberately absent: it could mean the US or the continent.
+_GEO_ALIASES = {
+    "u.s": "us", "u.s.a": "us", "the us": "us", "the usa": "us", "the united states": "us",
+    "uk": "gb", "u.k": "gb", "the uk": "gb", "great britain": "gb", "britain": "gb", "england": "gb",
+    "scotland": "gb", "wales": "gb", "northern ireland": "gb",
+    "russia": "ru", "south korea": "kr", "korea": "kr", "north korea": "kp", "vietnam": "vn", "iran": "ir",
+    "syria": "sy", "turkey": "tr", "czech republic": "cz", "uae": "ae", "taiwan": "tw", "tanzania": "tz",
+    "bolivia": "bo", "venezuela": "ve", "moldova": "md", "laos": "la", "ivory coast": "ci",
+    "the netherlands": "nl", "holland": "nl",
 }
 
+# Same kind of company, different words. Only feeds the repeat gate's signature, where a loose match costs
+# one "you ran this before" question and a miss costs a repeated paid run, so matching generously is safer.
 _TYPE_SYNONYMS = {
     "b2b saas": "b2b saas", "saas": "b2b saas", "b2b software": "b2b saas",
     "software as a service": "b2b saas", "b2b saas company": "b2b saas",
@@ -64,9 +72,22 @@ def objective_hash(objective: str) -> str:
     return hashlib.sha256(normalize_text(objective).encode("utf-8")).hexdigest()
 
 
+def country_code(value: str | None) -> str | None:
+    """'United States' / 'USA' / 'U.S.' / 'Kenya' -> 'us' / 'us' / 'us' / 'ke'. None for regions ('Europe')."""
+    v = re.sub(r"\s+", " ", (value or "").strip().lower().rstrip("."))
+    if not v:
+        return None
+    if v in _GEO_ALIASES:
+        return _GEO_ALIASES[v]
+    try:
+        return pycountry.countries.lookup(v).alpha_2.lower()
+    except LookupError:
+        return None
+
+
 def normalize_geo(value: str) -> str:
-    v = (value or "").strip().lower().rstrip(".")
-    return _GEO_SYNONYMS.get(v, normalize_text(v))
+    """ISO country code when the value is a country, else the normalized text (a region like 'europe')."""
+    return country_code(value) or normalize_text(value)
 
 
 def normalize_headcount(value: str | None) -> str:

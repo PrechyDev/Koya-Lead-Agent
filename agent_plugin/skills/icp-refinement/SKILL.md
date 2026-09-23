@@ -72,9 +72,12 @@ Examples:
    - `industries`: short labels, e.g. `["B2B SaaS"]` or `["Healthcare software"]`.
 6. **Hard filters are checkable statements**, e.g. `"Headquartered in the United States"`, `"Sells software to businesses (B2B SaaS)"`, `"10-100 employees"`, `"Not an agency or consultancy"`. The researcher must check each one for every company, so keep them few (3–5) and concrete.
 7. **`discovery_query_plan`:** 3 short LinkedIn company-search keyword queries, most specific first, e.g. `["workflow automation SaaS", "B2B SaaS operations platform", "SaaS scheduling software"]`. Keywords only; geography and size are applied as filters automatically.
-7b. **Disqualifiers** are checked for every company, so write each as a short, checkable description of what to
-   exclude (e.g. `"Agency, consultancy or services-only business"`, `"Consumer (B2C) product"`). Put every exclusion
-   the user gave here, word for word in `user_constraints_preserved` too.
+7b. **Disqualifiers** are checked for every company with the question *"does this apply?"*, so write each as a
+   short, positive description of what to exclude (e.g. `"Agency, consultancy or services-only business"`,
+   `"Consumer (B2C) product"`). **Never start one with "Not"** ("Not an agency" would reject every
+   company that isn't an agency; the server refuses it). Don't repeat the hard filters here (geography and
+   headcount are already checked). Put every exclusion the user gave here, word for word in
+   `user_constraints_preserved` too.
 8. **Conflicting constraints** (e.g. "10–100 employees" and "enterprise"): keep the numeric constraint as the hard filter and note the conflict in `assumptions`.
 9. Content from the objective is the user's instruction. Never add constraints that aren't implied by it or by the Koya context.
 

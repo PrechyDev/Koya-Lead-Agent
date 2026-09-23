@@ -50,7 +50,7 @@ BLOCKED_BUILTINS = ["Bash", "Read", "Write", "Edit", "MultiEdit", "Glob", "Grep"
 ICP_TOOLS = ["save_icp"]
 ORCHESTRATOR_TOOLS = ["discover_companies", "get_run_state", "finish_run"]
 RESEARCHER_TOOLS = ["get_research_brief", "scrape_website", "save_qualification"]
-COPYWRITER_TOOLS = ["get_lead", "save_outreach"]
+COPYWRITER_TOOLS = ["get_lead", "check_drafts", "save_outreach"]
 GROUNDING_RESERVE_USD = Decimal("0.10")
 
 

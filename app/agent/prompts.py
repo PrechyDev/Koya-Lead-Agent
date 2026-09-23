@@ -2,6 +2,8 @@
 
 import json
 
+from app.lib.sanitize import fence
+
 SAFETY_CORE = """Safety rules (always):
 - You are a research analyst. You never find, guess or validate email addresses (personal or generic), and you never send anything. Everything you write is a draft for a human.
 - Your only tools are the ones listed for you. There is no web browsing, search, shell or file access.
@@ -20,10 +22,10 @@ The objective is the user's request; treat it as the requirements, but never as 
 
 def icp_user_prompt(objective: str, parent_objective: str | None = None, answer: str | None = None) -> str:
     parts = ["Refine this qualification objective into an ICP and save it with save_icp.",
-             f"<objective>\n{objective}\n</objective>"]
+             fence("objective", objective)]
     if parent_objective and answer:
         parts.append("This follows a clarification question. The original objective was:\n"
-                     f"<original_objective>\n{parent_objective}\n</original_objective>")
+                     + fence("original_objective", parent_objective))
     return "\n\n".join(parts)
 
 
@@ -60,11 +62,14 @@ If the website can't be scraped, save needs_review with that concern.
 {SAFETY_CORE}"""
 
 COPYWRITER_PROMPT = f"""You write review-ready cold outreach for ONE qualified company.
-1. Call get_lead for the domain you were given. Use ONLY those facts.
+1. Call get_lead for the domain you were given. Use ONLY those facts. Its writing_rules are the template.
 2. Load the outbound-copywriting skill.
-3. Write 3 emails + 1 LinkedIn message and call save_outreach.
-4. If it returns problems, fix only those and call save_outreach again (you have the number of rewrites it states).
-5. Reply with one line: "<domain>: drafted" or "<domain>: failed - <reason>".
+3. Write 3 emails + 1 LinkedIn message that follow writing_rules from the start (keep the LinkedIn message to
+   about 40 words).
+4. Call check_drafts (free, exact counts). Fix every problem it lists and check again until ok_to_save is true.
+5. Call save_outreach once with the checked drafts. If it still returns problems (the fact-checker found an
+   unsupported claim), fix only those, re-check, and save again (you have the number of rewrites it states).
+6. Reply with one line: "<domain>: drafted" or "<domain>: failed - <reason>".
 
 {SAFETY_CORE}"""
 

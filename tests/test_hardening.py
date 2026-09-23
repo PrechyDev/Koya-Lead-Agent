@@ -211,7 +211,8 @@ async def test_fact_checker_outage_does_not_use_up_rewrites(run_ctx, monkeypatch
         return GroundingResult(False, None, [], Decimal("0"), "claude-haiku-4-5", 0, 0, "fact-checker unavailable (529)",
                                failure_code="anthropic_unavailable")
     monkeypatch.setattr(T, "check_grounding", down)
-    steps = [{"step": i, "subject": "Clinic onboarding", "body": "Hi {{first_name}}, Acme sells SaaS. Quick question?",
+    steps = [{"step": i, "subject": f"Clinic onboarding {i}",
+              "body": "Hi {{first_name}}, Acme sells SaaS. Quick question? {{sender_name}}",
               "personalization_note": "n", "evidence_ref": "https://acme-hardtest.com/"} for i in (1, 2, 3)]
     args = {"purpose": "o", "domain": "acme-hardtest.com", "emails": steps,
             "linkedin_message": "Hi {{first_name}}, quick question?"}

@@ -14,13 +14,15 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from decimal import Decimal
 
+import pycountry
 from apify_client import ApifyClientAsync
 from apify_client.errors import ApifyApiError
 
 from app.config import get_settings
 from app.failures import classify_apify
 from app.lib.domain import normalize_domain
-from app.lib.sanitize import redact
+from app.lib.objective import country_code
+from app.lib.sanitize import find_injection_flags, redact
 
 # LinkedIn's fixed headcount bands (the actor's `companySize` enum).
 SIZE_BANDS: list[tuple[str, int, int | None]] = [
@@ -65,7 +67,22 @@ def size_bands_for(low: int | None, high: int | None) -> list[str]:
 
 
 def location_names(geos: list[str]) -> list[str]:
-    return [LOCATION_NAMES.get(g, g.title()) for g in geos if g]
+    """ICP geography as LinkedIn location names. Short forms ('US', 'UK') are expanded; anything else
+    (a full country name or a region such as 'Europe') is passed as written, which LinkedIn resolves."""
+    names = []
+    for g in geos:
+        text = (g or "").strip()
+        if not text:
+            continue
+        code = country_code(text)
+        if code in LOCATION_NAMES:
+            names.append(LOCATION_NAMES[code])
+        elif code and len(text.replace(".", "")) <= 3:
+            country = pycountry.countries.get(alpha_2=code.upper())
+            names.append(getattr(country, "common_name", None) or country.name if country else text)
+        else:
+            names.append(text)
+    return list(dict.fromkeys(names))
 
 
 def normalize_company(item: dict) -> dict | None:
@@ -82,12 +99,13 @@ def normalize_company(item: dict) -> dict | None:
               "country_code": (parsed.get("countryCode") or chosen.get("country") or "").upper() or None,
               "text": redact(parsed.get("text") or "")[0] or None}
     description = redact((item.get("description") or "")[:800])[0]
+    tagline = redact(item.get("tagline") or "")[0]
     return {
         "name": redact((item.get("name") or domain).strip())[0][:200],
         "domain": domain,
         "website": item.get("website"),
         "linkedin_url": item.get("linkedinUrl"),
-        "tagline": redact(item.get("tagline") or "")[0],
+        "tagline": tagline,
         # Everything text-like from Apify is redacted before storage or the model (E-11).
         "description": description,
         "industries": [redact(i.get("name"))[0] for i in (item.get("industries") or []) if i.get("name")],
@@ -96,6 +114,8 @@ def normalize_company(item: dict) -> dict | None:
         "employee_count_range": item.get("employeeCountRange"),
         "hq": hq,
         "founded_year": (item.get("foundedOn") or {}).get("year"),
+        # The LinkedIn "About" text is written by the company, so it is as untrusted as its website.
+        "injection_flags": find_injection_flags(f"{item.get('tagline') or ''}\n{item.get('description') or ''}"),
     }
 
 

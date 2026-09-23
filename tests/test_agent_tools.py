@@ -154,6 +154,14 @@ async def test_full_tool_flow(run_ctx, fake_apify, fake_scrape, monkeypatch):
     good_steps = [{"step": i, "subject": f"Clinic onboarding {i}", "body": "Hi {{first_name}}, Alpha sells SaaS to "
                    "clinics. Is onboarding still manual? {{sender_name}}", "personalization_note": "clinics",
                    "evidence_ref": "https://alpha-tooltest.com/"} for i in (1, 2, 3)]
+    # Free pre-check: exact counts + problems, no save attempt used (drafts are fixed BEFORE saving).
+    data, _ = await call(ctx, "check_drafts", {**bad, "emails": good_steps, "linkedin_message": "x" * 316})
+    assert not data["ok_to_save"] and data["counts"]["linkedin_chars"] == 316
+    assert any("316 chars" in p for p in data["problems"])
+    assert db.get_lead_by_domain(ctx.run_id, "alpha-tooltest.com")["outreach_attempts"] == 1  # unchanged
+    data, _ = await call(ctx, "check_drafts", {**bad, "emails": good_steps,
+                                               "linkedin_message": "Hi {{first_name}}, quick question on onboarding?"})
+    assert data["ok_to_save"] and data["problems"] == []
     data, err = await call(ctx, "save_outreach", {**bad, "emails": good_steps,
                                                   "linkedin_message": "Hi {{first_name}}, quick question on onboarding?"})
     assert data["drafted"] and not err
@@ -173,6 +181,13 @@ async def test_tool_call_cap_blocks(run_ctx):
     await call(ctx, "get_run_state", {"purpose": "1"})
     data, _ = await call(ctx, "get_run_state", {"purpose": "2"})
     assert data["reason"] == "tool_call_limit_reached"
+
+
+async def test_negative_disqualifiers_are_refused(run_ctx):
+    icp = {**ICP_ARGS["icp"], "disqualifiers": ["Not an agency or consultancy", "Consumer (B2C) product"]}
+    data, err = await call(run_ctx, "save_icp", {**ICP_ARGS, "icp": icp})
+    assert err and "Not an agency or consultancy" in data["error"] and "Consumer (B2C)" not in data["error"]
+    assert not db.get_run(run_ctx.run_id)["icp"]
 
 
 async def test_unsearchable_icp_needs_question(run_ctx):

@@ -11,6 +11,7 @@ from app.lib.sanitize import EMAIL_RE, PHONE_RE
 
 MAX_SUBJECT_CHARS = 60
 MAX_BODY_WORDS = 120
+MAX_FINAL_EMAIL_WORDS = 80   # the guide: "keep the final follow-up brief"
 MAX_LINKEDIN_CHARS = 300
 ALLOWED_PLACEHOLDERS = {"first_name", "sender_name"}
 URL_RE = re.compile(r"https?://|www\.", re.I)
@@ -53,10 +54,56 @@ def _banned(label: str, text: str) -> list[str]:
     return [f'{label} uses a banned phrase: "{p}"' for p in BANNED_PHRASES if p in lower]
 
 
+# Shown to the copywriter up front (get_lead) so drafts are written to the rules, not fixed afterwards.
+WRITING_RULES = {
+    "emails": "exactly 3, steps 1, 2, 3, each with a different subject",
+    "subject_max_chars": MAX_SUBJECT_CHARS,
+    "body_max_words": MAX_BODY_WORDS,
+    "email_3_max_words": MAX_FINAL_EMAIL_WORDS,
+    "linkedin_max_chars": MAX_LINKEDIN_CHARS,
+    "linkedin_target": "about 40 words; aim for 250 characters to leave room",
+    "email_1": "opens with a company observation, links it to the offer, ends with a low-pressure question (a '?')",
+    "email_2": "a different angle (a workflow bottleneck, scaling challenge or operational pattern)",
+    "email_3": "brief; invites a reply if the timing or fit is wrong",
+    "placeholders": "greet with {{first_name}} in email 1; sign every email with {{sender_name}}; no others",
+    "never": "email addresses, phone numbers, URLs, banned phrases, invented facts",
+    "every_email": "at least one company-specific detail from get_lead, with its source URL in evidence_ref",
+}
+
+
+def measure(steps: list[dict], linkedin_message: str) -> dict:
+    """Exact counts for each part, so the writer doesn't have to estimate them."""
+    return {
+        "emails": [{"step": s.get("step"), "subject_chars": len((s.get("subject") or "").strip()),
+                    "body_words": _words(s.get("body") or "")} for s in steps],
+        "linkedin_chars": len((linkedin_message or "").strip()),
+    }
+
+
+def _template_problems(steps: list[dict]) -> list[str]:
+    """The guide's suggested sequence structure, where code can check it."""
+    problems = []
+    if [s.get("step") for s in steps] != [1, 2, 3][: len(steps)]:
+        problems.append("emails must be numbered step 1, 2, 3 in order")
+    subjects = [(s.get("subject") or "").strip().lower() for s in steps if (s.get("subject") or "").strip()]
+    if len(subjects) != len(set(subjects)):
+        problems.append("each email needs its own subject line (two are the same)")
+    if steps and "?" not in (steps[0].get("body") or ""):
+        problems.append("email 1 must end with a low-pressure question (no '?' found)")
+    if len(steps) >= 3 and _words(steps[2].get("body") or "") > MAX_FINAL_EMAIL_WORDS:
+        problems.append(f"email 3 is {_words(steps[2].get('body') or '')} words; keep the final follow-up brief "
+                        f"(max {MAX_FINAL_EMAIL_WORDS})")
+    for i, s in enumerate(steps, start=1):
+        if "{{sender_name}}" not in (s.get("body") or "").replace(" ", ""):
+            problems.append(f"email {i} must be signed with the {{{{sender_name}}}} placeholder")
+    return problems
+
+
 def check_outreach(steps: list[dict], linkedin_message: str, allowed_sources: list[str]) -> list[str]:
     problems: list[str] = []
     if len(steps) != 3:
         problems.append(f"the sequence must have exactly 3 emails (got {len(steps)})")
+    problems += _template_problems(steps)
 
     for i, step in enumerate(steps, start=1):
         label = f"email {i}"

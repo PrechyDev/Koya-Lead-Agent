@@ -22,8 +22,8 @@ from app.failures import ServiceFailure
 from app.lib.budget import BudgetExceeded, assert_can_spend
 from app.lib.domain import homepage_url, normalize_domain
 from app.lib.limits import next_discovery_batch
-from app.lib.objective import icp_signature, normalize_geo, parse_headcount_range
-from app.lib.outreach_checks import check_outreach
+from app.lib.objective import icp_signature, parse_headcount_range
+from app.lib.outreach_checks import WRITING_RULES, check_outreach, measure
 from app.lib.qualification_rules import (
     DisqualifierCheck, HardFilterCheck, SoftPreferenceCheck, decide_status, invalid_sources, prescreen,
 )
@@ -42,6 +42,10 @@ OUT_OF_SCOPE_QUESTION = {
     "too_vague": "",
 }
 GROUNDING_CALL_CAP_USD = 0.03
+MAX_DRAFT_CHECKS_PER_LEAD = 5  # free self-checks before save_outreach; bounded so a confused writer can't loop
+# A disqualifier is answered "does it apply?", so it must name what to EXCLUDE. "Not an agency" inverts that:
+# "applies" would mean "is not an agency" and would reject exactly the companies we want (seen in dev ICPs).
+NEGATIVE_DISQUALIFIER_RE = re.compile(r"^\s*not\b", re.I)
 STANDARD_PATHS = {"/", "/about", "/about-us", "/company", "/careers", "/jobs", "/customers", "/team"}
 
 
@@ -199,6 +203,7 @@ OUTREACH_SCHEMA = {
     },
     "required": ["purpose", "domain", "emails", "linkedin_message"],
 }
+CHECK_DRAFTS_SCHEMA = OUTREACH_SCHEMA  # same drafts, checked instead of saved
 FINISH_SCHEMA = {
     "type": "object",
     "properties": {"purpose": {"type": "string"}, "summary": {"type": "string"},
@@ -226,7 +231,10 @@ def _brief_facts(lead: dict) -> dict:
     d = lead.get("discovery_data") or {}
     return {
         "name": lead["company_name"], "domain": lead["company_domain"], "linkedin_url": lead.get("linkedin_url"),
-        "website": d.get("website"), "tagline": d.get("tagline"), "description": (d.get("description") or "")[:600],
+        "website": d.get("website"),
+        # Written by the company on LinkedIn: data, never instructions (same rule as page text).
+        "linkedin_about": wrap_untrusted(lead.get("linkedin_url") or "linkedin",
+                                         f"{d.get('tagline') or ''}\n{(d.get('description') or '')[:600]}".strip()),
         "industries_on_linkedin": d.get("industries"), "stated_size_band": d.get("employee_count_range"),
         "employees_on_linkedin": d.get("employee_count_linkedin"), "hq": d.get("hq"),
         "founded_year": d.get("founded_year"), "specialities": d.get("specialities"),
@@ -245,6 +253,7 @@ def _run_usage(ctx: RunContext) -> tuple[dict, dict]:
 # ---------------------------------------------------------------------------
 def build_handlers(ctx: RunContext) -> dict:
     settings = get_settings()
+    draft_checks: dict[str, int] = {}
 
     async def save_icp(args: dict) -> Outcome:
         parsed, err = _parse(SaveICPInput, args)
@@ -259,6 +268,11 @@ def build_handlers(ctx: RunContext) -> dict:
             return failure("is_searchable is false, so clarification_question is required.")
         if parsed.is_searchable and (not icp["hard_filters"] or not icp["discovery_query_plan"]):
             return failure("A searchable ICP needs at least one hard filter and one discovery query.")
+        negative = [d for d in icp["disqualifiers"] if NEGATIVE_DISQUALIFIER_RE.match(d)]
+        if parsed.is_searchable and negative:
+            return failure("Write each disqualifier as what to EXCLUDE, because the researcher answers \"does it "
+                           "apply?\". For example \"Agency or consultancy\", not \"Not an agency\". Rewrite these "
+                           "and call save_icp again: " + "; ".join(negative))
         icp = redact_obj(icp)
         fields = {"icp": icp, "icp_assumptions": icp["assumptions"], "request_type": parsed.request_type}
         if parsed.is_searchable:
@@ -295,7 +309,7 @@ def build_handlers(ctx: RunContext) -> dict:
         queries = list(usage.get("queries") or [])
         start_page = 1 + queries.count(query)
         low, high = parse_headcount_range(icp.get("headcount_range"))
-        geos = [normalize_geo(g) for g in (icp.get("geography") or [])]
+        geos = [str(g) for g in (icp.get("geography") or []) if g]
         try:
             result = await apify_svc.find_companies(
                 query=query, geos=geos, size_bands=apify_svc.size_bands_for(low, high), max_items=size,
@@ -544,7 +558,32 @@ def build_handlers(ctx: RunContext) -> dict:
             "hard_filter_evidence": [{"filter": c.get("filter"), "evidence": c.get("evidence"),
                                       "source_url": c.get("source_url")} for c in lead["hard_filter_checks"]],
             "source_urls": lead["source_urls"], "save_attempts_left": attempts_left,
+            "writing_rules": WRITING_RULES,
+            "next_step": "Write the drafts to these rules, run check_drafts until it returns no problems, "
+                         "then call save_outreach once.",
         }, f"Lead facts for {lead['company_domain']}")
+
+    async def check_drafts(args: dict) -> Outcome:
+        """Free, code-only pre-check (no AI call, no save attempt used): exact counts + every rule problem."""
+        parsed, err = _parse(OutreachInput, args)
+        if err:
+            return err
+        lead, err = await db.run(_lead_for, ctx, parsed.domain)
+        if err:
+            return err
+        domain = lead["company_domain"]
+        draft_checks[domain] = draft_checks.get(domain, 0) + 1
+        if draft_checks[domain] > MAX_DRAFT_CHECKS_PER_LEAD:
+            return blocked("draft_check_limit_reached", "No more free checks for this lead. Fix the last problems "
+                                                         "listed and call save_outreach.")
+        steps = [e.model_dump() for e in sorted(parsed.emails, key=lambda e: e.step)]
+        problems = check_outreach(steps, parsed.linkedin_message, lead["source_urls"] or [])
+        counts = measure(steps, parsed.linkedin_message)
+        verdict = "ready for save_outreach" if not problems else f"{len(problems)} problem(s) to fix"
+        return success({"ok_to_save": not problems, "problems": problems, "counts": counts,
+                        "checks_left": MAX_DRAFT_CHECKS_PER_LEAD - draft_checks[domain]},
+                       f"{domain} draft check {draft_checks[domain]}: {verdict}"
+                       + (f" ({problems[0][:100]})" if problems else ""))
 
     async def save_outreach(args: dict) -> Outcome:
         parsed, err = _parse(OutreachInput, args)
@@ -578,7 +617,8 @@ def build_handlers(ctx: RunContext) -> dict:
             except BudgetExceeded as exc:
                 return failure(str(exc))
             source_context = await db.run(_grounding_context, lead)
-            result = await check_grounding(source_context, steps, parsed.linkedin_message)
+            flags = (lead.get("discovery_data") or {}).get("injection_flags") or []
+            result = await check_grounding(source_context, steps, parsed.linkedin_message, injection_flags=flags)
             if result.cost_usd:
                 cost = float(result.cost_usd)
                 await db.run(db.record_spend, "grounding", result.cost_usd, ref_id=ctx.run_id, model=result.model,
@@ -599,7 +639,9 @@ def build_handlers(ctx: RunContext) -> dict:
             if result.error:
                 problems = [f"Grounding check unavailable: {result.error}"]
             elif not result.passed:
-                problems = [f"Unsupported claim: {c}" for c in result.unsupported]
+                problems = ([f"Unsupported claim: {c}" for c in result.unsupported]
+                            + [f"{e} has no company-specific detail backed by the sources; use one fact from get_lead"
+                               for e in result.missing_specifics])
 
         if problems:
             final = left <= 0
@@ -664,7 +706,8 @@ def build_handlers(ctx: RunContext) -> dict:
     return {
         "save_icp": save_icp, "discover_companies": discover_companies, "get_research_brief": get_research_brief,
         "scrape_website": scrape_website, "save_qualification": save_qualification, "get_lead": get_lead,
-        "save_outreach": save_outreach, "get_run_state": get_run_state, "finish_run": finish_run,
+        "check_drafts": check_drafts, "save_outreach": save_outreach, "get_run_state": get_run_state,
+        "finish_run": finish_run,
     }
 
 
@@ -735,6 +778,9 @@ TOOL_SPECS = {
     "save_qualification": ("Save the qualification decision for one company, with evidence per hard filter.",
                            QUALIFY_SCHEMA, ("domain", "status")),
     "get_lead": ("Get the stored research for one QUALIFIED lead, to write outreach from.", DOMAIN_SCHEMA, ("domain",)),
+    "check_drafts": ("Free check of draft emails + LinkedIn message against every writing rule, with exact "
+                     "character/word counts. Uses no save attempt. Call it before save_outreach.",
+                     CHECK_DRAFTS_SCHEMA, ("domain",)),
     "save_outreach": ("Save the 3-email sequence + LinkedIn message for one qualified lead. Checked by code and a "
                       "fact-checker; returns problems to fix if rejected.", OUTREACH_SCHEMA, ("domain",)),
     "get_run_state": ("See the run's targets, counts, remaining limits and unused queries.", PURPOSE_ONLY, ()),
