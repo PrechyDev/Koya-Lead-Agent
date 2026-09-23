@@ -24,7 +24,7 @@
         <td class="small">{{ c.purpose or "" }}</td>
         <td class="small mono">{{ c.input_summary or "" }}</td>
         <td class="small">{{ c.result_summary or "" }}{% if c.error_message %}<div style="color: var(--danger);">{{ c.error_message }}</div>{% endif %}
-          {% if c.external_cost_usd %}<div class="muted">Apify/API cost ${{ "%.4f" | format(c.external_cost_usd) }}</div>{% endif %}</td>
+          {% if c.external_cost_usd %}<div class="muted">Cost ${{ "%.4f" | format(c.external_cost_usd) }}</div>{% endif %}</td>
         <td><span class="badge {{ b[0] }}">{{ b[1] }}</span></td>
         <td class="nums small">{{ c.duration_ms or "" }}</td>
       </tr>

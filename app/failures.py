@@ -39,6 +39,12 @@ CATALOGUE: dict[str, FailureKind] = {k.code: k for k in [
                 "The AI service is temporarily unavailable. Please try again shortly. Anything found so far is saved.",
                 "Anthropic API error/overload (5xx/529) or the agent process failed. Retry later; see the run's "
                 "technical detail."),
+    FailureKind("agent_cannot_start", "app", "critical", True,
+                "The research engine couldn't start on this server, so nothing was spent. Your admin has been told.",
+                "The Claude Code CLI process couldn't be started. Most common cause on Windows: the web server was "
+                "started with `uvicorn --reload`, whose event loop can't start subprocesses. Restart it WITHOUT "
+                "--reload. (Linux, Docker and Render are not affected.) Otherwise check that the CLI bundled in "
+                "claude-agent-sdk is present."),
     FailureKind("apify_no_credit", "apify", "critical", True,
                 "Company search is unavailable: the search account has run out of credit. Your admin has been told.",
                 "Apify account has no usage left this month (or the run's charge cap was hit). Check Apify Console "

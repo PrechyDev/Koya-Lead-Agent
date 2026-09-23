@@ -11,6 +11,7 @@ guarded `leadtools` server. Every Claude cost lands in the spend ledger.
 
 import asyncio
 import logging
+import sys
 import tempfile
 from datetime import datetime
 from decimal import Decimal
@@ -56,6 +57,21 @@ GROUNDING_RESERVE_USD = Decimal("0.10")
 
 class RunAborted(Exception):
     pass
+
+
+def agent_can_start() -> bool:
+    """False when the running event loop can't start the Claude CLI subprocess.
+
+    On Windows only the Proactor event loop can start subprocesses; `uvicorn --reload` switches to the Selector
+    loop, and the SDK then fails with an empty "Failed to start Claude Code: " (found in owner test run 27b7e5f0).
+    Call from inside the running loop.
+    """
+    if sys.platform != "win32":
+        return True
+    return isinstance(asyncio.get_running_loop(), asyncio.ProactorEventLoop)
+
+
+AGENT_CANNOT_START = "the server's event loop can't start subprocesses (Windows + uvicorn --reload)"
 
 
 def _skill(name: str) -> str:
@@ -256,6 +272,9 @@ async def run_icp_phase(run_id: str) -> str:
     settings = get_settings()
     ctx = await db.run(RunContext.load, run_id)
     run = await db.run(db.get_run, run_id)
+    if not agent_can_start():
+        await db.run(fail_run, run_id, ServiceFailure("agent_cannot_start", AGENT_CANNOT_START))
+        return "failed"
     problem = objective_problem(run["objective"])  # free gate again: runs can also start from scripts
     if problem:
         await db.run(db.update_run, run_id, request_type="too_vague", clarification_question=problem)
@@ -455,9 +474,14 @@ async def execute_run(run_id: str, skip_icp: bool = False) -> None:
     except Exception as exc:  # noqa: BLE001 — visible failure, never silent
         log.exception("run %s failed", run_id)
         text = redact(f"{type(exc).__name__}: {exc}")[0][:900]
-        code = "database_unavailable" if "psycopg" in type(exc).__module__ else (
-            classify_claude_error(None, text) if "claude" in text.lower() or "anthropic" in text.lower()
-            else "unexpected")
+        if "psycopg" in type(exc).__module__:
+            code = "database_unavailable"
+        elif "Failed to start Claude Code" in text or type(exc).__name__ == "CLINotFoundError":
+            code = "agent_cannot_start"  # the CLI process never started: not an Anthropic outage
+        elif "claude" in text.lower() or "anthropic" in text.lower():
+            code = classify_claude_error(None, text)
+        else:
+            code = "unexpected"
         try:
             await db.run(fail_run, run_id, ServiceFailure(code, text))
         except Exception:  # noqa: BLE001 — the DB may be what failed

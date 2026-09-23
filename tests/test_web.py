@@ -169,3 +169,79 @@ def test_login_rejects_malformed_email_before_supabase(client_as, monkeypatch):
     assert r.status_code == 400 and "valid email" in r.text and called == []
     page = client_as(None).get("/login").text
     assert 'pattern="' in page  # the browser uses the same rule
+
+
+def test_agent_can_start_depends_on_the_event_loop():
+    """Windows + `uvicorn --reload` gives a Selector loop that can't start the Claude CLI (owner run 27b7e5f0)."""
+    import asyncio
+    import sys
+
+    from app.agent.runner import agent_can_start
+
+    async def probe():
+        return agent_can_start()
+    if sys.platform != "win32":
+        assert asyncio.run(probe())
+        return
+    try:
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+        assert asyncio.run(probe()) is False
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+        assert asyncio.run(probe()) is True
+    finally:
+        asyncio.set_event_loop_policy(None)
+
+
+def test_run_refused_with_the_real_fix_when_the_agent_cannot_start(client_as, monkeypatch):
+    from app.web import routes
+    monkeypatch.setattr(routes, "agent_can_start", lambda: False)
+    monkeypatch.setattr(routes.health, "preflight", lambda limits: [])
+    monkeypatch.setattr(routes.alerts, "raise_alert", lambda *a, **k: None)
+    before = len(db.list_runs(100))
+    r = client_as(ADMIN).post("/runs", data={"objective": "Find US B2B SaaS companies with 10 to 100 staff",
+                                             "idempotency_key": str(uuid.uuid4()),
+                                             "csrf_token": auth.csrf_token_for(ADMIN.user_id)},
+                              headers={"HX-Request": "true"})
+    assert r.status_code == 503 and "without --reload" in r.text.replace("WITHOUT", "without")
+    assert len(db.list_runs(100)) == before  # nothing created, nothing spent
+    r = client_as(MEMBER).post("/runs", data={"objective": "Find US B2B SaaS companies with 10 to 100 staff",
+                                              "idempotency_key": str(uuid.uuid4()),
+                                              "csrf_token": auth.csrf_token_for(MEMBER.user_id)},
+                               headers={"HX-Request": "true"})
+    assert "research engine" in r.text and "reload" not in r.text  # members get the plain message
+
+
+@pytest.mark.parametrize("target, expected", [
+    ("/runs/1", "/runs/1"), ("//evil.com", "/"), ("/\evil.com", "/"), ("https://evil.com", "/"), ("", "/"),
+])
+def test_login_redirect_stays_on_this_site(target, expected):
+    from app.lib.validation import safe_next
+    assert safe_next(target) == expected
+
+
+def test_links_from_data_can_never_run_script():
+    from app.lib.validation import safe_url
+    assert safe_url("javascript:alert(1)") == "#" and safe_url("data:text/html,x") == "#"
+    assert safe_url("https://acme.io/about") == "https://acme.io/about"
+
+
+def test_csv_cells_cannot_become_formulas():
+    from app.lib.validation import csv_cell
+    assert csv_cell("=HYPERLINK(\"x\")").startswith("'=") and csv_cell("Acme") == "Acme"
+
+
+def test_rate_limit_ip_ignores_a_spoofed_forwarded_header():
+    from starlette.requests import Request
+
+    from app.main import client_ip
+    scope = {"type": "http", "headers": [(b"x-forwarded-for", b"6.6.6.6, 203.0.113.9")], "client": ("10.0.0.1", 1)}
+    assert client_ip(Request(scope)) == "203.0.113.9"  # the address Render's proxy appended
+
+
+def test_security_headers_and_no_self_demotion(client_as):
+    r = client_as(ADMIN).get("/")
+    assert "frame-ancestors 'none'" in r.headers["Content-Security-Policy"]
+    token = auth.csrf_token_for(ADMIN.user_id)
+    r = client_as(ADMIN).post(f"/team/{ADMIN.user_id}/update", data={"action": "deactivate", "csrf_token": token},
+                              headers={"HX-Request": "true"})
+    assert r.status_code == 400 and "own admin access" in r.text

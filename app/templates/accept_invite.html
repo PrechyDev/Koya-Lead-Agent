@@ -4,7 +4,7 @@
 {% block content %}
 <div class="card auth-card">
   <h1>Set up your account</h1>
-  <p class="muted">Choose your name and a password. Passwords need at least 10 characters.</p>
+  <p class="muted">Choose your name and a password. Passwords need at least {{ MIN_PASSWORD_LENGTH }} characters.</p>
   <div id="invite-missing" class="callout" hidden>This page needs the link from your invite email. Open the email and click the link again, or ask your admin for a new invite.</div>
   <form method="post" action="/accept-invite" class="stack" id="invite-form">
     <input type="hidden" name="access_token" id="access_token">
@@ -15,11 +15,11 @@
     </div>
     <div class="field">
       <label for="password">Password</label>
-      <input id="password" name="password" type="password" minlength="10" autocomplete="new-password" required>
+      <input id="password" name="password" type="password" minlength="{{ MIN_PASSWORD_LENGTH }}" autocomplete="new-password" required>
     </div>
     <div class="field">
       <label for="confirm">Confirm password</label>
-      <input id="confirm" name="confirm" type="password" minlength="10" autocomplete="new-password" required data-match="password">
+      <input id="confirm" name="confirm" type="password" minlength="{{ MIN_PASSWORD_LENGTH }}" autocomplete="new-password" required data-match="password">
     </div>
     <button class="btn primary" type="submit" id="invite-submit">
       <span class="when-idle">Save and continue</span><span class="when-loading"><span class="spinner"></span> Saving…</span>

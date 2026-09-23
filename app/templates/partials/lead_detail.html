@@ -28,7 +28,7 @@
         {% for c in lead.hard_filter_checks %}
         <li><span aria-hidden="true">{{ '✓' if c.result == 'pass' else ('✕' if c.result == 'fail' else '?') }}</span>
           <div><b>{{ c.filter }}</b>: <span class="badge {{ 'success' if c.result == 'pass' else ('danger' if c.result == 'fail' else 'warning') }}">{{ c.result }}</span>
-            <div class="small">{{ c.evidence or "No evidence recorded." }}{% if c.source_url %} · <a href="{{ c.source_url }}" target="_blank" rel="noopener noreferrer">source ↗</a>{% endif %}</div></div></li>
+            <div class="small">{{ c.evidence or "No evidence recorded." }}{% if c.source_url %} · <a href="{{ c.source_url | safe_url }}" target="_blank" rel="noopener noreferrer">source ↗</a>{% endif %}</div></div></li>
         {% endfor %}
       </ul>
       {% elif lead.qualification_status == 'pending' %}
@@ -47,7 +47,7 @@
         {% for d in lead.disqualifier_checks %}
         <li><span aria-hidden="true">{{ '✕' if d.applies == 'yes' else ('✓' if d.applies == 'no' else '?') }}</span>
           <div><b>{{ d.disqualifier }}</b>: <span class="badge {{ 'danger' if d.applies == 'yes' else ('success' if d.applies == 'no' else 'warning') }}">{{ 'applies' if d.applies == 'yes' else ('does not apply' if d.applies == 'no' else 'unknown') }}</span>
-            <div class="small">{{ d.evidence or "No evidence recorded." }}{% if d.source_url %} · <a href="{{ d.source_url }}" target="_blank" rel="noopener noreferrer">source ↗</a>{% endif %}</div></div></li>
+            <div class="small">{{ d.evidence or "No evidence recorded." }}{% if d.source_url %} · <a href="{{ d.source_url | safe_url }}" target="_blank" rel="noopener noreferrer">source ↗</a>{% endif %}</div></div></li>
         {% endfor %}
       </ul></div>
       {% endif %}
@@ -57,7 +57,7 @@
         {% for p in lead.soft_preference_checks %}
         <li><span aria-hidden="true">{{ '★' if p.result == 'matched' else ('–' if p.result == 'not_matched' else '?') }}</span>
           <div>{{ p.preference }}: <span class="badge {{ 'success' if p.result == 'matched' else ('neutral' if p.result == 'not_matched' else 'outline') }}">{{ p.result.replace('_', ' ') }}</span>
-            <div class="small">{{ p.evidence or "No evidence found." }}{% if p.source_url %} · <a href="{{ p.source_url }}" target="_blank" rel="noopener noreferrer">source ↗</a>{% endif %}</div></div></li>
+            <div class="small">{{ p.evidence or "No evidence found." }}{% if p.source_url %} · <a href="{{ p.source_url | safe_url }}" target="_blank" rel="noopener noreferrer">source ↗</a>{% endif %}</div></div></li>
         {% endfor %}
       </ul></div>
       {% endif %}
@@ -73,7 +73,7 @@
     <section class="card stack">
       <h3>Sources</h3>
       {% if lead.source_summary %}<p>{{ lead.source_summary }}</p>{% endif %}
-      <ul class="clean">{% for u in lead.source_urls or [] %}<li><a href="{{ u }}" target="_blank" rel="noopener noreferrer">{{ u }}</a></li>{% else %}<li class="muted">No sources cited yet.</li>{% endfor %}</ul>
+      <ul class="clean">{% for u in lead.source_urls or [] %}<li><a href="{{ u | safe_url }}" target="_blank" rel="noopener noreferrer">{{ u }}</a></li>{% else %}<li class="muted">No sources cited yet.</li>{% endfor %}</ul>
       <dl class="kv small">
         <dt>LinkedIn size band</dt><dd>{% if d.employee_count_range %}{{ d.employee_count_range.start }}–{{ d.employee_count_range.end or '+' }}{% else %}—{% endif %} ({{ d.employee_count_linkedin if d.employee_count_linkedin is not none else '?' }} on LinkedIn)</dd>
         <dt>HQ</dt><dd>{{ (d.hq or {}).get('text') or '—' }}</dd>
@@ -100,7 +100,7 @@
             <div class="copy-block"><div class="text" id="body-{{ lead.id }}-{{ e.step }}">{{ e.body }}</div>
               <button class="btn small" type="button" data-copy="body-{{ lead.id }}-{{ e.step }}">Copy</button></div></div>
           <div class="meta-box"><b>Personalization note:</b> {{ e.personalization_note }}<br>
-            <b>Evidence:</b> <a href="{{ e.evidence_ref }}" target="_blank" rel="noopener noreferrer">{{ e.evidence_ref }}</a></div>
+            <b>Evidence:</b> <a href="{{ e.evidence_ref | safe_url }}" target="_blank" rel="noopener noreferrer">{{ e.evidence_ref }}</a></div>
         </div>
       </article>
       {% endfor %}

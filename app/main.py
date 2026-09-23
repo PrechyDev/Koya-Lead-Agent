@@ -22,14 +22,20 @@ from app.web.templating import templates
 configure_logging()  # one format + secret/email redaction for every log line (app/logging_setup.py)
 log = logging.getLogger("lead_agent")
 ROOT = Path(__file__).resolve().parent
+# Only our own scripts/styles/requests; inline is allowed for the few small inline scripts and style attributes.
+CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
+       "img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; "
+       "frame-ancestors 'none'")
 PUBLIC_PATHS = ("/login", "/accept-invite", "/health", "/static/", "/fixtures/", "/favicon.ico")
 
 
 def client_ip(request: Request) -> str:
-    # Render (and most proxies) put the real client first in X-Forwarded-For.
+    """The visitor's address for rate limits. A visitor can send any X-Forwarded-For they like; Render's proxy
+    APPENDS the real address, so the last entry is the one to trust (taking the first would let anyone dodge the
+    login rate limit by sending a fake header)."""
     forwarded = request.headers.get("x-forwarded-for", "")
     if forwarded:
-        return forwarded.split(",")[0].strip()
+        return forwarded.split(",")[-1].strip()
     return request.client.host if request.client else "unknown"
 
 
@@ -91,6 +97,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("Referrer-Policy", "same-origin")
         response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Content-Security-Policy", CSP)
+        if get_settings().secure_cookies:
+            response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
         return response
 
 

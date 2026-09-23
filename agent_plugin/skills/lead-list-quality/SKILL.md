@@ -39,6 +39,6 @@ If the agent cannot find 10 qualified companies from the first candidate pool, i
 
 - "10" means **the run's target** (`target_qualified` from `get_run_state`), which may be smaller in test runs.
 - Before finishing, call `get_run_state`. If qualified < target **and** the discovery tool still has budget (it tells you), run one more discovery with the **next** query in the ICP's `discovery_query_plan`, research the new candidates, and draft for any new qualified ones.
-- If the tools report a limit is reached (`blocked`), stop searching. Call `finish_run` with a `shortfall_reason` in plain language (e.g. "Found 7 qualified of 10: 13 candidates were outside 10–100 employees and the candidate limit of 20 was reached").
+- If the tools report a limit is reached (`blocked`), stop searching. Call `finish_run` with a `shortfall_reason` in plain language for a sales team (e.g. "Found 7 qualified of 10: 13 companies had more than 100 employees, and this run's company limit was reached"). Never mention tool names, field names or error codes (no `discover_companies`, `next_search_can_fetch`, "tool errored").
 - `finish_run` runs the scorecard in code and refuses `completed` if a check fails; it tells you what's missing. Fix what you can (for example, a qualified lead with no drafts), then call it again. If you can't fix it, give the reason.
 - Always call `finish_run` exactly once at the end, even when the run is short or something failed.

@@ -10,12 +10,13 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 
 from app import alerts, auth, db
+from app.agent.runner import AGENT_CANNOT_START, agent_can_start
 from app.auth import Member, current_member, require_admin
 from app.config import get_settings, limits_for_run
 from app.failures import ServiceFailure, admin_message_from_detail, message_for
 from app.lib.budget import BudgetExceeded, assert_can_spend
 from app.lib.objective import objective_hash, objective_problem
-from app.lib.validation import EMAIL_HINT, is_valid_email
+from app.lib.validation import EMAIL_HINT, MIN_PASSWORD_LENGTH, csv_cell, is_valid_email, safe_next
 from app.main import limiter
 from app.runs import manager
 from app.services import health
@@ -89,7 +90,7 @@ def _last_active_step(run: dict) -> int:
 async def login_page(request: Request, next: str = "/"):
     if getattr(request.state, "member", None):
         return RedirectResponse("/", status_code=303)
-    return templates.TemplateResponse(request, "login.html", _ctx(request, next=next if next.startswith("/") else "/"))
+    return templates.TemplateResponse(request, "login.html", _ctx(request, next=safe_next(next)))
 
 
 @router.post("/login")
@@ -109,7 +110,7 @@ async def login_submit(request: Request, email: str = Form(...), password: str =
         return templates.TemplateResponse(request, "login.html", _ctx(
             request, next=next, email=email,
             error="Your account doesn't have access to this app. Ask an admin to invite you."), status_code=403)
-    response = RedirectResponse(next if next.startswith("/") and not next.startswith("//") else "/", status_code=303)
+    response = RedirectResponse(safe_next(next), status_code=303)
     auth.set_session_cookies(response, tokens)
     return response
 
@@ -137,8 +138,8 @@ async def accept_invite_submit(request: Request, access_token: str = Form(...), 
     full_name = full_name.strip()
     if not (1 <= len(full_name) <= 120):
         return fail("Enter your name (up to 120 characters).")
-    if len(password) < 10 or password != confirm:
-        return fail("Passwords must match and be at least 10 characters.")
+    if len(password) < MIN_PASSWORD_LENGTH or password != confirm:
+        return fail(f"Passwords must match and be at least {MIN_PASSWORD_LENGTH} characters.")
     try:
         claims = await db.run(auth.verify_access_token, access_token)
     except Exception:  # noqa: BLE001
@@ -220,6 +221,8 @@ async def create_run(request: Request, objective: str = Form(""), target_qualifi
         await db.run(alerts.raise_alert, failure.code, failure.detail)
         return _banner(request, "error", message_for(failure, member.is_admin), 402)
     failures = await db.run(health.preflight, limits.to_dict())  # free checks; cached for 10 minutes
+    if not agent_can_start():  # e.g. Windows + uvicorn --reload: the agent could never start
+        failures = [ServiceFailure("agent_cannot_start", AGENT_CANNOT_START), *failures]
     if failures:
         for f in failures:
             await db.run(alerts.raise_alert, f.code, f.detail)
@@ -248,7 +251,7 @@ async def run_page(request: Request, run_id: str, tab: str = "leads", member: Me
     duplicate = await db.run(db.get_run, str(run["duplicate_of_run_id"])) if run.get("duplicate_of_run_id") else None
     return templates.TemplateResponse(request, "run.html", _ctx(
         request, run=run, tab=tab if tab in {"icp", "leads", "calls", "summary"} else "leads",
-        steps=stepper(run["status"], _last_active_step(run)), duplicate=duplicate,
+        steps=stepper(run["status"], _last_active_step(run), run.get("usage")), duplicate=duplicate,
         can_control=_can_control(member, run), idempotency_key=str(uuid.uuid4())))
 
 
@@ -258,7 +261,7 @@ async def run_live(request: Request, run_id: str, member: Member = Depends(curre
     counts = await db.run(db.lead_counts, run_id)
     duplicate = await db.run(db.get_run, str(run["duplicate_of_run_id"])) if run.get("duplicate_of_run_id") else None
     response = templates.TemplateResponse(request, "partials/run_live.html", _ctx(
-        request, run=run, counts=counts, steps=stepper(run["status"], _last_active_step(run)),
+        request, run=run, counts=counts, steps=stepper(run["status"], _last_active_step(run), run.get("usage")),
         can_control=_can_control(member, run), duplicate=duplicate, now=datetime.now(),
         admin_message=admin_message_from_detail(run.get("error_detail")) if member.is_admin else None))
     if run["status"] not in ACTIVE:
@@ -383,9 +386,10 @@ async def export_csv(request: Request, run_id: str, member: Member = Depends(cur
     writer.writerow(["company_name", "company_domain", "confidence", "fit_reasons", "concerns", "source_urls",
                      "source_summary", "outreach_status", "review_status", "reviewed_by"])
     for l in leads:
-        writer.writerow([l["company_name"], l["company_domain"], l["confidence"], " | ".join(l["fit_reasons"] or []),
-                         " | ".join(l["concerns"] or []), " ".join(l["source_urls"] or []), l["source_summary"],
-                         l["outreach_status"], l["review_status"], l.get("reviewed_by_name") or ""])
+        writer.writerow([csv_cell(v) for v in (
+            l["company_name"], l["company_domain"], l["confidence"], " | ".join(l["fit_reasons"] or []),
+            " | ".join(l["concerns"] or []), " ".join(l["source_urls"] or []), l["source_summary"],
+            l["outreach_status"], l["review_status"], l.get("reviewed_by_name") or "")])
     name = f"qualified-leads-{str(run['id'])[:8]}.csv"
     return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv",
                              headers={"Content-Disposition": f'attachment; filename="{name}"'})
@@ -461,6 +465,8 @@ async def team_update(request: Request, user_id: str, action: str = Form(...), c
               "make_admin": {"role": "admin"}, "make_member": {"role": "member"}}.get(action)
     if fields is None:
         raise HTTPException(status_code=400, detail="Unknown action.")
+    if user_id == member.user_id and action in ("deactivate", "make_member"):
+        return _banner(request, "warning", "You can't remove your own admin access. Ask another admin to do it.", 400)
     try:
         await db.run(db.update_member, user_id, **fields)
     except Exception as exc:  # the DB trigger protects the owner and the last admin (E-41)

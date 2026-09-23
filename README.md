@@ -40,7 +40,9 @@ git config core.hooksPath .githooks        # secret scan before every commit
 .venv/Scripts/python scripts/create_app_role.py   # creates the least-privilege DB user from the SUPABASE_DB_DSN you put in .env (read-only)
 .venv/Scripts/python scripts/migrate.py           # applies db/migrations in order (safe to re-run)
 .venv/Scripts/python scripts/bootstrap_owner.py you@example.com "Your Name" --owner --invite   # give yourself admin access
-.venv/Scripts/python -m uvicorn app.main:app --reload --port 8000                    # http://localhost:8000
+.venv/Scripts/python -m uvicorn app.main:app --port 8000                             # http://localhost:8000
+# Windows: don't add --reload. It switches to an event loop that can't start the Claude CLI, so every run
+# would fail (the app refuses to start runs and says so). Docker/Linux/Render are not affected.
 ```
 
 ## Tests

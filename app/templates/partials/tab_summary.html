@@ -11,7 +11,7 @@
       <dt>Not qualified</dt><dd class="nums">{{ counts.get('not_qualified', 0) }} ({{ usage.get('prescreen_rejected', 0) }} on pre-screen)</dd>
       <dt>Skipped (researched ≤ 30 days ago)</dt><dd class="nums">{{ usage.get('skipped_seen_recently', 0) }}</dd>
       <dt>Agent summary</dt><dd>{{ run.summary or "—" }}</dd>
-      {% if run.shortfall_reason %}<dt>Why fewer leads</dt><dd>{{ run.shortfall_reason }}</dd>{% endif %}
+      {% if run.shortfall_reason %}<dt>Why fewer leads (agent's explanation)</dt><dd>{{ run.shortfall_reason }}</dd>{% endif %}
       {% if run.error_message %}<dt>Error</dt><dd style="color: var(--danger);">{{ run.error_message }}</dd>{% endif %}
     </dl>
   </div>

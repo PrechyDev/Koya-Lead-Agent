@@ -158,6 +158,8 @@ tr.row-blocked { background: var(--warning-bg); }
 .stepper .current .dot { border-color: var(--primary); color: var(--primary); }
 .stepper .current { font-weight: 700; }
 .stepper .failed .dot { background: var(--danger); border-color: var(--danger); color: var(--surface); }
+.stepper .skipped { color: var(--text-muted); }
+.stepper .skipped .dot { border-style: dashed; color: var(--text-muted); }
 .counters { display: flex; gap: 16px; flex-wrap: wrap; font-size: 0.9rem; }
 .counter b { font-variant-numeric: tabular-nums; }
 .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
@@ -207,4 +209,5 @@ ul.clean { margin: 0; padding-left: 18px; }
   .kv { grid-template-columns: 1fr; }
   .kv dt { font-weight: 600; }
   .drawer { width: 100%; }
+  .drawer footer { position: static; }
 }
