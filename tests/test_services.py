@@ -96,6 +96,12 @@ class _FakeClient:
     def actor(self, _):
         return self._actor
 
+    def run(self, _):
+        class _R:
+            async def get(self):
+                return {"usageTotalUsd": 0.013}
+        return _R()
+
     def dataset(self, _):
         items = self._items
 
@@ -125,7 +131,7 @@ async def test_find_companies_caps_normalizes_and_redacts(monkeypatch):
     assert call["run_input"]["maxItems"] == 12 and call["run_input"]["locations"] == ["United States"]
     assert [c["domain"] for c in res.companies] == ["acme.io"]
     assert res.dropped_no_domain == 2 and "sales@acme.io" not in res.companies[0]["description"]
-    assert res.cost_usd == 0.013
+    assert res.cost_usd == 0.013  # settled cost re-read after the run (charges post late)
 
 
 async def test_failed_actor_run_is_not_rerun(monkeypatch):
@@ -189,3 +195,21 @@ async def test_scrape_returns_useful_internal_links_only():
     respx.post(fc.API_URL).mock(return_value=_ok(md, url="https://www.acme.io/"))
     page = await fc.scrape("https://acme.io/")
     assert page.links == ["/about-us", "/careers", "/pricing"]
+
+
+async def test_cost_never_below_known_price(monkeypatch):
+    # Charges not posted yet: the recorded cost falls back to items x price + start fee.
+    fake = _FakeClient({"id": "r", "status": "SUCCEEDED", "usageTotalUsd": 0.001, "defaultDatasetId": "d"}, RAW)
+    fake.run = lambda _: type("R", (), {"get": staticmethod(lambda: _none())})()
+    monkeypatch.setattr(apify_svc, "ApifyClientAsync", lambda token: fake)
+    monkeypatch.setattr(apify_svc.asyncio, "sleep", _no_sleep)
+    res = await apify_svc.find_companies(query="saas", geos=[], size_bands=[], max_items=3, max_charge_usd=0.25)
+    assert res.cost_usd == pytest.approx(3 * 0.004 + 0.001)
+
+
+async def _none():
+    return None
+
+
+async def _no_sleep(_):
+    return None

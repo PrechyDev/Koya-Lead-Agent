@@ -99,6 +99,27 @@ def normalize_company(item: dict) -> dict | None:
     }
 
 
+PRICE_PER_COMPANY_USD = 0.004   # "full-company" event, FREE tier (checked 2026-09-23)
+PRICE_PER_START_USD = 0.001
+
+
+async def _settled_cost(client, run_id: str | None, reported: float, items: int) -> float:
+    """Apify posts per-result charges a few seconds after the run ends, so the cost read at completion
+    under-counts (found 2026-09-23: $0.003 recorded vs $0.045 billed). Re-read once charges settle, and
+    never record less than the known price for what we received."""
+    floor = round(items * PRICE_PER_COMPANY_USD + PRICE_PER_START_USD, 4)
+    settled = reported
+    if run_id:
+        await asyncio.sleep(4)
+        try:
+            final = await client.run(run_id).get()
+            f = final if isinstance(final, dict) else (final.model_dump(by_alias=True) if final else {})
+            settled = float(f.get("usageTotalUsd") or reported)
+        except (ApifyApiError, AttributeError):
+            pass
+    return max(settled, floor)
+
+
 async def find_companies(
     *, query: str, geos: list[str], size_bands: list[str], max_items: int, max_charge_usd: float,
     start_page: int = 1, timeout_s: int = 180,
@@ -158,6 +179,7 @@ async def find_companies(
         )
     listing = await client.dataset(r["defaultDatasetId"]).list_items(limit=int(max_items))
     raw = listing.items or []
+    cost = await _settled_cost(client, run_id, cost, len(raw))
     companies, dropped = [], 0
     for item in raw[: int(max_items)]:
         company = normalize_company(item)
