@@ -14,7 +14,6 @@ from app import db  # noqa: E402
 from app.agent.runner import execute_run  # noqa: E402
 from app.logging_setup import configure_logging  # noqa: E402
 
-
 log = logging.getLogger("lead_agent.scripts.resume_run")
 
 
