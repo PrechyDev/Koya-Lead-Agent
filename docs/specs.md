@@ -570,46 +570,96 @@ Lowercase · strip protocol, `www.`, path, query and port · IDNA-encode · reje
 
 ## 14. Decisions log
 
+Numbers are stable (other docs refer to them); rows are grouped by topic. Status: **Confirmed** = agreed with the owner; **Default** = my call, open to change; **Verified** = backed by a real test or run.
+
+### Product scope & safety
+
 | # | Decision | Status | Why | Rejected alternatives |
 | --- | --- | --- | --- | --- |
-| D-01 | **Python** + FastAPI + Jinja2 + HTMX | Confirmed | The owner is a Python developer and must explain the code; no JS build | TypeScript/React (weaker language for the owner, two toolchains) |
-| D-02 | **Hybrid architecture**: orchestrator + ICP/researcher/copywriter subagents + our guarded MCP server | Confirmed | Per-step models (A/B), smaller contexts (cost), rules enforced in code | Single agent (one model, big context); third-party MCP servers (agent controls counts, SQL, crawls) |
-| D-03 | Code owns limits, writes, logging, redaction, grounding, quality check | Default | "Qualify from evidence" and the PRD limits become enforced, not just requested | Prompt-only rules |
-| D-04 | Built-in WebFetch/WebSearch/Bash/file tools disabled | Default | They bypass the approved scraper, caps and logging | Allowing WebFetch |
-| D-05 | No emails at all, including generic ones | Confirmed (grader) | constraints_and_others.md safety check | Storing `hello@` |
-| D-06 | **Apify: first pool 12, top-ups ≤ 5, hard total 20, $0.25 cap per actor run, pre-screen before scraping** | Confirmed | PRD "test small / hard stop / search again within limit"; Claude cost scales with candidates | 30 total (unjustified); strict 15 (shortfall risk) |
-| D-07 | **Claude budget $6 app-enforced + $7 Console limit** | Confirmed | The owner's $5–7 budget; a hard stop, not a hope | Per-run caps only |
-| D-08 | **Lean per-step model A/B (≤ $0.90): 2 repeats, record once/replay many, Batch API, direct Messages calls, orchestrator compared inside runs we do anyway; Opus 5.5 = reference labeller** | Confirmed | Evidence-based model choice without eating the budget for the real runs; frees $1.20 for a second final run | $2.10 plan (bigger sets, dedicated orchestrator replays); picking by gut |
-| D-09 | **Supabase: dedicated `lead_agent` schema in the existing project, not exposed, direct Postgres, schema-qualified queries** | Confirmed (Week 4 pattern) | Free-tier project limit; one company's data in one place; smaller attack surface | New project; `public` schema via PostgREST |
-| D-10 | **Render free hosting** with keep-alive during runs | Confirmed | The owner's choice ($0) | Railway/Render Starter (monthly cost) |
-| D-11 | **Supabase Auth logins (Week 4 pattern, server-side HttpOnly cookies, JWKS verification), roles admin/member, invite-only, nothing public; the grader = the client admin** | Confirmed | An internal client tool with confidential prospect data; proven attribution of approvals; per-person revoke | Shared passcode (no attribution, one secret for everyone); public viewing |
-| D-12 | Scrape cache (7 days), which doubles as the A/B fixture store | Default | Re-runs and evals don't pay again | No cache |
-| D-13 | `{{first_name}}` placeholders | Default | No contact finding in scope | Guessing names |
-| D-14 | Sequential researchers | Default | 512 MB RAM; simpler counters; the run is still < 15 min | Parallel subagents |
-| D-15 | Apify actor: **`harvestapi/linkedin-company-search`** (provisional; owner to confirm). ~$0.004/company + $0.001/start; `maxItems`, `locations`, `companySize` bands, `startPage` | Default | Must be **pay-per-event or pay-per-result** (the PRD prefers pay-per-event, charged per result; **never rental**), accept item + $ caps, return domain + headcount + HQ + industry, and **not** be an email finder | Rental actors; "leads finder" actors that return emails |
-| D-16 | Final objective = the PRD example | Confirmed | Recognisable to graders; realistic yield | A narrower niche |
-| D-17 | No automatic Apify actor re-runs; human checks the console first | Default (PRD rule) | PRD: "stop and ask before re-running" | Auto-retry of failed actor runs |
-| D-18 | Least-privilege `lead_agent_app` DB role (no DELETE/DROP, no other schemas) | Default | Enforces "no destructive DB actions"; protects Week 3/4 data in the same project | Deploying the `postgres` superuser DSN |
-| D-19 | JSON sample-pack export includes drafts only for human-approved leads | Default | Outreach-safety approval rule | Exporting all drafts |
-| D-20 | Per-run `max_tool_calls` = 120 | Default | Outreach-safety "API/tool calls" limit | Relying on turns only |
-| D-21 | **No n8n this week** | Confirmed | The Week 5 PRD and submission define an Agent SDK app; the build_guide's n8n lines are generic across weeks. The owner will confirm in the pod channel. n8n would come back only if we add a "run finished / failed" notification (optional: the app calls an n8n webhook) | Adding n8n for its own sake |
-| D-23 | Two-phase run (ICP first) + two-stage repeat gate (text hash, then ICP-signature match) | Confirmed | A repeat costs ~20% of the budget; the gate stops it after ~$0.02 and lets the user pick open / new / refresh | Text match only (misses rewording); no gate |
-| D-24 | Cross-run dedupe: skip companies researched in the last 30 days; page cache 7 days; Apify never cached | Confirmed | Saves Claude research spend; freshness preserved by the windows + the "refresh" option | Reusing old verdicts (stale); within-run dedupe only |
-| D-25 | HTTP rate limiting with `slowapi` + per-user daily run caps | Confirmed | Protects Render free capacity and the budget | Run caps only |
-| D-26 | No `auth.users` trigger in Week 5; membership only via the invite flow; guard the Week 4 trigger (pending OK) | Default | Stops cross-app access leaks in a shared Supabase project | Relying on manual clean-up |
-| D-27 | Grader runs use normal limits ("like the client") | Confirmed | Realistic client experience | Demo-only limits for graders |
-| D-28 | Skills packaged as a local plugin (`agent_plugin/`) with SDK isolation (`setting_sources=[]`, `strict_mcp_config`) | Default | Keeps dev CLAUDE.md files and the machine's Claude Code config out of the agent | Project `.claude/skills` (would also load CLAUDE.md) |
-| D-29 | Subagents run in the foreground (`background=False`); never block the `Task` built-in | Default (from real bugs) | Background subagents hung a headless run; blocking Task disabled delegation | Background/async subagents |
-| D-30 | Per-phase watchdog + transcript cost recovery | Default | A hang can't block the run slot forever; the ledger never under-counts | Trusting the SDK to always finish |
-| D-31 | Researcher gets `get_research_brief` (hard filters + facts from the DB); orchestrator's own thread is denied research/copy tools | Default | Exact filter wording; forced delegation keeps the orchestrator context small | Orchestrator copies filters into prompts |
-| D-32 | Sync psycopg pool called via `asyncio.to_thread`; Python 3.12 | Default | Works on Windows and Linux alike (event-loop conflict); matches Docker | psycopg async |
-| D-33 | Grader/client runs use full limits on Render (`DEV_LIMITS=false`) | Confirmed | "Use it like the client would" | Demo limits |
-| D-34 | Haiku scope pre-check before the ICP agent + free code gate + server-enforced request_type | Confirmed | Off-topic requests cost ~$0.0008 instead of ~$0.018 (live-verified); only lead searches can be searched | Keyword allowlists (block legit wording/languages); ICP agent alone (10x the cost) |
-| D-35 | Disqualifiers checked per company and enforced (applies → not_qualified; unknown → needs_review) | Confirmed | User exclusions ("exclude agencies") must hold even if the ICP step didn't restate them as hard filters | Relying on the model to copy them into hard filters |
-| D-36 | Soft-preference checks per company + tool fingerprints from raw HTML (same Firecrawl credit) + careers page for hiring signals | Confirmed | Evidence for nice-to-haves without extra paid calls; never changes status | LinkedIn jobs actor (extra spend per company) |
-| D-37 | Full (not short) Apify mode | Default (verified) | Short mode has no website, size band or employee count (checked with a 1-result run), so it can't dedupe, scrape or pre-screen | Short mode (half price, unusable) |
-| D-38 | Plain-language failure catalogue + free pre-run checks + stop-on-fatal + owner alerts (in-app + n8n email) | Confirmed | Clients aren't developers; owner must know without watching the app; don't spend when a service can't work | Raw error text; letting the agent retry |
-| D-22 | Grounding check = a direct Anthropic Messages call inside `save_outreach`, not an SDK agent | Default (awaiting owner confirmation) | It's a validator inside a tool, not agent reasoning; the agent runtime itself is 100% Agent SDK. Cheaper, guaranteed structured output, can't be skipped | A one-shot SDK query (more overhead, weaker output guarantees) |
+| D-05 | No emails at all: not personal, not generic (`hello@`), no finding, guessing, storing or validating | Confirmed (grader rule) | constraints_and_others.md scores safety on the agent *not* touching emails; stricter than the PRD | Storing generic company emails |
+| D-13 | `{{first_name}}` / `{{sender_name}}` placeholders in drafts | Default | Contact finding is out of scope, and a guessed name is an invented fact | Guessing a founder's name from the site |
+| D-16 | Final run objective = the PRD example | Confirmed | Graders recognise it; realistic yield | A narrower niche (shortfall risk) |
+| D-19 | JSON sample pack includes drafts only for leads a human approved | Default | Outreach-safety guide: nothing leaves the app without review | Exporting every draft |
+| D-21 | No n8n in the core system; n8n used only for owner alert emails (D-38) | Confirmed | The Week 5 PRD defines an Agent SDK app; alerts were the one place a workflow tool adds value | n8n orchestration; n8n for nothing |
+
+### Architecture & agent design
+
+| # | Decision | Status | Why | Rejected alternatives |
+| --- | --- | --- | --- | --- |
+| D-01 | Python + FastAPI + Jinja2 + HTMX (no JS build) | Confirmed | Owner is a Python developer and must explain every line | TypeScript/React (two toolchains, weaker language for the owner) |
+| D-02 | Hybrid: orchestrator + ICP-refiner / researcher / copywriter subagents, all through **our own** guarded MCP server | Confirmed | Per-step models (A/B), small contexts (cost), every rule enforced in code | Single agent (one model, one big context); third-party Supabase/Apify/Firecrawl MCP servers (agent would control counts, SQL, crawls, logging) |
+| D-03 | Code owns limits, writes, logging, redaction, grounding and the quality check; Claude only makes judgments | Default | "Qualify from evidence" and the PRD limits become enforced, not requested | Prompt-only rules |
+| D-04 | Built-in WebFetch/WebSearch/Bash/file tools disabled; hook denies anything off the allowlist | Default | They bypass the approved scraper, caps, redaction and logging | Allowing WebFetch "for convenience" |
+| D-23 | Two-phase run: cheap ICP phase first, then research | Confirmed | Clarification and repeat checks happen before any search spend | One long agent session |
+| D-28 | Skills packaged as a local plugin with SDK isolation (`setting_sources=[]`, `strict_mcp_config`) | Default, Verified | Keeps our dev CLAUDE.md and the machine's Claude Code settings/MCP servers out of the agent | Project `.claude/skills` (would also load CLAUDE.md) |
+| D-29 | Subagents run in the foreground (`background=False`); never block the `Task` built-in | Default, Verified (from 2 real bugs) | Background subagents hung a headless run; blocking `Task` silently disabled delegation | Background subagents |
+| D-31 | Researcher reads ICP filters + facts via `get_research_brief`; orchestrator's own thread is denied research/copy tools | Default, Verified | Exact filter wording from the DB; forced delegation keeps the orchestrator's context (and cost) small | Orchestrator copying filters into prompts; orchestrator doing research itself |
+| D-14 | Researchers run one company at a time | Default | 512 MB on Render free; simple counters; a run still finishes in < 15 min | Parallel subagents |
+| D-22 | Grounding (fact-check) is a direct Messages API call inside `save_outreach`, not an SDK agent | Default (owner hasn't objected) | It's a validator inside a tool the agent can't skip; structured output; cheap | A one-shot SDK agent (more overhead, weaker output guarantees) |
+| D-46 | Runs execute in-process as background asyncio tasks; one uvicorn worker; one active run | Default | Runs take minutes and must share the one-run guard; serverless timeouts would kill them | A job queue/worker (more infrastructure than a one-team tool needs) |
+
+### Discovery (Apify)
+
+| # | Decision | Status | Why | Rejected alternatives |
+| --- | --- | --- | --- | --- |
+| **D-39** | **Company discovery via `harvestapi/linkedin-company-search`, not `apify/google-search-scraper`** | Confirmed | **Google Search returns web pages, not companies:** ~10 links per results page ($0.0045/page), many of which are listicles ("Top 10 SaaS tools"), directories (G2, Capterra), blogs, job boards or LinkedIn pages, so we'd first have to work out which results are companies at all. **It has no company facts:** no headcount, no HQ, no industry, so nothing can be pre-screened. Every result would need a Firecrawl scrape plus Claude research (~$0.03–0.05 each) just to find out it's too big or not in the US, and headcount is rarely on a company's website, so most leads would end up "needs review" on the 10–100 filter. **Its filters are only country/language**, so hard filters can't be applied at the source. It also offers "business leads enrichment" and **"email verification" add-ons**, which, if ever switched on, would break our no-emails rule. **The LinkedIn actor returns companies with structured facts:** website (→ domain for dedupe and scraping), stated size band, LinkedIn employee count, HQ and industry. It **filters by location and company size at the source**, and those facts let code reject clear misfits for free (it rejected 105-, 136- and 194-employee companies before any scrape or Claude call in dev runs). It's pay-per-event (~$0.004/company + $0.001/start), needs no cookies, is widely used (7.8k users) and paginates (`startPage`) for top-ups | Google Search Scraper (cheap per link, but noisy, no company facts, email add-ons); Crunchbase actors (funding-focused, patchier headcount); "leads finder" actors (return emails, a safety risk). **Trade-offs accepted:** only companies with a LinkedIn page are found; LinkedIn's industry labels miss SaaS (so "B2B SaaS" is decided from the website); member counts are a lower bound (the stated band is the primary evidence) |
+| **D-37** | **Full mode, not short mode** | Default, **Verified** | A 1-result short-mode run ($0.003, 2026-09-23) returned only name, LinkedIn URL, city, industry, followers and a text snippet: **no website, no size band, no employee count**. Without the website there's no domain to dedupe on or scrape; without the size band, the free headcount pre-screen can't run. Full mode costs $0.002 more per company (~$0.04 per 20-company run) and saves more than that in avoided scrapes and Claude research | Short mode (half price, but unusable for this pipeline); short mode + a second lookup per company (two calls instead of one) |
+| D-06 | First pool 12, top-ups ≤ 5, hard total 20, $0.25 cap per actor run, pre-screen before scraping | Confirmed | PRD: test small, hard stop on every run, "search again within the limit"; Claude cost scales with candidates | 30 total (not price-based); strict 15 (shortfall risk) |
+| D-17 | A failed/odd actor run is never re-run automatically; a human checks the Apify console | Default (PRD rule) | PRD: "stop and ask before re-running" | Auto-retry of actor runs |
+| D-42 | Record Apify's **settled** cost (re-read after charges post), never below items × price + start fee | Default, Verified | Charges post seconds after a run ends; the first reading under-counted $0.003 vs $0.045 billed | Trusting the cost read at completion |
+| D-15 | Actor pinned by `APIFY_ACTOR_ID`; blank values fall back to the default | Confirmed | One vetted actor, no agent choice; a blank `.env` line broke the first dev run | Letting the agent choose actors |
+
+### Scraping (Firecrawl) & data handling
+
+| # | Decision | Status | Why | Rejected alternatives |
+| --- | --- | --- | --- | --- |
+| D-41 | Public pages only; homepage + at most one more page chosen by evidence gap; markdown de-noised (images/link URLs dropped) before a 6,000-char cap | Default | Evidence per company at ~1–2 credits; de-noising cut a 12.7k-char page to useful text, saving Claude tokens | Crawling whole sites; raw markdown to the model |
+| D-12 | Scrape cache for 7 days (also the A/B fixture store) | Default | Re-runs and evals don't pay twice | No cache |
+| D-24 | Cross-run dedupe: skip companies researched in the last 30 days; Apify never cached | Confirmed | Saves research spend; freshness windows keep data current; "refresh" option overrides | Reusing old verdicts (stale); in-run dedupe only |
+| D-36 | Raw HTML (same 1 credit, verified) scanned by code for tool fingerprints; never stored or shown to the model | Confirmed, Verified | Soft-preference evidence ("uses automation tools") with no extra paid call | A tech-stack API or LinkedIn jobs actor (extra spend per company) |
+| — | Every external text field is redacted (emails incl. disguised forms, phones, tokens) before the model or storage | Default | E-11/E-53: data can't carry emails in | Redacting only at the end |
+
+### Qualification & outreach quality
+
+| # | Decision | Status | Why | Rejected alternatives |
+| --- | --- | --- | --- | --- |
+| D-43 | **Confidence** is set by the researcher from a fixed rubric (bands by hard-filter evidence, small boost for matched soft preferences); the **server** enforces 0–1, ≥ 0.70 to qualify, and overrides status on any fail/unknown. Pre-screen rejections get a fixed 0.95 from code | Default | The rubric keeps scores comparable; the server keeps them from being the only safeguard | Free-form model confidence; purely code-computed scores (see §8.3 note: an open option) |
+| D-35 | Disqualifiers checked per company and enforced (applies → not qualified; unknown → needs review) | Confirmed | User exclusions must hold even if the ICP step didn't restate them as hard filters | Relying on the model to copy them into hard filters |
+| D-36b | Soft preferences checked per company with evidence; never change the status | Confirmed | Nice-to-haves inform fit and copy without disqualifying | Treating preferences as filters (guide: "do not treat every preference as a hard filter") |
+| D-40b | Two-step draft checks: free code checks first, then the Haiku fact-check; ≤ 2 rewrites; a checker outage doesn't use a rewrite | Default | Obvious problems are bounced for free; claims must trace to stored sources | Model self-review only |
+
+### Requests, cost & budget
+
+| # | Decision | Status | Why | Rejected alternatives |
+| --- | --- | --- | --- | --- |
+| D-34 | Three-layer request check: free code gate → Haiku scope check → server-enforced `request_type` | Confirmed, Verified | Junk costs $0; off-topic ~$0.0008 (was ~$0.018); only lead searches can be searched | Keyword allowlists (block legit wording/languages); the ICP agent alone (10× cost) |
+| D-07 | Claude budget $6 enforced from the spend ledger + $7 Console spend limit | Confirmed | Owner budget; a hard stop in code plus a backstop outside it | Per-run caps only |
+| D-08 | Lean per-step model A/B (≤ $0.90): record once/replay many, Batch API, 2 repeats, Opus 5.5 as reference labeller | Confirmed | Evidence-based model choice without eating the real-run budget | $2.10 plan; picking by gut |
+| D-30 | Per-phase watchdog + transcript cost recovery | Default, Verified | A hang can't block the run slot; recovered $0.19 a killed run would have hidden | Trusting the SDK to always finish/report |
+| D-45 | DEV limits (target 2, 5 companies, 4 pages, $0.30) for all development | Default | Real runs during development at ~20% of the full cost | Developing on full limits |
+| D-27/D-33 | Grader/client runs use full limits on Render (`DEV_LIMITS=false`) | Confirmed | "Use it like the client would" | Demo-only limits |
+
+### Reliability & feedback
+
+| # | Decision | Status | Why | Rejected alternatives |
+| --- | --- | --- | --- | --- |
+| D-38 | Failure catalogue: plain client message + admin fix + fatal flag; free pre-run checks; stop the run on fatal errors; System issues page + n8n email alerts (deduped 30 min) | Confirmed | Clients aren't developers; the owner must know without watching the app; don't spend when a service can't work | Raw error text; letting the agent retry and spend |
+| D-20 | Per-run `max_tool_calls` = 120 | Default | Outreach-safety "API/tool calls" limit | Turns only |
+| D-47 | Repeat gate only points to earlier runs that produced qualified leads | Default, Verified | It paused a run to point at a failed 0-lead run | Matching any completed run |
+
+### Data, security & hosting
+
+| # | Decision | Status | Why | Rejected alternatives |
+| --- | --- | --- | --- | --- |
+| D-09 | Dedicated `lead_agent` schema in the existing Supabase project, not exposed via the Data API, direct Postgres, schema-qualified queries | Confirmed (Week 4 pattern) | Free-tier project limit; one data home; smaller attack surface | New project; `public` schema via PostgREST |
+| D-18 | Least-privilege `lead_agent_app` role (no DELETE/DROP, no other schemas); RLS on with an app-only policy | Default, Verified | "No destructive DB actions"; protects Week 3/4 data | Deploying the `postgres` DSN |
+| D-11 | Supabase Auth logins (server-side HttpOnly cookies, JWKS verification), admin/member, invite-only, nothing public | Confirmed | Internal client tool with confidential prospect data; proven approval attribution | Shared passcode; public viewing |
+| D-26 | No `auth.users` trigger in Week 5; guard the Week 4 trigger (SQL ready, pending OK) | Default | Stops cross-app access leaks in the shared project | Manual clean-up per user |
+| D-25 | slowapi rate limits + per-user daily run caps | Confirmed | Render free capacity + budget | Run caps only |
+| D-40 | Pre-commit secret scan (custom scanner in `.githooks/`) | Default, Verified | It blocked a fake key in a test file; no secrets in git history | Relying on care |
+| D-10 | Render free web service (Docker), keep-alive while a run is active; daily `/health` cron in the grading window | Confirmed | $0; the SDK wheel bundles the CLI, so no Node | Railway/Render Starter (monthly cost) |
+| D-32 | Python 3.12; sync psycopg pool via `asyncio.to_thread` | Default | Matches Docker; avoids a Windows event-loop conflict between psycopg async and the SDK subprocess | Python 3.14 (your default); psycopg async |
+| D-44 | Tests hit the real DB with throwaway rows; every paid API is faked | Default | Proves SQL, RLS and constraints for real at $0 | Mocking the DB (misses permission bugs) |
 
 ---
 
