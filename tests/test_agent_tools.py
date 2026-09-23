@@ -117,7 +117,7 @@ async def test_full_tool_flow(run_ctx, fake_apify, fake_scrape, monkeypatch):
     assert data["from_cache"] and len(fake_scrape) == 1
 
     # Qualification: a never-fetched URL is refused; unknown filter -> needs_review would apply; all pass -> qualified.
-    base = {"purpose": "q", "domain": "alpha-tooltest.com", "status": "qualified", "confidence": 0.8,
+    base = {"purpose": "q", "domain": "alpha-tooltest.com", "status": "qualified",
             "fit_reasons": ["manual onboarding"], "concerns": [], "source_summary": "Alpha sells B2B SaaS to clinics."}
     checks = [{"filter": f, "result": "pass", "evidence": "site", "source_url": "https://alpha-tooltest.com/"}
               for f in ICP_ARGS["icp"]["hard_filters"]]

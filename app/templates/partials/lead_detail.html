@@ -12,7 +12,7 @@
     </div>
     <div class="row" style="margin-top: 8px;">
       <span class="badge {{ b[0] }}">{{ b[1] }}</span>
-      {% if lead.confidence is not none %}<span class="badge outline nums">Confidence {{ "%.2f" | format(lead.confidence) }}</span>{% endif %}
+      {% if lead.confidence is not none %}<span class="badge outline nums">Fit score {{ "%.2f" | format(lead.confidence) }}</span>{% endif %}
       {% if lead.qualification_status == 'qualified' %}<span class="badge {{ o[0] }}">Drafts: {{ o[1] }}</span>{% endif %}
       {% if lead.outreach_status == 'drafted' %}<span class="badge {{ r[0] }}">{{ r[1] }}{% if lead.reviewed_by_name %} · {{ lead.reviewed_by_name }}{% endif %}</span>{% endif %}
     </div>
@@ -33,6 +33,13 @@
       </ul>
       {% elif lead.qualification_status == 'pending' %}
       <p class="muted">Not researched yet.</p>
+      {% endif %}
+      {% if lead.confidence_breakdown %}
+      <div class="meta-box"><b>How the fit score was calculated</b> <span class="small">(by the system, from the evidence below)</span>
+        <table style="margin-top: 4px;"><tbody>
+        {% for item in lead.confidence_breakdown %}<tr><td class="nums" style="width: 64px;">{{ "%+.2f" | format(item.points) if item.points else "·" }}</td><td>{{ item.reason }}</td></tr>{% endfor %}
+        <tr><td class="nums"><b>{{ "%.2f" | format(lead.confidence) }}</b></td><td><b>Fit score</b></td></tr>
+        </tbody></table></div>
       {% endif %}
       {% if lead.disqualifier_checks %}
       <div><b>Exclusions</b> <span class="small muted">(any that applies disqualifies)</span>

@@ -19,7 +19,7 @@
 {% if shown %}
 <div class="table-wrap">
   <table>
-    <thead><tr><th>Company</th><th>Domain</th><th>Status</th><th>Confidence</th><th>Drafts</th><th>Review</th><th></th></tr></thead>
+    <thead><tr><th>Company</th><th>Domain</th><th>Status</th><th>Fit score</th><th>Drafts</th><th>Review</th><th></th></tr></thead>
     <tbody>
     {% for l in shown %}
       {% set b = badge(l.qualification_status) %}{% set o = badge(l.outreach_status) %}{% set r = badge(l.review_status) %}

@@ -44,13 +44,13 @@ LEAD_COLUMNS = {
     "qualification_status", "confidence", "hard_filter_checks", "fit_reasons", "concerns", "source_urls",
     "source_summary", "email_sequence", "linkedin_message", "outreach_status", "outreach_attempts",
     "grounding_report", "review_status", "reviewer_note", "reviewed_by", "reviewed_at", "fetched_urls",
-    "disqualifier_checks", "soft_preference_checks", "tools_detected",
+    "disqualifier_checks", "soft_preference_checks", "tools_detected", "confidence_breakdown",
 }
 MEMBER_COLUMNS = {"full_name", "role", "is_active"}
 JSON_COLUMNS = {
     "icp", "icp_assumptions", "usage", "models", "quality_scorecard", "discovery_data", "hard_filter_checks",
     "fit_reasons", "concerns", "email_sequence", "grounding_report", "injection_flags", "expected", "actual",
-    "disqualifier_checks", "soft_preference_checks", "tools_detected",
+    "disqualifier_checks", "soft_preference_checks", "tools_detected", "confidence_breakdown",
 }
 
 

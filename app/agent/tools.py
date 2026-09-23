@@ -28,6 +28,7 @@ from app.lib.qualification_rules import (
     DisqualifierCheck, HardFilterCheck, SoftPreferenceCheck, decide_status, invalid_sources, prescreen,
 )
 from app.lib.sanitize import EMAIL_RE, redact, redact_obj, wrap_untrusted
+from app.lib.scoring import cap_for_status, compute_fit_score
 from app.services import apify as apify_svc
 from app.services import firecrawl as fc
 from app.services.grounding import check_grounding
@@ -79,7 +80,7 @@ class QualificationInput(BaseModel):
     purpose: str = ""
     domain: str
     status: Literal["qualified", "not_qualified", "needs_review"]
-    confidence: float = Field(ge=0, le=1)
+    confidence: float | None = Field(default=None, description="Ignored: the system computes the fit score")
     hard_filter_checks: list[HardFilterCheck]
     disqualifier_checks: list[DisqualifierCheck] = Field(default_factory=list)
     soft_preference_checks: list[SoftPreferenceCheck] = Field(default_factory=list)
@@ -165,7 +166,6 @@ QUALIFY_SCHEMA = {
     "properties": {
         "purpose": {"type": "string"}, "domain": {"type": "string"},
         "status": {"type": "string", "enum": ["qualified", "not_qualified", "needs_review"]},
-        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
         "hard_filter_checks": {"type": "array", "items": {"type": "object", "properties": {
             "filter": {"type": "string"}, "result": {"type": "string", "enum": ["pass", "fail", "unknown"]},
             "evidence": {"type": "string"}, "source_url": {"type": ["string", "null"]}},
@@ -184,7 +184,7 @@ QUALIFY_SCHEMA = {
         "fit_reasons": _STR_LIST, "concerns": _STR_LIST, "source_urls": _STR_LIST,
         "source_summary": {"type": "string"},
     },
-    "required": ["purpose", "domain", "status", "confidence", "hard_filter_checks", "disqualifier_checks",
+    "required": ["purpose", "domain", "status", "hard_filter_checks", "disqualifier_checks",
                  "soft_preference_checks", "fit_reasons", "concerns", "source_urls", "source_summary"],
 }
 OUTREACH_SCHEMA = {
@@ -344,7 +344,8 @@ def build_handlers(ctx: RunContext) -> dict:
                                                   "source_url": company.get("linkedin_url")}],
                              source_urls=[u for u in [company.get("linkedin_url")] if u],
                              source_summary=f"Rejected on discovery data before scraping: {reason}.",
-                             confidence=0.95)
+                             confidence=0.0,
+                             confidence_breakdown=[{"points": 0.0, "reason": f"pre-screen on discovery data: {reason}"}])
                 await db.run(db.add_usage, ctx.run_id, "prescreen_rejected")
                 await db.run(db.add_usage, ctx.run_id, "not_qualified")
                 rejected.append({"domain": company["domain"], "reason": reason})
@@ -486,10 +487,19 @@ def build_handlers(ctx: RunContext) -> dict:
         if not parsed.source_urls:
             return failure("source_urls must list at least one URL you used.", allowed_source_urls=allowed)
 
-        final, notes = decide_status(parsed.status, parsed.hard_filter_checks, parsed.confidence,
+        required_disq = list((ctx.icp or {}).get("disqualifiers") or [])
+        # The fit score is computed by code from the recorded evidence (D-48), never chosen by the model.
+        score = compute_fit_score(
+            hard_checks=parsed.hard_filter_checks, disqualifier_checks=parsed.disqualifier_checks,
+            soft_checks=parsed.soft_preference_checks, required_filters=ctx.hard_filters(),
+            required_disqualifiers=required_disq, discovery=lead.get("discovery_data") or {},
+            company_domain=lead["company_domain"], source_urls=parsed.source_urls,
+        )
+        final, notes = decide_status(parsed.status, parsed.hard_filter_checks, score.value,
                                      required_filters=ctx.hard_filters(),
                                      disqualifier_checks=parsed.disqualifier_checks,
-                                     required_disqualifiers=list((ctx.icp or {}).get("disqualifiers") or []))
+                                     required_disqualifiers=required_disq)
+        score = cap_for_status(score, final, f"researcher chose '{parsed.status}' (the safer status wins)")
         concerns = list(parsed.concerns) + notes
         flags = (lead.get("discovery_data") or {}).get("injection_flags")
         if flags:
@@ -503,7 +513,8 @@ def build_handlers(ctx: RunContext) -> dict:
             await db.run(db.add_usage, ctx.run_id, final)
 
         await db.run(
-            db.update_lead, str(lead["id"]), qualification_status=final, confidence=round(parsed.confidence, 2),
+            db.update_lead, str(lead["id"]), qualification_status=final, confidence=score.value,
+            confidence_breakdown=score.breakdown,
             hard_filter_checks=redact_obj([c.model_dump() for c in parsed.hard_filter_checks]),
             disqualifier_checks=redact_obj([c.model_dump() for c in parsed.disqualifier_checks]),
             soft_preference_checks=redact_obj([c.model_dump() for c in parsed.soft_preference_checks]),
@@ -516,7 +527,8 @@ def build_handlers(ctx: RunContext) -> dict:
         return success({
             "domain": lead["company_domain"], "stored_status": final, "server_notes": notes,
             "qualified_so_far": usage.get("qualified", 0), "target": limits["target_qualified"],
-        }, f"{lead['company_domain']} -> {final}{changed}, confidence {parsed.confidence:.2f}")
+            "fit_score": score.value, "fit_score_breakdown": score.breakdown,
+        }, f"{lead['company_domain']} -> {final}{changed}, fit score {score.value:.2f}")
 
     async def get_lead(args: dict) -> Outcome:
         lead, err = await db.run(_lead_for, ctx, str(args.get("domain") or ""))
@@ -721,7 +733,7 @@ TOOL_SPECS = {
     "scrape_website": ("Scrape one public page of a candidate company's website ('/' or a path from internal_links). "
                        "Returns untrusted page text.", SCRAPE_SCHEMA, ("domain", "path")),
     "save_qualification": ("Save the qualification decision for one company, with evidence per hard filter.",
-                           QUALIFY_SCHEMA, ("domain", "status", "confidence")),
+                           QUALIFY_SCHEMA, ("domain", "status")),
     "get_lead": ("Get the stored research for one QUALIFIED lead, to write outreach from.", DOMAIN_SCHEMA, ("domain",)),
     "save_outreach": ("Save the 3-email sequence + LinkedIn message for one qualified lead. Checked by code and a "
                       "fact-checker; returns problems to fix if rejected.", OUTREACH_SCHEMA, ("domain",)),

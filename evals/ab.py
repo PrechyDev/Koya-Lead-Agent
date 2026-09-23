@@ -69,7 +69,6 @@ class ICPOut(BaseModel):
 
 class QualOut(BaseModel):
     status: Literal["qualified", "not_qualified", "needs_review"]
-    confidence: float = Field(ge=0, le=1)
     hard_filter_checks: list[HardFilterCheck]
     disqualifier_checks: list[DisqualifierCheck]
     soft_preference_checks: list[SoftPreferenceCheck]

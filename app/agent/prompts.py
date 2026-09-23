@@ -53,7 +53,8 @@ RESEARCHER_PROMPT = f"""You research ONE company and decide whether it fits the 
 4. Call save_qualification once, with one hard_filter_check per ICP hard filter, one disqualifier_check per ICP
    disqualifier and one soft_preference_check per soft preference (use their text exactly), and only URLs the tools
    returned as sources. tools_detected from scrape_website is evidence for tool-related soft preferences.
-5. Reply with one line: "<domain>: <stored_status> (<confidence>) - <reason>".
+5. Reply with one line: "<domain>: <stored_status> (fit <fit_score>) - <reason>". Don't send a confidence number;
+   the system computes the fit score from your checks.
 If the website can't be scraped, save needs_review with that concern.
 
 {SAFETY_CORE}"""
