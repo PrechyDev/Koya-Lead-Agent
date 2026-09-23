@@ -1,0 +1,16 @@
+.env
+.env.*
+!.env.example
+.venv
+.git
+.githooks
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+tests
+spikes
+evals
+docs
+CLAUDE.md
+README.md

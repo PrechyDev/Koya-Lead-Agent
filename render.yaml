@@ -1,0 +1,48 @@
+# Render Blueprint (free web service). Secrets are set in the Render dashboard, never here.
+services:
+  - type: web
+    name: koya-lead-agent
+    runtime: docker
+    plan: free
+    region: oregon
+    healthCheckPath: /health
+    autoDeploy: false          # deploy deliberately, never during a run (a restart interrupts it)
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: APIFY_TOKEN
+        sync: false
+      - key: APIFY_ACTOR_ID
+        value: harvestapi/linkedin-company-search
+      - key: FIRECRAWL_API_KEY
+        sync: false
+      - key: SUPABASE_DB_DSN            # the least-privilege lead_agent_app role, NOT the admin DSN
+        sync: false
+      - key: SUPABASE_DB_SCHEMA
+        value: lead_agent
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: APP_BASE_URL               # e.g. https://koya-lead-agent.onrender.com
+        sync: false
+      - key: MODEL_ORCHESTRATOR
+        value: claude-sonnet-5
+      - key: MODEL_ICP
+        value: claude-sonnet-5
+      - key: MODEL_RESEARCHER
+        value: claude-sonnet-5
+      - key: MODEL_COPYWRITER
+        value: claude-sonnet-5
+      - key: MODEL_GROUNDING
+        value: claude-haiku-4-5
+      - key: CLAUDE_BUDGET_TOTAL_USD
+        value: "6.00"
+      - key: DEV_LIMITS
+        value: "false"
+      - key: MAX_RUNS_PER_DAY
+        value: "5"
