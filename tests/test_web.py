@@ -134,3 +134,15 @@ def test_banner_escapes_user_text(client_as):
     req = Request({"type": "http", "method": "GET", "path": "/", "headers": [], "query_string": b""})
     html = _banner(req, "info", "<script>alert(1)</script>").body.decode()
     assert "<script>" not in html and "&lt;script&gt;" in html
+
+
+def test_buttons_wait_for_required_inputs():
+    """A click must never start a loading state before the browser validates required fields (owner bug report)."""
+    from pathlib import Path
+    root = Path(__file__).parents[1] / "app"
+    login = (root / "templates" / "login.html").read_text(encoding="utf-8")
+    assert "onclick" not in login and "required" in login
+    detail = (root / "templates" / "partials" / "lead_detail.html").read_text(encoding="utf-8")
+    assert 'value="rejected" data-requires="note-' in detail
+    js = (root / "static" / "app.js").read_text(encoding="utf-8")
+    assert 'addEventListener("submit"' in js and "formProblem" in js and 'data-requires' in js

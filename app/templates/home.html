@@ -49,7 +49,7 @@
       <button id="start-run" class="btn primary" type="submit" disabled data-locked aria-describedby="start-run-reason">Start research run</button>
       <span id="start-run-reason" class="disabled-reason">You've used your {{ daily_cap }} runs for today.</span>
       {% else %}
-      <button id="start-run" class="btn primary" type="submit" disabled aria-describedby="start-run-reason">
+      <button id="start-run" class="btn primary" type="submit" disabled data-custom-enable aria-describedby="start-run-reason">
         <span class="when-idle">Start research run</span><span class="when-loading"><span class="spinner"></span> Starting…</span>
       </button>
       <span id="start-run-reason" class="disabled-reason">Enter at least 5 characters to start.</span>

@@ -139,7 +139,8 @@
         <button class="btn primary" type="submit" name="review_status" value="approved"><span class="when-idle">Approve drafts</span><span class="when-loading"><span class="spinner"></span> Saving…</span></button>
         {% endif %}
         {% if lead.review_status != 'rejected' %}
-        <button class="btn danger" type="submit" name="review_status" value="rejected" hx-confirm="Reject these drafts? Add a note so the team knows why.">Reject</button>
+        <button class="btn danger" type="submit" name="review_status" value="rejected" data-requires="note-{{ lead.id }}"
+          data-requires-reason="Add a reviewer note to reject." hx-confirm="Reject these drafts?">Reject</button>
         {% else %}
         <span class="badge danger">✕ Rejected{% if lead.reviewed_by_name %} by {{ lead.reviewed_by_name }}{% endif %}</span>
         {% endif %}

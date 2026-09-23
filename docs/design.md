@@ -43,7 +43,8 @@ Error messages say **what failed · why (if known) · what to do next**. Never s
 | Focus (keyboard) | 2px `--focus` outline with 2px offset (`:focus-visible`) |
 | Active (pressed) | darker still + `transform: translateY(1px)` |
 | Disabled | `--disabled-bg`, `--disabled-text`, `cursor: not-allowed`, and a **tooltip/helper text saying why** ("A run is already in progress") |
-| Loading | spinner + verb-ing label ("Starting…", "Exporting…"); disabled while loading so it can't be double-clicked |
+| Loading | spinner + verb-ing label ("Starting…", "Exporting…"); disabled while loading so it can't be double-clicked. **Starts only on a validated submit, never on click** (a click fires before the browser checks required fields) |
+| Required inputs | **A submit button is disabled until every required field in its form is valid**, and the reason is shown right under it ("Fill in: Email, Password.", "Password needs at least 10 characters.", "The passwords don't match."). A button with its own condition declares it (`data-requires="<field id>"`, e.g. Reject needs a note). Handled once for every form, including HTMX-loaded ones, in `app/static/app.js` |
 | Done feedback | short confirmation in place, e.g. Copy → "Copied ✓" for 2s; Approve → button turns into an "Approved ✓" badge + success banner |
 
 Button hierarchy: **one primary** button per view (e.g. "Start research run"). Secondary = outlined. Destructive (Cancel run, Reject) = red outline, and it needs a confirm dialog.
@@ -57,7 +58,7 @@ Clickable table rows show a `›` chevron on the right and the hover background.
 | Need | How |
 | --- | --- |
 | Hover/focus/active/disabled | plain CSS on `.btn`, `.btn:hover`, `.btn:focus-visible`, `.btn:active`, `.btn:disabled` |
-| Loading + no double-submit | `hx-disabled-elt="this"` disables the button during the request; HTMX adds the `.htmx-request` class, so CSS shows the spinner and swaps the label (`.btn .when-loading`) |
+| Loading + no double-submit | HTMX forms: `hx-disabled-elt` disables the button during the request and the `.htmx-request` class shows the spinner (`.btn .when-loading`). Plain forms (login, accept invite): `app.js` adds `.is-loading` on the `submit` event |
 | Server errors → banner, not results | the server answers errors with the `HX-Retarget: #system-message` + `HX-Reswap: innerHTML` headers and renders `partials/banner.html`. So errors can **never** land inside a results block |
 | Live run updates | `hx-get="/runs/{id}/panel" hx-trigger="every 3s"`; the server returns **HTTP 286** once the run is terminal, which stops polling |
 | Copied ✓ feedback | a tiny inline script: `navigator.clipboard.writeText(...)`, then swap the label for 2s (plus a fallback that selects the text) |
@@ -184,6 +185,7 @@ Plain words. Say "companies", "sites scraped", "qualified". Don't say "MCP", "to
 ## 8. Definition-of-done checklist (tick before marking Phase 8 done)
 
 - [ ] Every button/link/row/chip/tab has hover, focus-visible, active, disabled and (where async) loading states
+- [ ] No submit button is clickable while a required input is empty or invalid, and it says why
 - [ ] Disabled controls explain why
 - [ ] No status/error/score text inside result content boxes; metadata is in badges/labelled fields
 - [ ] One System Message bar per page, correctly coloured + iconed, with `role` set

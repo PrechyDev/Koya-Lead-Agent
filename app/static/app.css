@@ -94,6 +94,9 @@ main { max-width: 1180px; margin: 0 auto; padding: 16px; display: flex; flex-dir
 .btn .when-loading { display: none; }
 .htmx-request .btn .when-loading, .btn.htmx-request .when-loading { display: inline; }
 .htmx-request .btn .when-idle, .btn.htmx-request .when-idle { display: none; }
+/* Plain (non-HTMX) forms: set by app.js on a validated submit, never on click. */
+.btn.is-loading .when-loading { display: inline; }
+.btn.is-loading .when-idle { display: none; }
 .spinner { width: 14px; height: 14px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%;
            display: inline-block; animation: spin .7s linear infinite; vertical-align: -2px; }
 @keyframes spin { to { transform: rotate(360deg); } }

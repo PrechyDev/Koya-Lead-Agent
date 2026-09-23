@@ -94,6 +94,105 @@
     if (close) close.closest(".banner").remove();
   });
 
+  // Required inputs (design.md §4): a submit button stays disabled until every required field in its form is
+  // valid, with the reason shown beside it. Buttons can add their own condition with data-requires="<field id>"
+  // (e.g. Reject needs a note). Buttons marked data-locked (server decided) or data-custom-enable (own script)
+  // are left alone.
+  function fieldName(el) {
+    var label = el.id && document.querySelector('label[for="' + el.id + '"]');
+    return label ? label.textContent.replace(/\(.*?\)/g, "").trim() : (el.name || "a field");
+  }
+
+  function formProblem(form) {
+    var fields = Array.prototype.filter.call(form.querySelectorAll("input, textarea, select"), function (el) {
+      return !el.disabled && el.type !== "hidden";
+    });
+    var missing = fields.filter(function (el) { return el.required && !el.value.trim(); });
+    if (missing.length) return "Fill in: " + missing.map(fieldName).join(", ") + ".";
+    var invalid = fields.filter(function (el) { return !el.checkValidity(); });
+    if (invalid.length) {
+      var el = invalid[0];
+      if (el.minLength > 0 && el.value.length < el.minLength) return fieldName(el) + " needs at least " + el.minLength + " characters.";
+      if (el.type === "email") return "Enter a valid email address.";
+      return "Check " + fieldName(el) + ".";
+    }
+    var mismatch = fields.filter(function (el) {
+      var other = el.getAttribute("data-match") && document.getElementById(el.getAttribute("data-match"));
+      return other && el.value !== other.value;
+    });
+    if (mismatch.length) return "The passwords don't match.";
+    return "";
+  }
+
+  function reasonSlot(form) {
+    var slot = form.querySelector("[data-form-reason]");
+    if (!slot) {
+      slot = document.createElement("p");
+      slot.className = "disabled-reason";
+      slot.setAttribute("data-form-reason", "");
+      slot.setAttribute("aria-live", "polite");
+      // Right after the buttons: inside their row if they sit in one, else at the end of the form.
+      var buttons = form.querySelectorAll('button[type="submit"]');
+      var last = buttons[buttons.length - 1];
+      if (last && last.parentElement === form) last.insertAdjacentElement("afterend", slot);
+      else (last ? last.parentElement : form).appendChild(slot);
+    }
+    return slot;
+  }
+
+  function refreshForm(form) {
+    var buttons = Array.prototype.filter.call(form.querySelectorAll('button[type="submit"]'), function (b) {
+      return !b.hasAttribute("data-locked") && !b.hasAttribute("data-custom-enable");
+    });
+    var guarded = form.querySelector("[required], [minlength], [data-match]");
+    var withOwnRule = buttons.filter(function (b) { return b.hasAttribute("data-requires"); });
+    if (!guarded && !withOwnRule.length) return;
+    var problem = guarded ? formProblem(form) : "";
+    var reasons = problem ? [problem] : [];
+    buttons.forEach(function (b) {
+      var need = b.getAttribute("data-requires") && document.getElementById(b.getAttribute("data-requires"));
+      var ownProblem = need && !need.value.trim() ? (b.getAttribute("data-requires-reason") || ("Fill in " + fieldName(need) + ".")) : "";
+      if (ownProblem && reasons.indexOf(ownProblem) < 0) reasons.push(ownProblem);
+      b.disabled = Boolean(problem || ownProblem);
+    });
+    reasonSlot(form).textContent = reasons.join(" ");
+  }
+
+  function refreshAll(root) {
+    (root || document).querySelectorAll("form").forEach(refreshForm);
+  }
+  ["input", "change"].forEach(function (type) {
+    document.addEventListener(type, function (event) {
+      var form = event.target.closest && event.target.closest("form");
+      if (form) refreshForm(form);
+    });
+  });
+  // Browser autofill may not fire input events until the user interacts with the page.
+  ["pointerdown", "keydown", "focusin"].forEach(function (type) {
+    document.addEventListener(type, function () { refreshAll(); }, true);
+  });
+  document.addEventListener("DOMContentLoaded", function () {
+    refreshAll();
+    setTimeout(refreshAll, 600);
+  });
+  document.addEventListener("htmx:load", function (event) { refreshAll(event.target); });
+
+  // Loading state only once the browser has accepted the form (the submit event fires after validation).
+  // HTMX forms get it from the htmx-request class; plain forms (login, accept invite) get it here.
+  document.addEventListener("submit", function (event) {
+    var form = event.target;
+    if (form.hasAttribute("hx-post")) return;
+    var button = event.submitter || form.querySelector('button[type="submit"]');
+    if (!button) return;
+    button.classList.add("is-loading");
+    setTimeout(function () { button.disabled = true; }, 0);  // after the browser has read the button's value
+  });
+  // Coming back with the browser's Back button must not leave a spinner on.
+  window.addEventListener("pageshow", function () {
+    document.querySelectorAll(".btn.is-loading").forEach(function (b) { b.classList.remove("is-loading"); b.disabled = false; });
+    refreshAll();
+  });
+
   // "Last updated" stamp for the live panel.
   document.body && document.body.addEventListener("htmx:afterSwap", function (event) {
     var stamp = document.getElementById("live-stamp");

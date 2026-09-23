@@ -19,9 +19,11 @@
     </div>
     <div class="field">
       <label for="confirm">Confirm password</label>
-      <input id="confirm" name="confirm" type="password" minlength="10" autocomplete="new-password" required>
+      <input id="confirm" name="confirm" type="password" minlength="10" autocomplete="new-password" required data-match="password">
     </div>
-    <button class="btn primary" type="submit" id="invite-submit">Save and continue</button>
+    <button class="btn primary" type="submit" id="invite-submit">
+      <span class="when-idle">Save and continue</span><span class="when-loading"><span class="spinner"></span> Saving…</span>
+    </button>
   </form>
 </div>
 <script>
@@ -37,6 +39,7 @@
       document.getElementById("invite-missing").hidden = false;
       var btn = document.getElementById("invite-submit");
       btn.disabled = true;
+      btn.setAttribute("data-locked", "");  // no invite session: stays disabled whatever is typed
       btn.title = "Open the link from your invite email first";
     }
   })();
