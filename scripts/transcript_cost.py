@@ -13,7 +13,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.agent.transcripts import session_cost  # noqa: E402
 from app.logging_setup import configure_logging  # noqa: E402
 
+
 log = logging.getLogger("lead_agent.scripts.transcript_cost")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("session_id")

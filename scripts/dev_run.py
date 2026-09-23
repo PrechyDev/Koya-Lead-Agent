@@ -22,7 +22,10 @@ from app.config import get_settings, limits_for_run  # noqa: E402
 from app.lib.objective import objective_hash  # noqa: E402
 from app.logging_setup import configure_logging  # noqa: E402
 
+
 log = logging.getLogger("lead_agent.scripts.dev_run")
+
+
 async def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("objective")

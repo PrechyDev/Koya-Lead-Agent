@@ -14,7 +14,10 @@ from app import db  # noqa: E402
 from app.agent.runner import execute_run  # noqa: E402
 from app.logging_setup import configure_logging  # noqa: E402
 
+
 log = logging.getLogger("lead_agent.scripts.resume_run")
+
+
 async def main(run_id: str, choice: str) -> None:
     db.update_run(run_id, repeat_choice=choice, cross_run_dedupe=(choice != "refresh_same"))
     task = asyncio.create_task(execute_run(run_id, skip_icp=True))
