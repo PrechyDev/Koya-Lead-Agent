@@ -538,6 +538,10 @@ Lowercase · strip protocol, `www.`, path, query and port · IDNA-encode · reje
 | E-47 | Agent session hangs (background subagent never returns) | Foreground subagents + per-phase watchdog → finalize from records | live (fixed) |
 | E-48 | Phase killed before reporting cost | Recover cost from Claude Code transcripts into the ledger | live ($0.19 recovered) |
 | E-49 | Orchestrator tries to research itself | Hook denies research/copy tools on the main thread | live |
+| E-50 | Junk / off-topic objective | Free code gate, then Haiku scope check, server-enforced request_type → clarification | tests + live |
+| E-51 | Fact-checker (Haiku) outage | Attempt not counted; 3 outages or a credit/auth error stops the run | test |
+| E-52 | Out of credit / bad key / wrong actor at start or mid-run | Free pre-run checks refuse before spend; mid-run fatal errors stop the run at once; plain client message; admin alert | tests |
+| E-53 | Disguised emails ("jane [at] acme [dot] io") | Redaction patterns (over-redacts rare phrases, on purpose) | tests |
 | E-35 | Supabase project paused (inactivity) | Daily `/health` cron through the grading window; `/health` reports DB down clearly | 12.3 |
 
 ---
@@ -600,6 +604,11 @@ Lowercase · strip protocol, `www.`, path, query and port · IDNA-encode · reje
 | D-31 | Researcher gets `get_research_brief` (hard filters + facts from the DB); orchestrator's own thread is denied research/copy tools | Default | Exact filter wording; forced delegation keeps the orchestrator context small | Orchestrator copies filters into prompts |
 | D-32 | Sync psycopg pool called via `asyncio.to_thread`; Python 3.12 | Default | Works on Windows and Linux alike (event-loop conflict); matches Docker | psycopg async |
 | D-33 | Grader/client runs use full limits on Render (`DEV_LIMITS=false`) | Confirmed | "Use it like the client would" | Demo limits |
+| D-34 | Haiku scope pre-check before the ICP agent + free code gate + server-enforced request_type | Confirmed | Off-topic requests cost ~$0.0008 instead of ~$0.018 (live-verified); only lead searches can be searched | Keyword allowlists (block legit wording/languages); ICP agent alone (10x the cost) |
+| D-35 | Disqualifiers checked per company and enforced (applies → not_qualified; unknown → needs_review) | Confirmed | User exclusions ("exclude agencies") must hold even if the ICP step didn't restate them as hard filters | Relying on the model to copy them into hard filters |
+| D-36 | Soft-preference checks per company + tool fingerprints from raw HTML (same Firecrawl credit) + careers page for hiring signals | Confirmed | Evidence for nice-to-haves without extra paid calls; never changes status | LinkedIn jobs actor (extra spend per company) |
+| D-37 | Full (not short) Apify mode | Default (verified) | Short mode has no website, size band or employee count (checked with a 1-result run), so it can't dedupe, scrape or pre-screen | Short mode (half price, unusable) |
+| D-38 | Plain-language failure catalogue + free pre-run checks + stop-on-fatal + owner alerts (in-app + n8n email) | Confirmed | Clients aren't developers; owner must know without watching the app; don't spend when a service can't work | Raw error text; letting the agent retry |
 | D-22 | Grounding check = a direct Anthropic Messages call inside `save_outreach`, not an SDK agent | Default (awaiting owner confirmation) | It's a validator inside a tool, not agent reasoning; the agent runtime itself is 100% Agent SDK. Cheaper, guaranteed structured output, can't be skipped | A one-shot SDK query (more overhead, weaker output guarantees) |
 
 ---
