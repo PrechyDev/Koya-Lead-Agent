@@ -34,9 +34,9 @@ from app.config import ICP_PHASE_MAX_BUDGET_USD, ICP_PHASE_MAX_TURNS, ICP_PHASE_
 from app.failures import ServiceFailure, classify_claude_error
 from app.lib.budget import BudgetExceeded, assert_can_spend
 from app.lib.objective import objective_problem
+from app.lib.sanitize import redact
 from app.services import health
 from app.services import scope as scope_svc
-from app.lib.sanitize import redact
 
 log = logging.getLogger("lead_agent.runner")
 ROOT = Path(__file__).resolve().parents[2]

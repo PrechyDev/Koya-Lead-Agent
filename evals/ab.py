@@ -15,6 +15,7 @@ The run refuses to start if the estimate would push eval spend past EVAL_CAP_USD
 
 import argparse
 import json
+import logging
 import sys
 import time
 from decimal import Decimal
@@ -22,8 +23,9 @@ from pathlib import Path
 from typing import Literal
 
 import anthropic
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
+log = logging.getLogger("lead_agent.evals.ab")
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
@@ -34,6 +36,7 @@ from app.config import get_settings  # noqa: E402
 from app.lib.budget import cost_from_usage  # noqa: E402
 from app.lib.outreach_checks import check_outreach  # noqa: E402
 from app.lib.qualification_rules import DisqualifierCheck, HardFilterCheck, SoftPreferenceCheck  # noqa: E402
+from app.logging_setup import configure_logging  # noqa: E402
 
 FIXTURES = ROOT / "evals" / "fixtures"
 SKILLS = ROOT / "agent_plugin" / "skills"
@@ -154,7 +157,7 @@ def export(run_ids: list[str], name: str) -> None:
     dedup = {c["domain"]: c for c in companies}
     out.write_text(json.dumps(db.to_jsonable({"icp": icp, "companies": list(dedup.values())}), indent=1),
                    encoding="utf-8")
-    print(f"wrote {out} with {len(dedup)} companies")
+    log.info(f"wrote {out} with {len(dedup)} companies")
 
 
 def load(name: str) -> dict:
@@ -245,7 +248,7 @@ def eval_spent() -> Decimal:
 def run_batch(requests: list[tuple[str, dict]], label: str) -> dict[str, dict]:
     client = anthropic.Anthropic(api_key=get_settings().anthropic_api_key)
     batch = client.messages.batches.create(requests=[{"custom_id": cid, "params": p} for cid, p in requests])
-    print(f"batch {batch.id} submitted ({len(requests)} requests); waiting…", flush=True)
+    log.info(f"batch {batch.id} submitted ({len(requests)} requests); waiting…")
     while True:
         batch = client.messages.batches.retrieve(batch.id)
         if batch.processing_status == "ended":
@@ -275,7 +278,7 @@ def run_batch(requests: list[tuple[str, dict]], label: str) -> dict[str, dict]:
 def guard(requests: list[tuple[str, dict]], yes: bool) -> None:
     est = estimate_cost(requests)
     spent = eval_spent()
-    print(f"pre-flight: {len(requests)} requests, estimated ${est} (batch price); eval spent so far ${spent:.4f}; "
+    log.info(f"pre-flight: {len(requests)} requests, estimated ${est} (batch price); eval spent so far ${spent:.4f}; "
           f"cap ${EVAL_CAP_USD}")
     if spent + est > EVAL_CAP_USD:
         raise SystemExit("REFUSED: this would exceed the eval cap. Shrink the test set or raise the cap on purpose.")
@@ -354,10 +357,10 @@ def report(name: str) -> None:
         f"""select stage, model, repeat_no, count(*) as n, sum(case when passed then 1 else 0 end) as ok,
                    sum(case when notes = 'FALSE QUALIFIED' then 1 else 0 end) as false_q, sum(cost_usd) as cost
             from {db.t('eval_results')} where eval_name = %s group by 1, 2, 3 order by 1, 2, 3""", (name,))
-    print("| Step | Model | Repeat | Passed | False qualified | Cost $ |")
-    print("| --- | --- | --- | --- | --- | --- |")
+    log.info("| Step | Model | Repeat | Passed | False qualified | Cost $ |")
+    log.info("| --- | --- | --- | --- | --- | --- |")
     for r in rows:
-        print(f"| {r['stage']} | {r['model']} | {r['repeat_no']} | {r['ok']}/{r['n']} | {r['false_q']} | "
+        log.info(f"| {r['stage']} | {r['model']} | {r['repeat_no']} | {r['ok']}/{r['n']} | {r['false_q']} | "
               f"{float(r['cost'] or 0):.4f} |")
 
 
@@ -373,20 +376,20 @@ def main() -> int:
         export(args.run_ids, args.name)
     elif args.command == "estimate":
         ref = build_reference_requests(args.name)
-        print(f"reference (Opus 5.5, {len(ref)} companies): est ${estimate_cost(ref)}")
+        log.info(f"reference (Opus 5.5, {len(ref)} companies): est ${estimate_cost(ref)}")
         if load_reference(args.name):
             ab = build_ab_requests(args.name)
-            print(f"A/B replays ({len(ab)} requests): est ${estimate_cost(ab)}")
+            log.info(f"A/B replays ({len(ab)} requests): est ${estimate_cost(ab)}")
         else:
-            print("A/B estimate needs the reference labels first (run `reference`).")
-        print(f"eval spent so far: ${eval_spent():.4f} of ${EVAL_CAP_USD}")
+            log.info("A/B estimate needs the reference labels first (run `reference`).")
+        log.info(f"eval spent so far: ${eval_spent():.4f} of ${EVAL_CAP_USD}")
     elif args.command == "reference":
         reqs = build_reference_requests(args.name)
         guard(reqs, args.yes)
         results = run_batch(reqs, "reference")
         labels = {cid.split("::", 1)[1]: r.get("output", {}) for cid, r in results.items()}
         (FIXTURES / f"{args.name}.reference.json").write_text(json.dumps(labels, indent=1), encoding="utf-8")
-        print(f"reference labels saved for {len(labels)} companies")
+        log.info(f"reference labels saved for {len(labels)} companies")
     elif args.command == "run":
         reqs = build_ab_requests(args.name)
         guard(reqs, args.yes)
@@ -399,4 +402,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    configure_logging(cli=True)
     sys.exit(main())

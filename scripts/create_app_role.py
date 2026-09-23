@@ -16,6 +16,7 @@ Usage (from the lead-agent folder):
 """
 
 import argparse
+import logging
 import os
 import re
 import secrets
@@ -28,6 +29,10 @@ import psycopg
 from dotenv import dotenv_values
 from psycopg import errors, sql
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from app.logging_setup import configure_logging  # noqa: E402
+
+log = logging.getLogger("lead_agent.scripts.create_app_role")
 ROOT = Path(__file__).resolve().parent.parent
 ENV_PATH = ROOT / ".env"
 MIGRATION = ROOT / "db" / "migrations" / "0000_app_role.sql"
@@ -36,7 +41,7 @@ SESSION_POOLER_PORT = 5432
 
 
 def fail(message: str) -> None:
-    print(f"ERROR: {message}")
+    log.error(f"ERROR: {message}")
     sys.exit(1)
 
 
@@ -81,9 +86,9 @@ def verify_app_user(app_dsn: str) -> bool:
     ok = True
     with psycopg.connect(app_dsn, prepare_threshold=None, autocommit=True) as conn:
         user = conn.execute("select current_user").fetchone()[0]
-        print(f"  connects as: {user}")
+        log.info(f"  connects as: {user}")
         if user != APP_ROLE:
-            print("  FAIL: connected as the wrong user")
+            log.error("  FAIL: connected as the wrong user")
             ok = False
 
         checks = [
@@ -94,11 +99,11 @@ def verify_app_user(app_dsn: str) -> bool:
         for label, statement in checks:
             try:
                 conn.execute(statement)
-                print(f"  FAIL: {label} (the statement succeeded)")
+                log.error(f"  FAIL: {label} (the statement succeeded)")
                 ok = False
             except (errors.InsufficientPrivilege, errors.UndefinedTable, errors.InvalidSchemaName):
                 # Permission denied, or the other schema doesn't exist: both mean no access.
-                print(f"  ok: {label}")
+                log.info(f"  ok: {label}")
     return ok
 
 
@@ -136,7 +141,7 @@ def main() -> None:
                     "nocreaterole noinherit noreplication nobypassrls connection limit 20"
                 ).format(sql.Identifier(APP_ROLE), sql.Literal(password))
             )
-            print(f"created role {APP_ROLE}")
+            log.info(f"created role {APP_ROLE}")
         elif args.rotate or not env_has_app_dsn:
             if not args.rotate:
                 fail(
@@ -149,25 +154,26 @@ def main() -> None:
                     sql.Identifier(APP_ROLE), sql.Literal(password)
                 )
             )
-            print(f"rotated password for {APP_ROLE}")
+            log.info(f"rotated password for {APP_ROLE}")
         else:
-            print(f"role {APP_ROLE} already exists and .env already has its DSN; keeping it")
+            log.info(f"role {APP_ROLE} already exists and .env already has its DSN; keeping it")
 
         conn.execute(MIGRATION.read_text(encoding="utf-8"))
-        print(f"applied {MIGRATION.relative_to(ROOT)}")
+        log.info(f"applied {MIGRATION.relative_to(ROOT)}")
 
     if password is not None:
         write_env_value("SUPABASE_DB_DSN", build_app_dsn(admin_dsn, password))
-        print("wrote SUPABASE_DB_DSN to .env (password not shown)")
+        log.info("wrote SUPABASE_DB_DSN to .env (password not shown)")
         app_dsn = dotenv_values(ENV_PATH)["SUPABASE_DB_DSN"]
     else:
         app_dsn = existing_app_dsn
 
-    print("verifying the app user:")
+    log.info("verifying the app user:")
     if not verify_app_user(app_dsn):
         fail("app user verification failed (see above)")
-    print("done: the app user is least-privilege as specified")
+    log.info("done: the app user is least-privilege as specified")
 
 
 if __name__ == "__main__":
+    configure_logging(cli=True)
     main()

@@ -7,9 +7,14 @@ pre-commit hook in .githooks/; run by hand with:
     .venv/Scripts/python scripts/secret_scan.py --all
 """
 
+import logging
 import re
 import subprocess
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from app.logging_setup import configure_logging  # noqa: E402
 
 # (label, regex). Kept deliberately specific so docs that *mention* a key
 # name (e.g. "ANTHROPIC_API_KEY") don't trip it; only values that look real.
@@ -24,6 +29,7 @@ PATTERNS = [
     ("Private key block", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
 ]
 
+log = logging.getLogger("lead_agent.scripts.secret_scan")
 NEVER_COMMIT = re.compile(r"(^|/)\.env(\.[^/]*)?$")
 ALLOWED_ENV_FILES = {".env.example"}
 
@@ -64,14 +70,15 @@ def main() -> int:
                     # Never echo the secret itself; location + type is enough.
                     problems.append(f"{path}:{lineno}: looks like a {label}")
     if problems:
-        print("Secret scan FAILED; commit blocked:")
+        log.error("Secret scan FAILED; commit blocked:")
         for p in problems:
-            print("  " + p)
-        print("Remove the secret (use .env / Render env vars), then commit again.")
+            log.error("  " + p)
+        log.error("Remove the secret (use .env / Render env vars), then commit again.")
         return 1
-    print(f"Secret scan passed ({'all tracked' if all_tracked else 'staged'} files).")
+    log.info(f"Secret scan passed ({'all tracked' if all_tracked else 'staged'} files).")
     return 0
 
 
 if __name__ == "__main__":
+    configure_logging(cli=True)
     sys.exit(main())

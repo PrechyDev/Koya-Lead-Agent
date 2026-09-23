@@ -25,7 +25,12 @@ from app.lib.limits import next_discovery_batch
 from app.lib.objective import icp_signature, parse_headcount_range
 from app.lib.outreach_checks import WRITING_RULES, check_outreach, measure
 from app.lib.qualification_rules import (
-    DisqualifierCheck, HardFilterCheck, SoftPreferenceCheck, decide_status, invalid_sources, prescreen,
+    DisqualifierCheck,
+    HardFilterCheck,
+    SoftPreferenceCheck,
+    decide_status,
+    invalid_sources,
+    prescreen,
 )
 from app.lib.sanitize import EMAIL_RE, redact, redact_obj, wrap_untrusted
 from app.lib.scoring import cap_for_status, compute_fit_score

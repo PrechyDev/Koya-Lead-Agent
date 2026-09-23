@@ -13,10 +13,10 @@ Run:  .venv/Scripts/python spikes/sdk_spike.py
 """
 
 import asyncio
-import os
+import logging
+import sys
 from pathlib import Path
 
-from dotenv import dotenv_values
 from claude_agent_sdk import (
     AgentDefinition,
     ClaudeAgentOptions,
@@ -26,7 +26,12 @@ from claude_agent_sdk import (
     query,
     tool,
 )
+from dotenv import dotenv_values
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from app.logging_setup import configure_logging  # noqa: E402
+
+log = logging.getLogger("lead_agent.spikes.sdk_spike")
 ROOT = Path(__file__).resolve().parent.parent
 MODEL = "claude-haiku-4-5"
 notes: list[str] = []
@@ -35,17 +40,17 @@ notes: list[str] = []
 @tool("record_note", "Record a short note. Use this to report results.", {"text": str})
 async def record_note(args):
     notes.append(args["text"])
-    print(f"  [tool] record_note called with: {args['text']!r}")
+    log.info(f"  [tool] record_note called with: {args['text']!r}")
     return {"content": [{"type": "text", "text": "noted"}]}
 
 
 async def log_pre_tool(input_data, tool_use_id, context):
-    print(f"  [hook] PreToolUse tool={input_data.get('tool_name')} agent_type={input_data.get('agent_type', 'main')}")
+    log.info(f"  [hook] PreToolUse tool={input_data.get('tool_name')} agent_type={input_data.get('agent_type', 'main')}")
     return {}
 
 
 async def log_subagent_start(input_data, tool_use_id, context):
-    print(f"  [hook] SubagentStart agent_type={input_data.get('agent_type')}")
+    log.info(f"  [hook] SubagentStart agent_type={input_data.get('agent_type')}")
     return {}
 
 
@@ -94,13 +99,14 @@ async def main() -> None:
     )
     async for message in query(prompt=prompt, options=options):
         if isinstance(message, ResultMessage):
-            print(f"  [result] subtype={message.subtype} is_error={message.is_error} turns={message.num_turns}")
-            print(f"  [result] total_cost_usd={message.total_cost_usd}")
-            print(f"  [result] models used={list((message.model_usage or {}).keys())}")
-            print(f"  [result] permission_denials={message.permission_denials}")
-    print("notes recorded:", notes)
-    print("skill loaded in subagent:", "SKILL-LOADED-OK" in notes)
+            log.info(f"  [result] subtype={message.subtype} is_error={message.is_error} turns={message.num_turns}")
+            log.info(f"  [result] total_cost_usd={message.total_cost_usd}")
+            log.info(f"  [result] models used={list((message.model_usage or {}).keys())}")
+            log.info(f"  [result] permission_denials={message.permission_denials}")
+    log.info("notes recorded: %s", notes)
+    log.info("skill loaded in subagent: %s", "SKILL-LOADED-OK" in notes)
 
 
 if __name__ == "__main__":
+    configure_logging(cli=True)
     asyncio.run(main())

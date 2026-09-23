@@ -9,6 +9,7 @@ invite email (they set a password via /accept-invite). Uses SUPABASE_ADMIN_DSN o
 """
 
 import argparse
+import logging
 import sys
 from pathlib import Path
 
@@ -18,7 +19,9 @@ from dotenv import dotenv_values
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app import auth, db  # noqa: E402
+from app.logging_setup import configure_logging  # noqa: E402
 
+log = logging.getLogger("lead_agent.scripts.bootstrap_owner")
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -35,12 +38,12 @@ def main() -> int:
     row = db.fetch_one(f"select {db.SCHEMA}.auth_user_id_by_email(%s) as id", (email,))
     user_id = str(row["id"]) if row and row["id"] else None
     if user_id:
-        print(f"{email} already has an account in this project: adding membership (no email sent).")
+        log.info(f"{email} already has an account in this project: adding membership (no email sent).")
     elif args.invite:
         user_id, _ = auth.invite_user(email, args.full_name)
-        print(f"Invite email sent to {email}. They'll set a password at /accept-invite.")
+        log.info(f"Invite email sent to {email}. They'll set a password at /accept-invite.")
     else:
-        print(f"No account exists for {email}. Re-run with --invite to send an invite email.")
+        log.info(f"No account exists for {email}. Re-run with --invite to send an invite email.")
         return 1
 
     role = "member" if args.member else "admin"
@@ -50,9 +53,10 @@ def main() -> int:
         with psycopg.connect(admin_dsn, prepare_threshold=None, autocommit=True) as conn:
             conn.execute(f"update {db.SCHEMA}.members set is_owner = true, role = 'admin' where user_id = %s",
                          (user_id,))
-    print(f"Done: {args.full_name} is {'the owner and ' if args.owner else ''}{role}.")
+    log.info(f"Done: {args.full_name} is {'the owner and ' if args.owner else ''}{role}.")
     return 0
 
 
 if __name__ == "__main__":
+    configure_logging(cli=True)
     sys.exit(main())

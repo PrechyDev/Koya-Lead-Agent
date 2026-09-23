@@ -1,9 +1,11 @@
 """FastAPI application: pages (Jinja2 + HTMX), auth middleware, rate limits (specs.md §5.2, §10.2)."""
 
 import logging
+import uuid as _uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import psycopg
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -11,16 +13,13 @@ from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.base import BaseHTTPMiddleware
 
-import uuid as _uuid
-
-import psycopg
-
 from app import alerts, auth, db
 from app.config import get_settings
+from app.logging_setup import configure_logging
 from app.runs import manager, recover_orphans
 from app.web.templating import templates
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+configure_logging()  # one format + secret/email redaction for every log line (app/logging_setup.py)
 log = logging.getLogger("lead_agent")
 ROOT = Path(__file__).resolve().parent
 PUBLIC_PATHS = ("/login", "/accept-invite", "/health", "/static/", "/fixtures/", "/favicon.ico")
