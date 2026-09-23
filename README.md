@@ -64,7 +64,7 @@ git config core.hooksPath .githooks        # secret scan before every commit
    - `SUPABASE_DB_DSN` is the **app-role** DSN. Never set the admin DSN on Render.
    - Also: the API keys, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, and `APP_BASE_URL` (your `https://….onrender.com`).
 4. In Supabase → Authentication → URL configuration, add `https://….onrender.com/accept-invite` to the redirect URLs.
-5. Deploy, then open `/health` (expects `"database": "ok"`).
+5. Deploy, then open `/health` (expects `"database": "ok"`). The full, ordered plan with checks and costs is in `docs/deployment.md`.
 
 ## Owner alerts (n8n → email)
 
