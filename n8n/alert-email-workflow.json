@@ -1,0 +1,60 @@
+{
+  "name": "Koya Lead Agent — alert email",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "koya-lead-agent-alert",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "a1f0c3b2-0001-4c1e-9d10-000000000001",
+      "name": "Alert webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "webhookId": "koya-lead-agent-alert"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "secret-check",
+              "leftValue": "={{ $json.headers['x-alert-secret'] }}",
+              "rightValue": "REPLACE_WITH_ALERT_WEBHOOK_SECRET",
+              "operator": { "type": "string", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1f0c3b2-0002-4c1e-9d10-000000000002",
+      "name": "Secret matches?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [240, 0]
+    },
+    {
+      "parameters": {
+        "sendTo": "REPLACE_WITH_YOUR_EMAIL",
+        "subject": "={{ $json.body.summary }}",
+        "emailType": "text",
+        "message": "={{ $json.body.message }}\n\nOccurrences: {{ $json.body.occurrences }}\nRun: {{ $json.body.run_url || 'n/a' }}\nAll issues: {{ $json.body.issues_url }}\nAt: {{ $json.body.at }}",
+        "options": {}
+      },
+      "id": "a1f0c3b2-0003-4c1e-9d10-000000000003",
+      "name": "Email me",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [480, -80]
+    }
+  ],
+  "connections": {
+    "Alert webhook": { "main": [[{ "node": "Secret matches?", "type": "main", "index": 0 }]] },
+    "Secret matches?": { "main": [[{ "node": "Email me", "type": "main", "index": 0 }], []] }
+  },
+  "settings": { "executionOrder": "v1" }
+}
