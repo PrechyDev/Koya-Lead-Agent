@@ -95,12 +95,16 @@ def _step_happened(i: int, usage: dict) -> bool:
 
 
 def stepper(status: str, last_active_step: int = 0, usage: dict | None = None) -> list[dict]:
-    """[{label, state: done|current|pending|failed|skipped}] for the run page stepper."""
+    """[{label, state: done|current|pending|failed|skipped|waiting}] for the run page stepper."""
     idx = STEP_OF_STATUS.get(status, 0)
     usage = usage or {}
     out = []
     for i, (_, label) in enumerate(STEPS):
-        if idx == -1:
+        if status == "awaiting_confirmation":  # ICP done; paused before discovery until the person chooses
+            state = "done" if i == 0 else ("waiting" if i == 1 else "pending")
+        elif status == "needs_clarification":  # paused at the ICP step until the person answers
+            state = "waiting" if i == 0 else "pending"
+        elif idx == -1:
             state = "done" if i < last_active_step else ("failed" if i == last_active_step else "pending")
         elif status == "superseded":
             state = "done" if i in (0, 4) else "skipped"

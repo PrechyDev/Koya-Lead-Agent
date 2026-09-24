@@ -345,3 +345,35 @@ def test_invites_carry_the_details_the_shared_email_template_uses(monkeypatch):
     assert data["invited_to"] == "lead_agent"  # Week 4's trigger guard still sees it (D-26)
     auth.invite_user("b@acme.io", "B")
     assert "invited_by_name" not in sent["data"]  # nothing empty is sent (the template falls back instead)
+
+
+# --- "waiting for you" dialogs (owner feedback: the repeat check was buried below the fold) ----------------
+def test_stepper_shows_waiting_not_a_spinner_while_paused():
+    from app.web.templating import stepper
+    assert [s["state"] for s in stepper("awaiting_confirmation")][:3] == ["done", "waiting", "pending"]
+    assert [s["state"] for s in stepper("needs_clarification")][:2] == ["waiting", "pending"]
+
+
+@pytest.fixture
+def paused_run(admin_dsn):
+    import psycopg
+
+    from app.config import DEV_LIMITS
+    run, _ = db.create_run(idempotency_key=f"t-{uuid.uuid4()}", objective="Find US B2B SaaS companies with 10 to 100 staff",
+                           objective_hash="h" + uuid.uuid4().hex, limits=DEV_LIMITS.to_dict(), run_kind="dev",
+                           created_by=None)
+    db.set_status(str(run["id"]), "awaiting_confirmation", "matches an earlier run")
+    yield str(run["id"])
+    with psycopg.connect(admin_dsn, prepare_threshold=None, autocommit=True) as conn:
+        conn.execute("delete from lead_agent.runs where id = %s", (run["id"],))
+
+
+def test_repeat_check_is_a_dialog_and_cancel_returns_to_the_form(client_as, paused_run):
+    c = client_as(ADMIN)
+    html = c.get(f"/runs/{paused_run}/live", headers={"HX-Request": "true"}).text
+    assert 'role="dialog"' in html and "data-modal-cancel" in html and "Find new companies" in html
+    r = c.post(f"/runs/{paused_run}/confirm", headers={"HX-Request": "true"},
+               data={"choice": "cancel", "csrf_token": auth.csrf_token_for(ADMIN.user_id)})
+    assert r.status_code == 204 and r.headers["HX-Redirect"].startswith("/?objective=Find+US+B2B+SaaS")
+    home = c.get(r.headers["HX-Redirect"]).text
+    assert ">Find US B2B SaaS companies with 10 to 100 staff</textarea>" in home  # objective filled back in

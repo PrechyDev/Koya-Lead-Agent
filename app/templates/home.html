@@ -13,7 +13,7 @@
       <textarea id="objective" name="objective" maxlength="1000" data-counter data-min-words="5" required
         placeholder="e.g. Find 10 US B2B SaaS companies with 10 to 100 employees that may need AI automation support."
         hx-get="/objective-check" hx-trigger="keyup changed delay:600ms" hx-target="#objective-hint"
-        hx-include="#objective" hx-swap="innerHTML"></textarea>
+        hx-include="#objective" hx-swap="innerHTML">{{ prefill or "" }}</textarea>
       <div class="row between">
         <div class="chips" role="group" aria-label="Example objectives">
           <span class="small muted">Examples:</span>

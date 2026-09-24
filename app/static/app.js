@@ -282,6 +282,23 @@
     if (event.detail && event.detail.successful) connectionBanner(false);
   });
 
+  // "Waiting for you" dialogs: lock the page behind them, focus the main choice, Esc = the ✕ (back to the form).
+  function syncModal() {
+    var modal = document.querySelector("[data-modal]");
+    document.body.classList.toggle("modal-open", Boolean(modal));
+    if (modal && !modal.contains(document.activeElement)) {
+      var first = modal.querySelector(".btn.primary, textarea, .btn");
+      if (first) first.focus();
+    }
+  }
+  document.addEventListener("DOMContentLoaded", syncModal);
+  document.addEventListener("htmx:afterSwap", syncModal);
+  document.addEventListener("keydown", function (event) {
+    if (event.key !== "Escape") return;
+    var cancel = document.querySelector("[data-modal] [data-modal-cancel]");
+    if (cancel) { event.preventDefault(); cancel.click(); }
+  });
+
   // "Last updated" stamp for the live panel.
   document.body && document.body.addEventListener("htmx:afterSwap", function (event) {
     var stamp = document.getElementById("live-stamp");

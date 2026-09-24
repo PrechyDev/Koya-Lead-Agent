@@ -5,6 +5,7 @@ import io
 import re
 import uuid
 from datetime import datetime
+from urllib.parse import urlencode
 
 import jwt
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
@@ -226,14 +227,14 @@ async def accept_invite_submit(request: Request, access_token: str = Form(...), 
 # Home + run creation
 # ---------------------------------------------------------------------------
 @router.get("/", response_class=HTMLResponse)
-async def home(request: Request, member: Member = Depends(current_member)):
+async def home(request: Request, objective: str = "", member: Member = Depends(current_member)):
     settings = get_settings()
     runs = await db.run(db.list_runs, 30)
     runs = [r for r in runs if r["run_kind"] != "eval_record"]
     active = await db.run(db.active_run)
     mine_today = await db.run(db.count_full_runs_today, member.user_id)
     return templates.TemplateResponse(request, "home.html", _ctx(
-        request, runs=runs, active=active,
+        request, runs=runs, active=active, prefill=objective.strip()[:1000],
         limits=limits_for_run(10, dev=settings.dev_limits), mine_today=mine_today, daily_cap=_daily_cap(member),
         idempotency_key=str(uuid.uuid4())))
 
@@ -372,7 +373,8 @@ async def confirm_repeat(request: Request, run_id: str, choice: str = Form(...),
         return Response(status_code=204, headers={"HX-Redirect": f"/runs/{run['duplicate_of_run_id']}"})
     if choice == "cancel":
         await db.run(db.set_status, run_id, "cancelled", "Cancelled at the repeat check", repeat_choice="cancel")
-        return Response(status_code=204, headers={"HX-Redirect": f"/runs/{run_id}"})
+        # Back to the new-run form, objective filled in, so the person can adjust it and try again.
+        return Response(status_code=204, headers={"HX-Redirect": "/?" + urlencode({"objective": run["objective"]})})
     if choice not in {"find_new", "refresh_same"}:
         raise HTTPException(status_code=400, detail="Unknown choice.")
     if manager.active_count():

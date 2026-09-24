@@ -172,6 +172,8 @@ tr.row-blocked { background: var(--warning-bg); }
 .stepper .current { font-weight: 700; }
 .stepper .failed .dot { background: var(--danger); border-color: var(--danger); color: var(--surface); }
 .stepper .skipped { color: var(--text-muted); }
+.stepper .waiting .dot { background: var(--warning); border-color: var(--warning); color: var(--surface); font-weight: 700; }
+.stepper .waiting { font-weight: 700; }
 .stepper .skipped .dot { border-style: dashed; color: var(--text-muted); }
 .counters { display: flex; gap: 16px; flex-wrap: wrap; font-size: 0.9rem; }
 .counter b { font-variant-numeric: tabular-nums; }
@@ -193,6 +195,18 @@ ul.clean { margin: 0; padding-left: 18px; }
 
 /* ---------- Lead drawer ---------- */
 .drawer-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.35); z-index: 40; }
+/* Full-screen "waiting for you" dialogs (repeat check, clarification). */
+.modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 50; }
+.modal { position: fixed; z-index: 51; top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(560px, calc(100% - 32px));
+  max-height: calc(100vh - 48px); overflow-y: auto; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 12px; padding: 20px 22px; box-shadow: 0 20px 50px rgba(0,0,0,0.35); display: flex; flex-direction: column; gap: 12px; }
+.modal h2 { margin: 0; font-size: 1.2rem; }
+.modal p { margin: 0; }
+.modal-choices { display: flex; flex-direction: column; gap: 10px; }
+.modal-choice { display: flex; flex-direction: column; gap: 4px; }
+.modal-choice .btn { width: 100%; justify-content: flex-start; }
+.modal footer { border-top: 1px solid var(--border); padding-top: 12px; }
+body.modal-open { overflow: hidden; }
 .drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(760px, 100%); background: var(--bg); z-index: 41;
           overflow-y: auto; box-shadow: -4px 0 18px rgba(0,0,0,0.2); display: flex; flex-direction: column; }
 .drawer header { position: sticky; top: 0; background: var(--surface); border-bottom: 1px solid var(--border); padding: 12px 16px; z-index: 1; }

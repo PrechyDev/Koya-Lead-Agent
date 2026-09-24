@@ -23,8 +23,8 @@
 {% endif %}
 <ol class="stepper" aria-label="Progress">
   {% for s in steps %}
-  <li class="{{ s.state }}"><span class="dot" aria-hidden="true">{% if s.state == 'done' %}✓{% elif s.state == 'failed' %}✕{% elif s.state == 'skipped' %}–{% elif s.state == 'current' %}<span class="spinner"></span>{% else %}{{ loop.index }}{% endif %}</span>
-    <span>{{ s.label }}<span class="sr-only">{% if s.state == 'current' %} (in progress){% elif s.state == 'skipped' %} (skipped){% endif %}</span></span></li>
+  <li class="{{ s.state }}"><span class="dot" aria-hidden="true">{% if s.state == 'done' %}✓{% elif s.state == 'failed' %}✕{% elif s.state == 'skipped' %}–{% elif s.state == 'waiting' %}!{% elif s.state == 'current' %}<span class="spinner"></span>{% else %}{{ loop.index }}{% endif %}</span>
+    <span>{{ s.label }}<span class="sr-only">{% if s.state == 'current' %} (in progress){% elif s.state == 'skipped' %} (skipped){% elif s.state == 'waiting' %} (waiting for you){% endif %}</span></span></li>
   {% endfor %}
 </ol>
 
@@ -46,46 +46,71 @@
   </div>
 </div>
 
+{#- "Waiting for you" moments are full-screen dialogs, not text further down the page (owner feedback): the run
+    is paused until the person chooses, so the choice must be impossible to miss. ✕, Cancel and Esc go back to the
+    new-run form with the objective filled in. -#}
 {% if run.status == "awaiting_confirmation" %}
-<div class="stack">
-  <div class="callout">⚠ <b>You've researched this before.</b> This objective matches
-    {% if duplicate %}<a href="/runs/{{ duplicate.id }}">a run from {{ duplicate.created_at | ago }}</a> ({{ (duplicate.usage or {}).get('qualified', 0) }} qualified){% else %}an earlier run{% endif %}.
-    Nothing has been spent on searching yet. Choose how to continue:</div>
-  {% if can_control %}
-  <div class="gate-actions">
-    {% for choice, label, help, cls in [
-        ("open_previous", "Open it", "Free. See the earlier results.", "primary"),
-        ("find_new", "Find new companies", "New search; skips companies researched in the last 30 days.", ""),
-        ("refresh_same", "Refresh the same companies", "Re-research them with fresh data. Costs a full run.", ""),
-        ("cancel", "Cancel", "Stop here. Nothing more is spent.", "danger")] %}
+<div class="modal-backdrop" aria-hidden="true"></div>
+<div class="modal" role="dialog" aria-modal="true" aria-labelledby="gate-title" aria-describedby="gate-text" data-modal>
+  <header class="row between">
+    <h2 id="gate-title">You've researched this before</h2>
+    {% if can_control %}
     <form hx-post="/runs/{{ run.id }}/confirm" hx-disabled-elt="find button">
-      <input type="hidden" name="csrf_token" value="{{ csrf }}">
-      <input type="hidden" name="choice" value="{{ choice }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="choice" value="cancel">
+      <button class="btn small modal-close" type="submit" aria-label="Cancel and go back" data-modal-cancel>✕</button>
+    </form>
+    {% else %}<a class="btn small modal-close" href="/" aria-label="Back to all runs" data-modal-cancel>✕</a>{% endif %}
+  </header>
+  <p id="gate-text">This objective matches
+    {% if duplicate %}<a href="/runs/{{ duplicate.id }}" target="_blank" rel="noopener">a run from {{ duplicate.created_at | ago }}</a>
+    ({{ (duplicate.usage or {}).get('qualified', 0) }} qualified){% else %}an earlier run{% endif %}.
+    Nothing has been spent on searching yet. How would you like to continue?</p>
+  {% if can_control %}
+  <div class="modal-choices">
+    {% for choice, label, help, cls in [
+        ("open_previous", "Open the earlier results", "Free. Go straight to what was already found.", "primary"),
+        ("find_new", "Find new companies", "A fresh search that skips companies researched in the last 30 days.", ""),
+        ("refresh_same", "Refresh the same companies", "Research them again with up-to-date information. Costs a full run.", "")] %}
+    <form hx-post="/runs/{{ run.id }}/confirm" hx-disabled-elt="find button" class="modal-choice">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="choice" value="{{ choice }}">
       <button class="btn {{ cls }}" type="submit"><span class="when-idle">{{ label }}</span><span class="when-loading"><span class="spinner"></span> Working…</span></button>
       <span class="help">{{ help }}</span>
     </form>
     {% endfor %}
   </div>
+  <footer class="row">
+    <form hx-post="/runs/{{ run.id }}/confirm" hx-disabled-elt="find button">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="choice" value="cancel">
+      <button class="btn" type="submit"><span class="when-idle">Cancel and edit my objective</span><span class="when-loading"><span class="spinner"></span> Going back…</span></button>
+    </form>
+  </footer>
   {% else %}
-  <p class="help">Only the person who started this run, or an admin, can choose.</p>
+  <p class="help">Only the person who started this run, or an admin, can choose. <a href="/">Back to all runs</a></p>
   {% endif %}
 </div>
 {% endif %}
 
 {% if run.status == "needs_clarification" %}
-<div class="stack">
-  <div class="callout">⚠ <b>The agent needs more detail before spending on searches.</b></div>
-  <p><b>Question:</b> {{ run.clarification_question }}</p>
+<div class="modal-backdrop" aria-hidden="true"></div>
+<div class="modal" role="dialog" aria-modal="true" aria-labelledby="clarify-title" data-modal>
+  <header class="row between">
+    <h2 id="clarify-title">A little more detail, please</h2>
+    <a class="btn small modal-close" href="/?objective={{ run.objective | urlencode }}" aria-label="Cancel and go back" data-modal-cancel>✕</a>
+  </header>
+  <p>{{ run.clarification_question }}</p>
+  <p class="small muted">Nothing has been spent on searching yet.</p>
   <form hx-post="/runs" hx-disabled-elt="find button" class="stack">
     <input type="hidden" name="csrf_token" value="{{ csrf }}">
     <input type="hidden" name="idempotency_key" value="clarify-{{ run.id }}">
     <input type="hidden" name="parent_run_id" value="{{ run.id }}">
-    <input type="hidden" name="target_qualified" value="{{ limits.get('target_qualified', 10) }}">
     <div class="field">
-      <label for="clarified">Your answer, as a fuller objective</label>
+      <label for="clarified">Your objective, with the missing detail</label>
       <textarea id="clarified" name="objective" maxlength="1000" data-min-words="5" required>{{ run.objective }} — </textarea>
     </div>
-    <div><button class="btn primary" type="submit"><span class="when-idle">Continue with this answer</span><span class="when-loading"><span class="spinner"></span> Starting…</span></button></div>
+    <div class="row">
+      <button class="btn primary" type="submit"><span class="when-idle">Continue with this answer</span><span class="when-loading"><span class="spinner"></span> Starting…</span></button>
+      <a class="btn" href="/?objective={{ run.objective | urlencode }}">Cancel</a>
+    </div>
   </form>
 </div>
 {% endif %}
