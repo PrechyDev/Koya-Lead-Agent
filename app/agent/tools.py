@@ -406,6 +406,8 @@ def build_handlers(ctx: RunContext) -> dict:
                    f"{len(to_research)} to research, {len(rejected)} rejected on pre-screen, "
                    f"{result.dropped_no_domain} without a website, {dupes} duplicates, "
                    f"{len(skipped)} researched in the last {settings.research_reuse_days} days"
+                   + (f"; {result.empty_retries} empty result(s) retried with the same input "
+                      f"(runs {', '.join(result.apify_run_ids)})" if result.empty_retries else "")
                    + ("; empty search not counted against the search limit" if refunded else ""))
         return success({
             "companies_to_research": to_research,

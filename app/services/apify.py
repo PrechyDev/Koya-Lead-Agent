@@ -10,6 +10,7 @@ The only retry is when the start request itself failed before a run existed.
 """
 
 import asyncio
+import logging
 from dataclasses import dataclass, field
 from datetime import timedelta
 from decimal import Decimal
@@ -34,6 +35,9 @@ LOCATION_NAMES = {"us": "United States", "gb": "United Kingdom", "ca": "Canada",
                   "nl": "Netherlands"}
 
 
+log = logging.getLogger("lead_agent.apify")
+
+
 class DiscoveryError(Exception):
     """`failure_code` is a key of app.failures.CATALOGUE (None for 'no slots left', which isn't a failure)."""
 
@@ -52,6 +56,8 @@ class DiscoveryResult:
     apify_run_id: str | None
     cost_usd: float
     actor_input: dict = field(default_factory=dict)
+    empty_retries: int = 0                                  # identical re-runs after an empty result
+    apify_run_ids: list[str] = field(default_factory=list)  # every actor run behind this search
 
 
 def size_bands_for(low: int | None, high: int | None) -> list[str]:
@@ -124,6 +130,11 @@ def normalize_company(item: dict) -> dict | None:
     }
 
 
+# The actor sometimes answers a search with 0 companies and then 528 for the identical input a minute later
+# (measured 2026-09-24: 5 of 15 keyword searches empty, same input, same build; errors log #63). An empty run
+# returns no data and is billed only the $0.001 start event, so it is retried up to twice with the identical
+# input (owner decision D-76). FAILED/aborted/timed-out runs are still never re-run (rule 9).
+EMPTY_RESULT_RETRIES = 2
 PRICE_PER_COMPANY_USD = 0.004   # "full-company" event, FREE tier (checked 2026-09-23)
 PRICE_PER_START_USD = 0.001
 
@@ -164,7 +175,37 @@ async def find_companies(
         actor_input["companySize"] = size_bands
 
     client = ApifyClientAsync(settings.apify_token)
-    actor = client.actor(settings.apify_actor_id)
+    total_cost, run_ids = 0.0, []
+    for attempt in range(1 + EMPTY_RESULT_RETRIES):
+        try:
+            run_id, raw, cost = await _run_once(client, settings.apify_actor_id, actor_input, int(max_items),
+                                                max_charge_usd, timeout_s)
+        except DiscoveryError as exc:  # keep what the earlier (empty) runs of this search cost
+            exc.cost_usd = round((exc.cost_usd or 0.0) + total_cost, 4)
+            raise
+        total_cost += cost
+        run_ids.append(run_id)
+        if raw:
+            break
+        if attempt < EMPTY_RESULT_RETRIES:
+            log.info("Apify run %s found 0 companies for %r; retrying the identical search (%d of %d)",
+                     run_id, query, attempt + 1, EMPTY_RESULT_RETRIES)
+    companies, dropped = [], 0
+    for item in raw[: int(max_items)]:
+        company = normalize_company(item)
+        if company is None:
+            dropped += 1
+        else:
+            companies.append(company)
+    return DiscoveryResult(companies=companies, raw_count=len(raw), dropped_no_domain=dropped,
+                           apify_run_id=run_id, cost_usd=round(total_cost, 4), actor_input=actor_input,
+                           empty_retries=len(run_ids) - 1, apify_run_ids=run_ids)
+
+
+async def _run_once(client, actor_id: str, actor_input: dict, max_items: int, max_charge_usd: float,
+                    timeout_s: int) -> tuple[str, list[dict], float]:
+    """One actor run: (run id, raw items, settled cost). Raises DiscoveryError with the run id and its cost."""
+    actor = client.actor(actor_id)
     # 1) START the run. Only this request is retried (once, on a 5xx/429 from Apify): it failed, so no run
     #    exists yet. Waiting is a separate step, so a hiccup while waiting can never start a second paid run.
     started = None
@@ -213,13 +254,4 @@ async def find_companies(
         raise stopped("dataset_failed", f"The Apify run finished but its results couldn't be read ({type(exc).__name__}).",
                       "apify_run_failed", await _settled_cost(client, run_id, cost, 0)) from exc
     raw = listing.items or []
-    cost = await _settled_cost(client, run_id, cost, len(raw))
-    companies, dropped = [], 0
-    for item in raw[: int(max_items)]:
-        company = normalize_company(item)
-        if company is None:
-            dropped += 1
-        else:
-            companies.append(company)
-    return DiscoveryResult(companies=companies, raw_count=len(raw), dropped_no_domain=dropped,
-                           apify_run_id=run_id, cost_usd=cost, actor_input=actor_input)
+    return run_id, raw, await _settled_cost(client, run_id, cost, len(raw))

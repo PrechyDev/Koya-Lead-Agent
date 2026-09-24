@@ -114,11 +114,14 @@ class _FakeClient:
         return _R()
 
     def dataset(self, _):
-        items = self._items
+        outer = self
 
         class _D:
             async def list_items(self, limit=None):
-                return SimpleNamespace(items=items)
+                # A list of lists = one batch per actor run (to fake empty-then-full searches).
+                if outer._items and isinstance(outer._items[0], list):
+                    return SimpleNamespace(items=outer._items.pop(0))
+                return SimpleNamespace(items=outer._items)
         return _D()
 
 
@@ -281,3 +284,24 @@ async def test_a_failed_start_request_is_retried_once(monkeypatch):
     monkeypatch.setattr(apify_svc.asyncio, "sleep", _no_sleep)
     res = await apify_svc.find_companies(query="x", geos=[], size_bands=[], max_items=3, max_charge_usd=0.05)
     assert len(fake._actor.calls) == 2 and res.apify_run_id == "run4"
+
+
+async def test_an_empty_search_is_retried_with_the_same_input(monkeypatch):
+    """The actor answers some identical searches with 0 (measured: 5 of 15); an empty run is retried up to 2x (D-76)."""
+    fake = _FakeClient({"id": "run5", "status": "SUCCEEDED", "usageTotalUsd": 0.001, "defaultDatasetId": "d"},
+                       [[], [], RAW], settled=None)
+    monkeypatch.setattr(apify_svc, "ApifyClientAsync", lambda token: fake)
+    monkeypatch.setattr(apify_svc.asyncio, "sleep", _no_sleep)
+    res = await apify_svc.find_companies(query="saas", geos=[], size_bands=[], max_items=3, max_charge_usd=0.05)
+    assert len(fake._actor.calls) == 3 and res.empty_retries == 2 and res.raw_count == 3
+    assert all(c["run_input"] == fake._actor.calls[0]["run_input"] for c in fake._actor.calls)  # identical input
+    assert res.cost_usd == pytest.approx(0.001 + 0.001 + (3 * 0.004 + 0.001))  # both empty starts are costed
+
+
+async def test_a_search_that_stays_empty_stops_after_two_retries(monkeypatch):
+    fake = _FakeClient({"id": "run6", "status": "SUCCEEDED", "usageTotalUsd": 0.001, "defaultDatasetId": "d"},
+                       [[], [], [], RAW], settled=None)
+    monkeypatch.setattr(apify_svc, "ApifyClientAsync", lambda token: fake)
+    monkeypatch.setattr(apify_svc.asyncio, "sleep", _no_sleep)
+    res = await apify_svc.find_companies(query="saas", geos=[], size_bands=[], max_items=3, max_charge_usd=0.05)
+    assert len(fake._actor.calls) == 3 and res.raw_count == 0 and res.cost_usd == pytest.approx(0.003)
