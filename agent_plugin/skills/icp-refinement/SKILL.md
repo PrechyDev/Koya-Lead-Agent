@@ -62,7 +62,7 @@ Examples:
    question with a standard one for `question`/`unrelated`, and uses yours for `too_vague`.
 
 1. **Preserve the user's words.** Copy every explicit constraint from the objective, word for word, into `user_constraints_preserved` (e.g. `"US-based"`, `"20–80 employees"`, `"exclude agencies"`). Each one must also appear as a hard filter or disqualifier unless it is clearly a preference ("ideally", "preferably").
-2. **Vague but searchable** (e.g. "SaaS companies that might need automation help"): **don't invent defaults.** Leave `geography`, `headcount_range`, `buyer_persona`, `business_problem`, `disqualifiers`, `soft_preferences` and `requested_lead_count` EMPTY when the objective doesn't state them. The server fills Koya's fixed defaults (US, 10–100 employees, founder/COO/ops lead, repetitive operational work, excluding automation agencies and consumer-only products, the guide's three nice-to-haves, 10 leads) and records each one as an assumption. Put in `assumptions` only interpretations you made (e.g. how you read "may need AI automation support"). Mark `is_searchable: true`.
+2. **Vague but searchable** (e.g. "SaaS companies that might need automation help"): **don't invent defaults.** Leave `geography`, `headcount_range`, `buyer_persona`, `business_problem`, `disqualifiers`, `soft_preferences` and `requested_lead_count` EMPTY when the objective doesn't state them. The server fills Koya's fixed defaults (US, 10–100 employees, founder, operations lead or agency owner; repetitive operational work; excluding recruiting/staffing firms that place AI or automation talent (direct competitors); the guide's three nice-to-haves; 10 leads) and records each one as an assumption. Put in `assumptions` only interpretations you made (e.g. how you read "may need AI automation support"). Mark `is_searchable: true`.
 3. **Too vague to search**: the one thing an objective must contain is **what kind of company** (a company type or industry). Without it (e.g. "find me leads", "companies", gibberish), the server turns the run into a clarification question anyway: set `is_searchable: false` and write ONE short, concrete `clarification_question` that offers options, e.g. "Which kind of companies should I look for (for example: US B2B SaaS with 10–100 staff, or UK marketing agencies)?" Do not invent an ICP.
 4. **Lead count.** If the objective states a number of leads ("find 5 …"), put it in `requested_lead_count`; otherwise leave it null. The server sets the run's target from it (default 10, never above the run's limit) and records any change as an assumption.
 5. **Fields the tools read as data** (keep them short and structured):
@@ -70,12 +70,13 @@ Examples:
    - `headcount_range`: `"10-100"` style.
    - `target_company_type`: e.g. `"B2B SaaS"`.
    - `industries`: short labels, e.g. `["B2B SaaS"]` or `["Healthcare software"]`.
-6. **Hard filters are checkable statements**, e.g. `"Headquartered in the United States"`, `"Sells software to businesses (B2B SaaS)"`, `"10-100 employees"`, `"Not an agency or consultancy"`. The researcher must check each one for every company, so keep them few (3–5) and concrete.
+6. **Hard filters are checkable statements**, e.g. `"Headquartered in the United States"`, `"Sells software to businesses (B2B SaaS)"`, `"10-100 employees"`. The researcher must check each one for every company, so keep them few (3–5) and concrete.
 7. **`discovery_query_plan`:** 3 short LinkedIn company-search keyword queries, most specific first, e.g. `["workflow automation SaaS", "B2B SaaS operations platform", "SaaS scheduling software"]`. Keywords only; geography and size are applied as filters automatically.
 7b. **Disqualifiers** are checked for every company with the question *"does this apply?"*, so write each as a
-   short, positive description of what to exclude (e.g. `"Agency, consultancy or services-only business"`,
-   `"Consumer (B2C) product"`). **Never start one with "Not"** ("Not an agency" would reject every
-   company that isn't an agency; the server refuses it). Don't repeat the hard filters here (geography and
+   short, positive description of what to exclude (e.g. `"Recruiting or staffing firm that places AI or automation
+   talent"`, `"Consumer (B2C) product"`). **Never start one with "Not"** ("Not a staffing firm" would reject every
+   company that isn't one; the server refuses it). **Agencies are not excluded by default:** agency owners are part of
+   Koya's audience; only exclude them if the user says so. Don't repeat the hard filters here (geography and
    headcount are already checked). Put every exclusion the user gave here, word for word in
    `user_constraints_preserved` too.
 8. **Conflicting constraints** (e.g. "10–100 employees" and "enterprise"): keep the numeric constraint as the hard filter and note the conflict in `assumptions`.

@@ -231,10 +231,9 @@ async def home(request: Request, member: Member = Depends(current_member)):
     runs = await db.run(db.list_runs, 30)
     runs = [r for r in runs if r["run_kind"] != "eval_record"]
     active = await db.run(db.active_run)
-    spent = await db.run(db.total_spend) if member.is_admin else None
     mine_today = await db.run(db.count_full_runs_today, member.user_id)
     return templates.TemplateResponse(request, "home.html", _ctx(
-        request, runs=runs, active=active, spent=spent, budget=settings.claude_budget_total_usd,
+        request, runs=runs, active=active,
         limits=limits_for_run(10, dev=settings.dev_limits), mine_today=mine_today, daily_cap=_daily_cap(member),
         idempotency_key=str(uuid.uuid4())))
 

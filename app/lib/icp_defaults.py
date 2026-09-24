@@ -27,22 +27,23 @@ class Default:
 
 DEFAULTS: list[Default] = [
     Default("geography", "Location", ["United States"],
-            "the PRD's example market; LinkedIn company data and English-language websites are richest there",
+            "Koya's default outbound market; name any other country or region in your objective",
             hard_filter="Headquartered in the United States"),
     Default("headcount_range", "Company size", "10-100",
             "Koya's buyers are founders and operators of small teams with repetitive operational work",
             hard_filter="10-100 employees"),
-    Default("buyer_persona", "Who we'd contact", "Founder, COO or operations lead",
-            "the people who hire an AI automation assistant"),
+    Default("buyer_persona", "Who we'd contact", "Founder, operations lead or agency owner",
+            "the people Koya's outbound team reaches, who hire AI automation assistants"),
     Default("business_problem", "Likely problem", "Repetitive operational work (onboarding, support, reporting, "
-            "data entry) that could be automated", "Koya's offer, from the PRD business context"),
-    Default("disqualifiers", "Excluded", ["Agency or consultancy that sells AI or automation services",
-                                          "Consumer-only (B2C) product"],
-            "automation agencies are competitors, and consumer apps don't have the operational work Koya automates"),
+            "data entry) that could be automated", "the work Koya's AI automation assistants take on"),
+    # Not agencies: agency owners are part of Koya's audience (PRD business context). The only default exclusion is
+    # a direct competitor: firms that also place AI automation talent.
+    Default("disqualifiers", "Excluded", ["Recruiting or staffing firm that places AI or automation talent"],
+            "they compete with Koya for the same clients"),
     Default("soft_preferences", "Nice-to-haves", ["Recently hiring for operations roles",
                                                   "Uses tools that may connect to automation workflows",
                                                   "Publishes content about scaling operations"],
-            "the three examples in the ICP refinement guide; they improve the fit score but never disqualify"),
+            "signs a team is growing its operations; they raise the fit score but never rule a company out"),
 ]
 
 

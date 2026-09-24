@@ -18,11 +18,9 @@
         <div class="chips" role="group" aria-label="Example objectives">
           <span class="small muted">Examples:</span>
           <button type="button" class="chip" data-target="objective"
-            data-fill="Find companies that might need AI automation help">Vague</button>
+            data-fill="Find SaaS companies that might need help automating their operations">Broad</button>
           <button type="button" class="chip" data-target="objective"
-            data-fill="Find 10 US B2B SaaS companies with 10 to 100 employees that may need AI automation support.">PRD example</button>
-          <button type="button" class="chip" data-target="objective"
-            data-fill="Find 10 US-based B2B SaaS companies with 20 to 80 employees selling to healthcare providers; exclude agencies.">Specific</button>
+            data-fill="Find 10 US-based B2B SaaS companies with 20 to 80 employees selling to healthcare providers; exclude consumer apps.">Specific</button>
         </div>
         <span id="objective-count" class="small muted nums" aria-live="polite">0 / 1000</span>
       </div>
@@ -33,18 +31,16 @@
       <p class="muted">Only the <b>kind of company</b> is required. Anything else you don't mention uses these defaults, and
         every one is listed on the run's ICP tab.</p>
       <dl class="kv">
-        <dt>Number of leads</dt><dd>The number in your objective; otherwise {{ DEFAULT_LEAD_COUNT }} (at most {{ limits.target_qualified }} per run)</dd>
+        <dt>Number of leads</dt><dd>The number in your objective; otherwise {{ DEFAULT_LEAD_COUNT }}</dd>
         {% for d in ICP_DEFAULTS %}<dt>{{ d.label }}</dt><dd>{{ d.value | join(", ") if d.value is not string else d.value }}
           <span class="muted">({{ d.why }})</span></dd>{% endfor %}
       </dl>
     </details>
-    <div class="limits" aria-label="Run limits (set by the system)">
-      <span>Limits: ≤ {{ limits.max_candidates }} companies</span>
-      <span>≤ {{ limits.max_scrapes }} site pages</span>
-      <span>≤ {{ limits.max_budget_usd | money }} Claude per run</span>
-      <span>≤ ${{ "%.2f" | format(limits.apify_max_charge_usd) }} Apify per search</span>
-      {% if settings.dev_limits %}<span class="badge warning">Test limits on</span>{% endif %}
-    </div>
+    {% if settings.dev_limits and member.is_admin %}
+    {# Admins only: members don't need to know about cost limits; admins need to know test mode is on. #}
+    <p class="small"><span class="badge warning">Test mode</span> Runs stop at {{ limits.target_qualified }} leads and use small
+      limits. To run full searches, set <span class="mono">DEV_LIMITS=false</span> where the app is hosted and restart it.</p>
+    {% endif %}
     <div class="row">
       {% if active %}
       <button id="start-run" class="btn primary" type="submit" disabled data-locked aria-describedby="start-run-reason">Start research run</button>
@@ -59,20 +55,10 @@
       <span id="start-run-reason" class="disabled-reason"></span>
       {% endif %}
     </div>
-    <p class="help">Drafts are never sent. A human reviews every company and every email before anything is used.</p>
+    <p class="help">Nothing is sent from this app: your team reviews every draft and sends it themselves.</p>
   </form>
 </section>
 
-{% if member.is_admin and spent is not none %}
-{% set pct = ((spent / budget) * 100) | round(0) if budget else 0 %}
-<section class="card" aria-label="Project budget">
-  <div class="row between"><h2>Claude budget</h2><a class="btn small" href="/spend">Spend details</a></div>
-  <div class="bar {% if pct >= 90 %}full{% elif pct >= 70 %}warn{% endif %}" role="progressbar" aria-valuenow="{{ pct }}" aria-valuemin="0" aria-valuemax="100">
-    <span style="width: {{ [pct, 100] | min }}%"></span>
-  </div>
-  <p class="small muted nums">{{ spent | money }} of {{ budget | money }} used</p>
-</section>
-{% endif %}
 
 <section class="card" aria-labelledby="runs-title">
   <h2 id="runs-title">Recent runs</h2>

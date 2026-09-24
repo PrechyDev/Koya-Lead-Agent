@@ -33,7 +33,7 @@
     <span class="counter">Companies <b>{{ usage.get('candidates_found', 0) }} / {{ limits.get('max_candidates') }}</b></span>
     <span class="counter">Pages scraped <b>{{ usage.get('scrapes', 0) }} / {{ limits.get('max_scrapes') }}</b></span>
     <span class="counter">Qualified <b>{{ usage.get('qualified', 0) }} / {{ limits.get('target_qualified') }}</b></span>
-    <span class="counter">Claude <b>{{ run.cost_usd | money }} / {{ limits.get('max_budget_usd') | money }}</b></span>
+    {% if member and member.is_admin %}<span class="counter">AI cost <b>{{ run.cost_usd | money }} / {{ limits.get('max_budget_usd') | money }}</b></span>{% endif %}
   </div>
   <div class="row">
     {% if run.status in ACTIVE %}<span id="live-stamp" class="live-stamp">Updating every few seconds</span>{% endif %}

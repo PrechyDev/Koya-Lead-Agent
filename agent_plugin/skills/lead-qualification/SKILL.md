@@ -56,7 +56,7 @@ For **every** hard filter in the ICP, add one entry to `hard_filter_checks` usin
 
 ### Disqualifiers (checked separately, enforced by the server)
 For **every** ICP disqualifier add one `disqualifier_checks` entry (use the text exactly) answering *does it apply to this company?*:
-- `yes`: evidence that it applies (e.g. the site sells agency services) → the company is **not_qualified**.
+- `yes`: evidence that it applies (e.g. the site says it's a staffing firm placing automation talent) → the company is **not_qualified**.
 - `no`: evidence that it does not apply, with `evidence` + `source_url` (e.g. "sells its own subscription product, pricing page").
 - `unknown`: no evidence either way → **needs_review** (we can't confirm the user's exclusion).
 

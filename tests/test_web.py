@@ -59,8 +59,9 @@ def test_home_renders_form_with_states(client_as):
     html = r.text
     assert 'id="start-run"' in html and "disabled" in html            # disabled until valid, with a reason
     assert "Enter at least 5 characters" not in html  # an empty box shows no message; the button is just disabled
-    assert "Drafts are never sent" in html and "Claude budget" in html  # admin sees budget
-    assert client_as(MEMBER).get("/").text.count("Claude budget") == 0  # member does not
+    assert "Nothing is sent from this app" in html and "Claude budget" not in html  # budget lives on Spend
+    assert "Limits:" not in html and "PRD" not in html  # no cost limits or internal jargon on the home page
+    assert "Test mode" not in client_as(MEMBER).get("/").text  # members never see test-mode details
 
 
 def test_member_cannot_open_admin_pages(client_as):
