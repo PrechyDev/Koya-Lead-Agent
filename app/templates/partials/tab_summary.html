@@ -9,20 +9,23 @@
       <dt>Qualified</dt><dd class="nums">{{ usage.get('qualified', 0) }} of {{ (run.limits or {}).get('target_qualified') }}</dd>
       <dt>Needs review</dt><dd class="nums">{{ counts.get('needs_review', 0) }}</dd>
       <dt>Not qualified</dt><dd class="nums">{{ counts.get('not_qualified', 0) }} ({{ usage.get('prescreen_rejected', 0) }} on pre-screen)</dd>
-      <dt>Skipped (researched ≤ 30 days ago)</dt><dd class="nums">{{ usage.get('skipped_seen_recently', 0) }}</dd>
+      <dt>Skipped (researched ≤ {{ REUSE_DAYS }} days ago)</dt><dd class="nums">{{ usage.get('skipped_seen_recently', 0) }}</dd>
       <dt>Agent summary</dt><dd>{{ run.summary or "—" }}</dd>
       {% if run.shortfall_reason %}<dt>Why fewer leads (agent's explanation)</dt><dd>{{ run.shortfall_reason }}</dd>{% endif %}
-      {% if run.error_message %}<dt>Error</dt><dd style="color: var(--danger);">{{ run.error_message }}</dd>{% endif %}
     </dl>
   </div>
   <div class="stack">
     <h3>Cost & usage</h3>
     <dl class="kv">
+      {% if member and member.is_admin %}{# D-66: AI cost and model names are for admins only #}
       <dt>Claude cost</dt><dd class="nums">{{ run.cost_usd | money }} (cap {{ (run.limits or {}).get('max_budget_usd') | money }})</dd>
+      {% endif %}
       <dt>Agent turns</dt><dd class="nums">{{ run.num_turns }}</dd>
       <dt>Companies fetched</dt><dd class="nums">{{ usage.get('candidates_found', 0) }} in {{ usage.get('discovery_calls', 0) }} search(es)</dd>
       <dt>Pages scraped</dt><dd class="nums">{{ usage.get('scrapes', 0) }} (+ {{ usage.get('cache_hits', 0) }} from cache)</dd>
+      {% if member and member.is_admin %}
       <dt>Models</dt><dd class="small">{% for role, m in (run.models or {}).items() %}{{ role }}: {{ m }}{% if not loop.last %} · {% endif %}{% else %}—{% endfor %}</dd>
+      {% endif %}
       <dt>Started / finished</dt><dd class="small">{{ run.started_at.strftime('%b %d %H:%M') if run.started_at else '—' }} / {{ run.finished_at.strftime('%b %d %H:%M') if run.finished_at else '—' }}</dd>
     </dl>
   </div>

@@ -23,7 +23,7 @@
     <tbody>
     {% for l in shown %}
       {% set b = badge(l.qualification_status) %}{% set o = badge(l.outreach_status) %}{% set r = badge(l.review_status) %}
-      <tr class="clickable" tabindex="0" hx-get="/leads/{{ l.id }}" hx-target="#drawer" hx-swap="innerHTML">
+      <tr id="lead-row-{{ l.id }}" class="clickable" tabindex="0" hx-get="/leads/{{ l.id }}" hx-target="#drawer" hx-swap="innerHTML">
         <td>{{ l.company_name }}</td>
         <td><a href="https://{{ l.company_domain }}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">{{ l.company_domain }} ↗</a></td>
         <td><span class="badge {{ b[0] }}">{{ b[1] }}</span></td>

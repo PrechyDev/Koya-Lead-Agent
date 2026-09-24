@@ -213,7 +213,7 @@ def test_run_refused_with_the_real_fix_when_the_agent_cannot_start(client_as, mo
 
 
 @pytest.mark.parametrize("target, expected", [
-    ("/runs/1", "/runs/1"), ("//evil.com", "/"), ("/\evil.com", "/"), ("https://evil.com", "/"), ("", "/"),
+    ("/runs/1", "/runs/1"), ("//evil.com", "/"), ("/\\evil.com", "/"), ("https://evil.com", "/"), ("", "/"),
 ])
 def test_login_redirect_stays_on_this_site(target, expected):
     from app.lib.validation import safe_next
@@ -287,8 +287,13 @@ def test_sign_in_with_an_unverifiable_token_gets_a_plain_message(client_as, monk
 
 
 # --- password reset (D-64) ---------------------------------------------------------------------------------
+def _uid(email: str) -> str:
+    """A stable fake user id; real ones are UUIDs, and routes 404 anything else."""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, email))
+
+
 def _people(monkeypatch, **by_email):
-    rows = {e: {"user_id": f"id-{e}", "email": e, "is_active": active} for e, active in by_email.items()}
+    rows = {e: {"user_id": _uid(e), "email": e, "is_active": active} for e, active in by_email.items()}
     monkeypatch.setattr(db, "get_member_by_email", lambda email: rows.get(email))
     monkeypatch.setattr(db, "get_member", lambda uid: next((r for r in rows.values() if r["user_id"] == uid), None))
     return rows
@@ -308,11 +313,11 @@ def test_deactivated_person_cannot_finish_a_reset_here(client_as, monkeypatch):
     _people(monkeypatch, **{"gone@acme.io": False, "active@acme.io": True})
     changed = []
     monkeypatch.setattr(auth, "set_password", lambda token, pw, name=None: changed.append(token))
-    monkeypatch.setattr(auth, "verify_access_token", lambda t: {"sub": "id-gone@acme.io"})
+    monkeypatch.setattr(auth, "verify_access_token", lambda t: {"sub": _uid("gone@acme.io")})
     form = {"access_token": "t1", "password": "new-password", "confirm": "new-password"}
     r = client_as(None).post("/reset-password", data=form)
     assert r.status_code == 403 and "doesn" in r.text and changed == []
-    monkeypatch.setattr(auth, "verify_access_token", lambda t: {"sub": "id-active@acme.io"})
+    monkeypatch.setattr(auth, "verify_access_token", lambda t: {"sub": _uid("active@acme.io")})
     r = client_as(None).post("/reset-password", data=form)
     assert r.status_code == 303 and changed == ["t1"] and "la_access" in r.headers.get("set-cookie", "")
 
@@ -323,9 +328,9 @@ def test_only_admins_send_reset_links(client_as, monkeypatch):
     monkeypatch.setattr(auth, "send_password_reset", lambda email: sent.append(email))
     admin_post = lambda uid: client_as(ADMIN).post(f"/team/{uid}/update", headers={"HX-Request": "true"},
                                                    data={"action": "send_reset", "csrf_token": auth.csrf_token_for(ADMIN.user_id)})
-    assert "Reset link sent" in admin_post("id-active@acme.io").text and sent == ["active@acme.io"]
-    assert "Reactivate them first" in admin_post("id-gone@acme.io").text and sent == ["active@acme.io"]
-    r = client_as(MEMBER).post("/team/id-active@acme.io/update", headers={"HX-Request": "true"},
+    assert "Reset link sent" in admin_post(_uid("active@acme.io")).text and sent == ["active@acme.io"]
+    assert "Reactivate them first" in admin_post(_uid("gone@acme.io")).text and sent == ["active@acme.io"]
+    r = client_as(MEMBER).post(f"/team/{_uid('active@acme.io')}/update", headers={"HX-Request": "true"},
                                data={"action": "send_reset", "csrf_token": auth.csrf_token_for(MEMBER.user_id)})
     assert r.status_code == 403 and sent == ["active@acme.io"]
 
@@ -407,3 +412,38 @@ def test_runs_pagination_and_old_form_links(client_as, monkeypatch):
     assert r.status_code == 303 and "page=" in r.headers["location"]  # past the end: go to the last page
     old = c.get("/?objective=Find+SaaS")  # links from before the split still land on the form
     assert old.status_code == 303 and old.headers["location"].startswith("/runs/new?objective=")
+
+
+def test_a_rejected_password_keeps_the_reset_link_usable(client_as, monkeypatch):
+    """Supabase links are single-use: if the new password is refused, the page must keep the session (audit fix)."""
+    _people(monkeypatch, **{"active@acme.io": True})
+    monkeypatch.setattr(auth, "verify_access_token", lambda t: {"sub": _uid("active@acme.io")})
+
+    def refuse(*_a, **_k):
+        raise auth.AuthError("Choose a password you haven't used before.", 422)
+    monkeypatch.setattr(auth, "set_password", refuse)
+    r = client_as(None).post("/reset-password", data={"access_token": "tok-1", "refresh_token": "ref-1",
+                                                      "password": "new-password", "confirm": "new-password"})
+    assert r.status_code == 400 and 'value="tok-1"' in r.text and 'value="ref-1"' in r.text
+
+
+def test_a_deactivated_person_cannot_accept_an_old_invite(client_as, monkeypatch):
+    _people(monkeypatch, **{"gone@acme.io": False})
+    changed = []
+    monkeypatch.setattr(auth, "verify_access_token", lambda t: {"sub": _uid("gone@acme.io")})
+    monkeypatch.setattr(auth, "set_password", lambda *a, **k: changed.append(a))
+    r = client_as(None).post("/accept-invite", data={"access_token": "t", "full_name": "Gone", "password": "new-password",
+                                                     "confirm": "new-password"})
+    assert r.status_code == 403 and changed == []
+
+
+def test_bad_ids_are_404_not_500(client_as):
+    csrf = auth.csrf_token_for(ADMIN.user_id)
+    c = client_as(ADMIN)
+    assert c.post("/leads/not-a-uuid/review", data={"review_status": "approved", "csrf_token": csrf}).status_code == 404
+    assert c.post("/team/not-a-uuid/update", data={"action": "make_admin", "csrf_token": csrf}).status_code == 404
+
+
+def test_sign_in_redirect_keeps_the_query_string(client_as):
+    r = client_as(None).get("/runs/new?objective=US%20dental%20clinics", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/login?next=/runs/new%3Fobjective%3DUS%2520dental%2520clinics"

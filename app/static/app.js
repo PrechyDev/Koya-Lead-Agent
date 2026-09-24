@@ -67,24 +67,36 @@
   });
 
   // Drawer: close with Esc / backdrop / ✕, and return focus to the row that opened it.
-  var lastRow = null;
+  // The Leads tab re-renders while a run is live, so the row is remembered by its id, not as an element.
+  var lastRowId = null;
   document.addEventListener("click", function (event) {
     var row = event.target.closest("tr.clickable");
-    if (row) lastRow = row;
+    if (row) lastRowId = row.id || null;
     if (event.target.closest("[data-close-drawer]") || event.target.classList.contains("drawer-backdrop")) closeDrawer();
   });
   document.addEventListener("keydown", function (event) {
     if (event.key === "Escape") closeDrawer();
-    var row = event.target.closest && event.target.closest("tr.clickable");
-    if (row && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); row.click(); }
+    // Only when the row itself has focus: Enter on a link inside the row must follow the link.
+    if (event.target.matches && event.target.matches("tr.clickable") && (event.key === "Enter" || event.key === " ")) {
+      event.preventDefault();
+      event.target.click();
+    }
   });
   function closeDrawer() {
     var slot = document.getElementById("drawer");
     if (slot && slot.innerHTML.trim()) {
       slot.innerHTML = "";
-      if (lastRow) lastRow.focus();
+      var row = lastRowId && document.getElementById(lastRowId);
+      if (row) row.focus();
     }
   }
+  // Move focus into the drawer when it opens, so keyboard and screen-reader users land on it.
+  document.addEventListener("htmx:afterSwap", function (event) {
+    if (event.detail.target && event.detail.target.id === "drawer") {
+      var panel = event.detail.target.querySelector(".drawer");
+      if (panel) panel.focus();
+    }
+  });
 
   // Tabs: aria-selected follows the clicked tab.
   document.addEventListener("click", function (event) {
@@ -263,6 +275,43 @@
   window.addEventListener("pageshow", function () {
     document.querySelectorAll(".btn.is-loading").forEach(function (b) { b.classList.remove("is-loading"); b.disabled = false; });
     refreshAll();
+  });
+
+  // Warnings and errors: htmx 2 drops 4xx/5xx responses by default. Ours carry HX-Retarget (to the System
+  // Message bar), so show those; any other error response is still ignored rather than pasted into the page.
+  document.addEventListener("htmx:beforeSwap", function (event) {
+    var xhr = event.detail.xhr;
+    if (xhr && xhr.status >= 400 && xhr.getResponseHeader("HX-Retarget")) {
+      event.detail.shouldSwap = true;
+      event.detail.isError = false;
+    }
+  });
+
+  // Confirm before destructive buttons (data-confirm on the BUTTON). htmx's own hx-confirm is read from the
+  // form, not the clicked button, so a form with several buttons needs this. Capture phase = runs before htmx.
+  document.addEventListener("submit", function (event) {
+    var button = event.submitter;
+    var question = button && button.getAttribute("data-confirm");
+    if (question && !window.confirm(question)) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }
+  }, true);
+
+  // While an htmx form is sending, disable ALL its buttons (hx-disabled-elt="find button" only takes the first),
+  // then give back exactly the ones we disabled; buttons the server disabled stay disabled.
+  document.addEventListener("htmx:beforeRequest", function (event) {
+    var form = event.detail.elt;
+    if (!form || form.tagName !== "FORM" || form.hasAttribute("hx-disabled-elt")) return;
+    form.querySelectorAll("button").forEach(function (b) {
+      if (!b.disabled) { b.disabled = true; b.setAttribute("data-busy", ""); }
+    });
+  });
+  document.addEventListener("htmx:afterRequest", function (event) {
+    var form = event.detail.elt;
+    if (!form || form.tagName !== "FORM") return;
+    form.querySelectorAll("button[data-busy]").forEach(function (b) { b.disabled = false; b.removeAttribute("data-busy"); });
+    refreshForm(form);
   });
 
   // Lost connection (Render asleep, Wi-Fi drop): say so in the System Message bar instead of freezing silently.

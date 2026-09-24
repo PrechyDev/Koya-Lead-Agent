@@ -5,7 +5,7 @@
 <section class="card stack">
   <div class="row between">
     <h1>System issues</h1>
-    <form hx-post="/system/test-alert" hx-target="#system-message" hx-disabled-elt="find button">
+    <form hx-post="/system/test-alert" hx-target="#system-message">
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
       <button class="btn small" type="submit" {% if not webhook %}disabled title="Set ALERT_WEBHOOK_URL to enable email alerts"{% endif %}>
         <span class="when-idle">Send a test alert</span><span class="when-loading"><span class="spinner"></span> Sending…</span></button>
@@ -27,7 +27,7 @@
         <td class="small nums">{{ e.last_seen_at | ago }}{% if e.occurrences > 1 %}<div class="muted">×{{ e.occurrences }}</div>{% endif %}{% if e.notified_at %}<div class="muted">emailed</div>{% endif %}</td>
         <td>{% if e.run_id %}<a href="/runs/{{ e.run_id }}">View run</a>{% endif %}</td>
         <td>{% if not e.resolved_at %}
-          <form hx-post="/system/{{ e.id }}/resolve" hx-disabled-elt="find button">
+          <form hx-post="/system/{{ e.id }}/resolve">
             <input type="hidden" name="csrf_token" value="{{ csrf }}">
             <button class="btn small" type="submit">Mark fixed</button></form>{% endif %}</td>
       </tr>

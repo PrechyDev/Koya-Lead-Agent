@@ -53,11 +53,16 @@ def _banner(request: Request, kind: str, message: str, status: int = 200, retarg
                                       status_code=status, headers=headers)
 
 
-def _get_run_or_404(run_id: str) -> dict:
+def _require_uuid(value: str, what: str) -> None:
+    """IDs in URLs are UUIDs; anything else is a 404 (not a database error and a 500)."""
     try:
-        uuid.UUID(run_id)
+        uuid.UUID(value)
     except ValueError:
-        raise HTTPException(status_code=404, detail="Run not found.") from None
+        raise HTTPException(status_code=404, detail=f"{what} not found.") from None
+
+
+def _get_run_or_404(run_id: str) -> dict:
+    _require_uuid(run_id, "Run")
     run = db.get_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found.")
@@ -164,7 +169,11 @@ async def reset_password_page(request: Request):
 async def reset_password_submit(request: Request, access_token: str = Form(...), refresh_token: str = Form(""),
                                 password: str = Form(...), confirm: str = Form(...)):
     def fail(msg: str, status: int = 400):
-        return templates.TemplateResponse(request, "reset_password.html", _ctx(request, error=msg), status_code=status)
+        # Keep the (single-use) reset session on the page so the person can simply try another password;
+        # a rejected or expired link (401) is dropped, since it can't work anyway.
+        keep = {} if status == 401 else {"access_token": access_token, "refresh_token": refresh_token}
+        return templates.TemplateResponse(request, "reset_password.html", _ctx(request, error=msg, **keep),
+                                          status_code=status)
 
     if len(password) < MIN_PASSWORD_LENGTH or password != confirm:
         return fail(f"Passwords must match and be at least {MIN_PASSWORD_LENGTH} characters.")
@@ -196,8 +205,9 @@ async def accept_invite_page(request: Request):
 async def accept_invite_submit(request: Request, access_token: str = Form(...), refresh_token: str = Form(""),
                                full_name: str = Form(...), password: str = Form(...), confirm: str = Form(...)):
     def fail(msg: str, status: int = 400):
-        return templates.TemplateResponse(request, "accept_invite.html", _ctx(request, error=msg, full_name=full_name),
-                                          status_code=status)
+        keep = {} if status == 401 else {"access_token": access_token, "refresh_token": refresh_token}
+        return templates.TemplateResponse(request, "accept_invite.html",
+                                          _ctx(request, error=msg, full_name=full_name, **keep), status_code=status)
 
     full_name = full_name.strip()
     if not (1 <= len(full_name) <= 120):
@@ -211,6 +221,8 @@ async def accept_invite_submit(request: Request, access_token: str = Form(...), 
     member = await db.run(db.get_member, claims.get("sub", ""))
     if not member:
         return fail("This invite isn't for this app. Ask your admin to invite you here.", 403)
+    if not member["is_active"]:
+        return fail("Your access to this app has been removed. Ask an admin if you think that's a mistake.", 403)
     try:
         await db.run(auth.set_password, access_token, password, full_name)
     except auth.AuthError as exc:
@@ -332,6 +344,9 @@ async def create_run(request: Request, objective: str = Form(""),
     )
     if created:
         manager.start(str(run["id"]))
+        if parent and parent["status"] == "needs_clarification":
+            # The question is answered: the old run stops waiting (and leaves "Waiting for you" in the history).
+            await db.run(db.set_status, str(parent["id"]), "superseded", "Answered; continued in a follow-up run")
     return Response(status_code=204, headers={"HX-Redirect": f"/runs/{run['id']}"})
 
 
@@ -341,21 +356,19 @@ async def create_run(request: Request, objective: str = Form(""),
 @router.get("/runs/{run_id}", response_class=HTMLResponse)
 async def run_page(request: Request, run_id: str, tab: str = "leads", member: Member = Depends(current_member)):
     run = await db.run(_get_run_or_404, run_id)
-    duplicate = await db.run(db.get_run, str(run["duplicate_of_run_id"])) if run.get("duplicate_of_run_id") else None
     return templates.TemplateResponse(request, "run.html", _ctx(
-        request, run=run, tab=tab if tab in {"icp", "leads", "calls", "summary"} else "leads",
-        steps=stepper(run["status"], _last_active_step(run), run.get("usage")), duplicate=duplicate,
-        can_control=_can_control(member, run), idempotency_key=str(uuid.uuid4())))
+        request, run=run, tab=tab if tab in {"icp", "leads", "calls", "summary"} else "leads"))
 
 
 @router.get("/runs/{run_id}/live", response_class=HTMLResponse)
 async def run_live(request: Request, run_id: str, member: Member = Depends(current_member)):
     run = await db.run(_get_run_or_404, run_id)
-    counts = await db.run(db.lead_counts, run_id)
     duplicate = await db.run(db.get_run, str(run["duplicate_of_run_id"])) if run.get("duplicate_of_run_id") else None
+    follow_up = (await db.run(db.child_run, run_id)
+                 if run["status"] == "superseded" and run.get("repeat_choice") != "open_previous" else None)
     response = templates.TemplateResponse(request, "partials/run_live.html", _ctx(
-        request, run=run, counts=counts, steps=stepper(run["status"], _last_active_step(run), run.get("usage")),
-        can_control=_can_control(member, run), duplicate=duplicate, now=datetime.now(),
+        request, run=run, steps=stepper(run["status"], _last_active_step(run), run.get("usage")),
+        can_control=_can_control(member, run), duplicate=duplicate, follow_up=follow_up,
         admin_message=admin_message_from_detail(run.get("error_detail")) if member.is_admin else None))
     if run["status"] not in ACTIVE:
         response.status_code = 286  # HTMX: stop polling
@@ -435,10 +448,7 @@ async def cancel_run(request: Request, run_id: str, csrf_token: str = Form(""), 
 # ---------------------------------------------------------------------------
 @router.get("/leads/{lead_id}", response_class=HTMLResponse)
 async def lead_detail(request: Request, lead_id: str, member: Member = Depends(current_member)):
-    try:
-        uuid.UUID(lead_id)
-    except ValueError:
-        raise HTTPException(status_code=404, detail="Lead not found.") from None
+    _require_uuid(lead_id, "Lead")
     lead = await db.run(db.get_lead, lead_id)
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found.")
@@ -450,6 +460,7 @@ async def lead_detail(request: Request, lead_id: str, member: Member = Depends(c
 async def review_lead(request: Request, lead_id: str, review_status: str = Form(...), reviewer_note: str = Form(""),
                       csrf_token: str = Form(""), member: Member = Depends(current_member)):
     _check_csrf(request, member, csrf_token)
+    _require_uuid(lead_id, "Lead")
     if review_status not in {"approved", "rejected", "pending_review"}:
         raise HTTPException(status_code=400, detail="Unknown review decision.")
     lead = await db.run(db.get_lead, lead_id)
@@ -556,6 +567,7 @@ async def team_invite(request: Request, email: str = Form(...), full_name: str =
 async def team_update(request: Request, user_id: str, action: str = Form(...), csrf_token: str = Form(""),
                       member: Member = Depends(require_admin)):
     _check_csrf(request, member, csrf_token)
+    _require_uuid(user_id, "Member")
     if action == "send_reset":  # admin-triggered password reset (D-64)
         target = await db.run(db.get_member, user_id)
         if not target:
@@ -575,12 +587,14 @@ async def team_update(request: Request, user_id: str, action: str = Form(...), c
     if user_id == member.user_id and action in ("deactivate", "make_member"):
         return _banner(request, "warning", "You can't remove your own admin access. Ask another admin to do it.", 400)
     try:
-        await db.run(db.update_member, user_id, **fields)
+        updated = await db.run(db.update_member, user_id, **fields)
     except Exception as exc:  # the DB trigger protects the owner and the last admin (E-41)
         text = str(exc)
         reason = ("The owner can't be demoted or deactivated." if "owner" in text
                   else "At least one active admin must remain." if "admin" in text else "That change isn't allowed.")
         return _banner(request, "warning", reason, 400)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Member not found.")
     response = _banner(request, "success", "Team updated.")
     response.headers["HX-Trigger"] = "teamChanged"
     return response
@@ -624,10 +638,7 @@ async def system_page(request: Request, member: Member = Depends(require_admin))
 async def resolve_event(request: Request, event_id: str, csrf_token: str = Form(""),
                         member: Member = Depends(require_admin)):
     _check_csrf(request, member, csrf_token)
-    try:
-        uuid.UUID(event_id)
-    except ValueError:
-        raise HTTPException(status_code=404, detail="Issue not found.") from None
+    _require_uuid(event_id, "Issue")
     await db.run(alerts.resolve, event_id, member.user_id)
     health.clear_cache()  # re-check services on the next run after a fix
     return Response(status_code=204, headers={"HX-Redirect": "/system"})

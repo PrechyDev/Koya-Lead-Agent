@@ -16,7 +16,7 @@
   <div class="chips" role="group" aria-label="Filter by status">
     {% for key, label in [("", "All"), ("in_progress", "In progress"), ("needs_you", "Waiting for you"),
                           ("completed", "Completed"), ("partial", "Partial"), ("failed", "Failed"), ("cancelled", "Cancelled")] %}
-    <a class="chip" href="{{ filter_url(status=key, page=1) }}" aria-pressed="{{ 'true' if status == key else 'false' }}">{{ label }} ({{ counts.get(key or 'all', 0) }})</a>
+    <a class="chip" href="{{ filter_url(status=key, page=1) }}" {% if status == key %}aria-current="page"{% endif %}>{{ label }} ({{ counts.get(key or 'all', 0) }})</a>
     {% endfor %}
   </div>
   <form method="get" action="/" class="row" role="search">

@@ -214,6 +214,12 @@ def search_runs(*, group: str = "", created_by: str | None = None, q: str = "", 
 
 
 
+def child_run(parent_run_id: str) -> dict | None:
+    """The follow-up run started from a clarification answer, if any."""
+    return fetch_one(f"select id, status from {t('runs')} where parent_run_id = %s order by created_at limit 1",
+                     (parent_run_id,))
+
+
 def update_run(run_id: str, **fields: Any) -> dict | None:
     unknown = set(fields) - RUN_COLUMNS
     if unknown:
@@ -419,6 +425,8 @@ def update_lead(lead_id: str, **fields: Any) -> dict | None:
     unknown = set(fields) - LEAD_COLUMNS
     if unknown:
         raise ValueError(f"not updatable: {unknown}")
+    if not fields:
+        return get_lead(lead_id)
     sets = ", ".join(f"{k} = %s" for k in fields)
     return fetch_one(
         f"update {t('leads')} set {sets} where id = %s returning *",
@@ -531,16 +539,20 @@ def add_member(user_id: str, email: str, full_name: str, role: str, invited_by: 
     return fetch_one(
         f"""insert into {t('members')} (user_id, email, full_name, role, invited_by)
             values (%s, %s, %s, %s, %s)
-            on conflict (user_id) do update set is_active = true
+            on conflict (user_id) do update  -- re-inviting someone: back in, with the role/name chosen now
+              set is_active = true, role = excluded.role, full_name = excluded.full_name
             returning *""",
         (user_id, email.lower(), full_name, role, invited_by),
     )
 
 
-def update_member(user_id: str, **fields: Any) -> dict:
+def update_member(user_id: str, **fields: Any) -> dict | None:
+    """The updated row, or None when there is no such member."""
     unknown = set(fields) - MEMBER_COLUMNS
     if unknown:
         raise ValueError(f"not updatable: {unknown}")
+    if not fields:
+        return get_member(user_id)
     sets = ", ".join(f"{k} = %s" for k in fields)
     return fetch_one(f"update {t('members')} set {sets} where user_id = %s returning *",
                      (*fields.values(), user_id))

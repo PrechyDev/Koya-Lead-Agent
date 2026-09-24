@@ -5,6 +5,7 @@ from pathlib import Path
 
 from fastapi.templating import Jinja2Templates
 
+from app.config import get_settings
 from app.lib.icp_defaults import DEFAULT_LEAD_COUNT, DEFAULTS
 from app.lib.validation import EMAIL_PATTERN, MIN_PASSWORD_LENGTH, safe_url
 
@@ -31,7 +32,7 @@ STATUS_BADGES = {
     "discovering": ("info", "Discovering"), "researching": ("info", "Researching"), "drafting": ("info", "Drafting"),
     "finalizing": ("info", "Finalizing"), "completed": ("success", "✓ Completed"),
     "completed_partial": ("warning", "Partial"), "failed": ("danger", "✕ Failed"), "cancelled": ("neutral", "Cancelled"),
-    "superseded": ("neutral", "Opened previous"),
+    "superseded": ("neutral", "Replaced"),
 }
 
 STEPS = [("refine", "Refine ICP"), ("discover", "Discover"), ("research", "Research"), ("draft", "Draft"),
@@ -122,7 +123,8 @@ def stepper(status: str, last_active_step: int = 0, usage: dict | None = None) -
 
 templates.env.globals.update(badge=badge, ago=ago, money=money, ACTIVE=ACTIVE, EMAIL_PATTERN=EMAIL_PATTERN, shortfall_sentence=shortfall_sentence,
                             ICP_DEFAULTS=DEFAULTS, DEFAULT_LEAD_COUNT=DEFAULT_LEAD_COUNT,
-                            MIN_PASSWORD_LENGTH=MIN_PASSWORD_LENGTH)
+                            MIN_PASSWORD_LENGTH=MIN_PASSWORD_LENGTH,
+                            REUSE_DAYS=get_settings().research_reuse_days)
 templates.env.filters["money"] = money
 templates.env.filters["safe_url"] = safe_url
 templates.env.filters["ago"] = ago

@@ -7,8 +7,8 @@
   <p class="muted">Choose your name and a password. Passwords need at least {{ MIN_PASSWORD_LENGTH }} characters.</p>
   <div id="invite-missing" class="callout" hidden>This page needs the link from your invite email. Open the email and click the link again, or ask your admin for a new invite.</div>
   <form method="post" action="/accept-invite" class="stack" id="invite-form">
-    <input type="hidden" name="access_token" id="access_token">
-    <input type="hidden" name="refresh_token" id="refresh_token">
+    <input type="hidden" name="access_token" id="access_token" value="{{ access_token or '' }}">
+    <input type="hidden" name="refresh_token" id="refresh_token" value="{{ refresh_token or '' }}">
     <div class="field">
       <label for="full_name">Your name</label>
       <input id="full_name" name="full_name" type="text" maxlength="120" required value="{{ full_name or '' }}">

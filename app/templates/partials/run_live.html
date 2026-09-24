@@ -12,8 +12,11 @@
   {% set kind = "error" %}{% set message = run.error_message or "The run couldn't finish. Anything saved before the problem is kept below." %}{% include "partials/banner.html" %}
 {% elif run.status == "cancelled" %}
   {% set kind = "warning" %}{% set message = "This run was cancelled. Anything found before that is kept below." %}{% include "partials/banner.html" %}
-{% elif run.status == "superseded" %}
+{% elif run.status == "superseded" and run.repeat_choice == "open_previous" %}
   {% set kind = "info" %}{% set message = "You chose to open the previous matching run instead of paying for a new one." %}{% include "partials/banner.html" %}
+{% elif run.status == "superseded" %}
+  {% set kind = "info" %}{% set message = "You answered the question, so the research continues in a follow-up run." %}{% include "partials/banner.html" %}
+  {% if follow_up %}<p><a class="btn small" href="/runs/{{ follow_up.id }}">Open the follow-up run →</a></p>{% endif %}
 {% endif %}
 
 {% if member and member.is_admin and (admin_message or run.error_detail) %}
@@ -38,7 +41,7 @@
   <div class="row">
     {% if run.status in ACTIVE %}<span id="live-stamp" class="live-stamp">Updating every few seconds</span>{% endif %}
     {% if can_control and run.status in ACTIVE %}
-    <form hx-post="/runs/{{ run.id }}/cancel" hx-confirm="Cancel this run? Work done so far is kept." hx-disabled-elt="find button" hx-target="#system-message">
+    <form hx-post="/runs/{{ run.id }}/cancel" hx-confirm="Cancel this run? Work done so far is kept." hx-target="#system-message">
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
       <button class="btn danger small" type="submit"><span class="when-idle">Cancel run</span><span class="when-loading"><span class="spinner"></span> Cancelling…</span></button>
     </form>
@@ -55,7 +58,7 @@
   <header class="row between">
     <h2 id="gate-title">You've researched this before</h2>
     {% if can_control %}
-    <form hx-post="/runs/{{ run.id }}/confirm" hx-disabled-elt="find button">
+    <form hx-post="/runs/{{ run.id }}/confirm">
       <input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="choice" value="cancel">
       <button class="btn small modal-close" type="submit" aria-label="Cancel and go back" data-modal-cancel>✕</button>
     </form>
@@ -69,9 +72,9 @@
   <div class="modal-choices">
     {% for choice, label, help, cls in [
         ("open_previous", "Open the earlier results", "Free. Go straight to what was already found.", "primary"),
-        ("find_new", "Find new companies", "A fresh search that skips companies researched in the last 30 days.", ""),
+        ("find_new", "Find new companies", "A fresh search that skips companies researched in the last " ~ REUSE_DAYS ~ " days.", ""),
         ("refresh_same", "Refresh the same companies", "Research them again with up-to-date information. Costs a full run.", "")] %}
-    <form hx-post="/runs/{{ run.id }}/confirm" hx-disabled-elt="find button" class="modal-choice">
+    <form hx-post="/runs/{{ run.id }}/confirm" class="modal-choice">
       <input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="choice" value="{{ choice }}">
       <button class="btn {{ cls }}" type="submit"><span class="when-idle">{{ label }}</span><span class="when-loading"><span class="spinner"></span> Working…</span></button>
       <span class="help">{{ help }}</span>
@@ -79,7 +82,7 @@
     {% endfor %}
   </div>
   <footer class="row">
-    <form hx-post="/runs/{{ run.id }}/confirm" hx-disabled-elt="find button">
+    <form hx-post="/runs/{{ run.id }}/confirm">
       <input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="choice" value="cancel">
       <button class="btn" type="submit"><span class="when-idle">Cancel and edit my objective</span><span class="when-loading"><span class="spinner"></span> Going back…</span></button>
     </form>
@@ -99,7 +102,7 @@
   </header>
   <p>{{ run.clarification_question }}</p>
   <p class="small muted">Nothing has been spent on searching yet.</p>
-  <form hx-post="/runs" hx-disabled-elt="find button" class="stack">
+  <form hx-post="/runs" class="stack">
     <input type="hidden" name="csrf_token" value="{{ csrf }}">
     <input type="hidden" name="idempotency_key" value="clarify-{{ run.id }}">
     <input type="hidden" name="parent_run_id" value="{{ run.id }}">

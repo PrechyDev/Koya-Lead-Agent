@@ -1,7 +1,7 @@
 {% set b = badge(lead.qualification_status) %}{% set o = badge(lead.outreach_status) %}{% set r = badge(lead.review_status) %}
 {% set d = lead.discovery_data or {} %}
 <div class="drawer-backdrop" data-close-drawer></div>
-<aside class="drawer" role="dialog" aria-modal="true" aria-labelledby="lead-title">
+<aside class="drawer" role="dialog" aria-modal="true" aria-labelledby="lead-title" tabindex="-1">
   <header>
     <div class="row between">
       <div class="stack" style="gap: 2px;">
@@ -127,7 +127,7 @@
 
   {% if lead.outreach_status == 'drafted' %}
   <footer>
-    <form hx-post="/leads/{{ lead.id }}/review" hx-target="#drawer" hx-swap="innerHTML" hx-disabled-elt="find button" class="stack">
+    <form hx-post="/leads/{{ lead.id }}/review" hx-target="#drawer" hx-swap="innerHTML" class="stack">
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
       <div class="field"><label for="note-{{ lead.id }}">Reviewer note <span class="small muted">(required to reject)</span></label>
         <textarea id="note-{{ lead.id }}" name="reviewer_note" style="min-height: 56px;">{{ lead.reviewer_note or '' }}</textarea></div>
@@ -140,7 +140,7 @@
         {% endif %}
         {% if lead.review_status != 'rejected' %}
         <button class="btn danger" type="submit" name="review_status" value="rejected" data-requires="note-{{ lead.id }}"
-          hx-confirm="Reject these drafts?">Reject</button>
+          data-confirm="Reject these drafts?">Reject</button>
         {% else %}
         <span class="badge danger">✕ Rejected{% if lead.reviewed_by_name %} by {{ lead.reviewed_by_name }}{% endif %}</span>
         {% endif %}

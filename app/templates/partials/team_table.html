@@ -10,7 +10,7 @@
         <td><span class="badge {{ 'info' if m.role == 'admin' else 'outline' }}">{{ m.role }}</span></td>
         <td><span class="badge {{ 'success' if m.is_active else 'neutral' }}">{{ 'Active' if m.is_active else 'Deactivated' }}</span></td>
         <td>
-          <form class="row" hx-post="/team/{{ m.user_id }}/update" hx-target="#system-message" hx-disabled-elt="find button">
+          <form class="row" hx-post="/team/{{ m.user_id }}/update" hx-target="#system-message">
             <input type="hidden" name="csrf_token" value="{{ csrf }}">
             {% if m.role == 'member' %}
             <button class="btn small" type="submit" name="action" value="make_admin">Make admin</button>
@@ -19,8 +19,8 @@
             {% endif %}
             {% if m.is_active %}
             <button class="btn small" type="submit" name="action" value="send_reset"
-              hx-confirm="Email {{ m.full_name }} a link to choose a new password? It changes their password for every Koya tool.">Send reset link</button>
-            <button class="btn small danger" type="submit" name="action" value="deactivate" hx-confirm="Deactivate {{ m.full_name }}? They lose access immediately."
+              data-confirm="Email {{ m.full_name }} a link to choose a new password? It changes their password for every Koya tool.">Send reset link</button>
+            <button class="btn small danger" type="submit" name="action" value="deactivate" data-confirm="Deactivate {{ m.full_name }}? They lose access immediately."
               {% if protected or m.user_id|string == member.user_id %}disabled title="{{ 'You can’t deactivate yourself' if m.user_id|string == member.user_id else ('The owner can’t be deactivated' if m.is_owner else 'At least one active admin must remain') }}"{% endif %}>Deactivate</button>
             {% else %}
             <button class="btn small" type="submit" name="action" value="reactivate">Reactivate</button>

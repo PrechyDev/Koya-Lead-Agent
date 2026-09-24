@@ -4,6 +4,7 @@ import logging
 import uuid as _uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import quote
 
 import psycopg
 from fastapi import FastAPI, HTTPException, Request
@@ -82,13 +83,15 @@ class AuthMiddleware(BaseHTTPMiddleware):
             if claims:
                 request.state.member = await db.run(auth.load_member, claims.get("sub", ""))
                 request.state.claims = claims
-            if claims and request.state.member is None and not path.startswith(PUBLIC_PATHS):
+            if claims and request.state.member is None and not path.startswith(PUBLIC_PATHS) and path != "/logout":
                 response = templates.TemplateResponse(request, "error.html", {
                     "title": "No access", "message": "Your account doesn't have access to this app, or it was "
-                    "deactivated. Ask an admin to invite you."}, status_code=403)
+                    "deactivated. Ask an admin to invite you.", "no_access": True}, status_code=403)
                 return response
         if request.state.member is None and not path.startswith(PUBLIC_PATHS) and path != "/logout":
-            target = f"/login?next={request.url.path}"
+            # Keep the query string (a filtered Runs view, a prefilled New run) and encode it as one parameter.
+            wanted = request.url.path + (f"?{request.url.query}" if request.url.query else "")
+            target = f"/login?next={quote(wanted, safe='/')}"
             if _is_htmx(request):
                 return HTMLResponse("", status_code=401, headers={"HX-Redirect": target})
             return RedirectResponse(target, status_code=303)
