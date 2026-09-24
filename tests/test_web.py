@@ -54,14 +54,14 @@ def test_logged_out_is_redirected_and_public_pages_work(client_as, monkeypatch):
 
 
 def test_home_renders_form_with_states(client_as):
-    r = client_as(ADMIN).get("/")
+    r = client_as(ADMIN).get("/runs/new")
     assert r.status_code == 200
     html = r.text
     assert 'id="start-run"' in html and "disabled" in html            # disabled until valid, with a reason
     assert "Enter at least 5 characters" not in html  # an empty box shows no message; the button is just disabled
     assert "Nothing is sent from this app" in html and "Claude budget" not in html  # budget lives on Spend
     assert "Limits:" not in html and "PRD" not in html  # no cost limits or internal jargon on the home page
-    assert "Test mode" not in client_as(MEMBER).get("/").text  # members never see test-mode details
+    assert "Test mode" not in client_as(MEMBER).get("/runs/new").text  # members never see test-mode details
 
 
 def test_member_cannot_open_admin_pages(client_as):
@@ -374,6 +374,36 @@ def test_repeat_check_is_a_dialog_and_cancel_returns_to_the_form(client_as, paus
     assert 'role="dialog"' in html and "data-modal-cancel" in html and "Find new companies" in html
     r = c.post(f"/runs/{paused_run}/confirm", headers={"HX-Request": "true"},
                data={"choice": "cancel", "csrf_token": auth.csrf_token_for(ADMIN.user_id)})
-    assert r.status_code == 204 and r.headers["HX-Redirect"].startswith("/?objective=Find+US+B2B+SaaS")
+    assert r.status_code == 204 and r.headers["HX-Redirect"].startswith("/runs/new?objective=Find+US+B2B+SaaS")
     home = c.get(r.headers["HX-Redirect"]).text
     assert ">Find US B2B SaaS companies with 10 to 100 staff</textarea>" in home  # objective filled back in
+
+
+
+# --- Runs history: filters + pagination; the form lives on its own page -----------------------------------
+def test_runs_page_lists_history_with_filters_and_a_new_run_button(client_as, paused_run):
+    c = client_as(ADMIN)
+    page = c.get("/").text
+    assert 'href="/runs/new"' in page and "New run" in page and 'id="new-run-title"' not in page
+    waiting = c.get("/?status=needs_you").text
+    assert paused_run in waiting and "Waiting for you (" in waiting
+    assert paused_run not in c.get("/?status=completed").text
+    assert paused_run in c.get("/?q=10+to+100+staff").text and paused_run not in c.get("/?q=zzz-no-match").text
+    assert "No runs match these filters" in c.get("/?q=zzz-no-match").text
+    assert c.get("/?q=100%25").status_code == 200  # a literal % in the search is fine (escaped, not a wildcard)
+
+
+def test_runs_pagination_and_old_form_links(client_as, monkeypatch):
+    from app.web import routes
+    monkeypatch.setattr(routes, "RUNS_PER_PAGE", 2)
+    c = client_as(ADMIN)
+    total = db.search_runs()[1]
+    if total <= 2:
+        pytest.skip("needs more than 2 runs in the database")
+    first = c.get("/").text
+    assert "Showing 1–2 of" in first and "Next →</a>" in first and 'aria-disabled="true">← Previous' in first
+    assert "Showing 3–4 of" in c.get("/?page=2").text
+    r = c.get("/?page=999")
+    assert r.status_code == 303 and "page=" in r.headers["location"]  # past the end: go to the last page
+    old = c.get("/?objective=Find+SaaS")  # links from before the split still land on the form
+    assert old.status_code == 303 and old.headers["location"].startswith("/runs/new?objective=")

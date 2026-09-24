@@ -1,6 +1,8 @@
 {% extends "base.html" %}
 {% set active_nav = "runs" %}
+{% block title %}New research run · Koya Lead Research Agent{% endblock %}
 {% block content %}
+<p><a class="btn small" href="/">← All runs</a></p>
 <section class="card" aria-labelledby="new-run-title">
   <h1 id="new-run-title">New research run</h1>
   {# hx-disinherit: the objective box's "ran this before" hint request must not inherit hx-disabled-elt, or HTMX
@@ -57,32 +59,5 @@
     </div>
     <p class="help">Nothing is sent from this app: your team reviews every draft and sends it themselves.</p>
   </form>
-</section>
-
-
-<section class="card" aria-labelledby="runs-title">
-  <h2 id="runs-title">Recent runs</h2>
-  {% if runs %}
-  <div class="table-wrap">
-    <table>
-      <thead><tr><th>Objective</th><th>Status</th><th>Qualified</th><th>By</th><th>Started</th><th></th></tr></thead>
-      <tbody>
-      {% for r in runs %}
-        {% set b = badge(r.status) %}
-        <tr class="clickable" tabindex="0" onclick="window.location='/runs/{{ r.id }}'">
-          <td>{{ r.objective[:110] }}{% if r.objective|length > 110 %}…{% endif %}</td>
-          <td><span class="badge {{ b[0] }}">{{ b[1] }}</span></td>
-          <td class="nums">{{ (r.usage or {}).get('qualified', 0) }} / {{ (r.limits or {}).get('target_qualified', '—') }}</td>
-          <td>{{ r.created_by_name or ('script' if r.run_kind == 'dev' else '—') }}</td>
-          <td class="small muted">{{ r.created_at | ago }}</td>
-          <td></td>
-        </tr>
-      {% endfor %}
-      </tbody>
-    </table>
-  </div>
-  {% else %}
-  <div class="empty">No runs yet. Start one above.</div>
-  {% endif %}
 </section>
 {% endblock %}

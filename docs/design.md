@@ -100,23 +100,10 @@ Status badge mapping (use everywhere):
 
 ## 4. Screens
 
-### 4.1 Home (`/`)
-```
-┌ Header: "Koya Lead Research Agent"            [Runs history] ┐
-├ System Message bar (only when there's something to say)      ┤
-│ ┌ New research run ─────────────────────────────────────────┐ │
-│ │ Qualification objective  [ textarea, 5–1000 chars, counter]│ │
-│ │ Examples: (chip: vague) (chip: specific)  ← fill textarea  │ │
-│ │ ▸ What we assume when you leave something out (defaults)   │ │
-│ │ Limits (read-only): ≤20 companies · ≤20 pages · $1.25 AI   │ │
-│ │                                   [ Start research run ]   │ │
-│ │ "Drafts are never sent. A human reviews everything."       │ │
-│ └────────────────────────────────────────────────────────────┘ │
-│ Recent runs table: objective · status badge · qualified/target · date · ›  │
-└──────────────────────────────────────────────────────────────┘
-```
-- Start is disabled until the objective has at least 5 words (the same rule as the server). No message for an empty box; once something is typed, "Describe the companies in at least 5 words." appears under the box. While a run is active it is disabled with "A run is in progress — view it" (link).
-- Inline field errors go under the field in red. Server errors go in the System Message bar.
+### 4.1 Runs (`/`) and New run (`/runs/new`)
+- **Runs** is the history page: title + **[+ New run]** (primary) at the top; status filter chips with counts (All · In progress · Waiting for you · Completed · Partial · Failed · Cancelled); a search box for objectives and an "Only my runs" checkbox; the table (objective · status badge · qualified/target · by · started · ›); "Showing 21–40 of 57" with [← Previous] [Next →] (disabled at the ends). Empty states: "No runs yet. Start your first run" / "No runs match these filters. Clear filters". Every filter is part of the URL, so views can be bookmarked and Back works.
+- **New run** is the form on its own page (← All runs): objective box (5+ words; message under the box), example chips (Broad, Specific), "What we assume when you leave something out", admins see a Test mode line while test limits are on, [Start research run]. No cost limits or budget here.
+- **Waiting for you** (repeat check, clarification): a full-screen dialog over the run page. The main choice has focus; ✕, [Cancel and edit my objective] and Esc go back to New run with the objective filled in. The progress bar shows the step as "waiting for you" (!) instead of spinning.
 
 ### 4.2 Run page (`/runs/:id`)
 ```

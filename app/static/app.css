@@ -119,7 +119,7 @@ input.invalid:focus, input.invalid:focus-visible, textarea.invalid:focus, textar
 
 /* ---------- Forms (zone 2: controls) ---------- */
 label { font-weight: 600; display: block; margin-bottom: 4px; }
-input[type=text], input[type=email], input[type=password], input[type=number], textarea, select {
+input[type=text], input[type=email], input[type=password], input[type=number], input[type=search], textarea, select {
   width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius);
   background: var(--surface); color: var(--text); font: inherit; }
 input:hover, textarea:hover, select:hover { border-color: var(--text-muted); }
@@ -153,6 +153,7 @@ table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
 th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
 th { background: var(--surface-2); font-size: 0.8rem; text-transform: uppercase; letter-spacing: .03em; color: var(--text-muted); }
 tr:last-child td { border-bottom: 0; }
+a.chip { text-decoration: none; display: inline-flex; align-items: center; }
 tr.clickable { cursor: pointer; }
 tr.clickable:hover { background: var(--row-hover); }
 tr.clickable td:last-child::after { content: "›"; float: right; color: var(--text-muted); font-weight: 700; }
@@ -200,7 +201,8 @@ ul.clean { margin: 0; padding-left: 18px; }
 .modal { position: fixed; z-index: 51; top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(560px, calc(100% - 32px));
   max-height: calc(100vh - 48px); overflow-y: auto; background: var(--surface); border: 1px solid var(--border);
   border-radius: 12px; padding: 20px 22px; box-shadow: 0 20px 50px rgba(0,0,0,0.35); display: flex; flex-direction: column; gap: 12px; }
-.modal h2 { margin: 0; font-size: 1.2rem; }
+.modal header { flex-wrap: nowrap; gap: 12px; align-items: flex-start; }
+.modal h2 { margin: 0; font-size: 1.2rem; flex: 1; }
 .modal p { margin: 0; }
 .modal-choices { display: flex; flex-direction: column; gap: 10px; }
 .modal-choice { display: flex; flex-direction: column; gap: 4px; }

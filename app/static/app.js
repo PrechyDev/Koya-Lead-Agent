@@ -287,7 +287,9 @@
     var modal = document.querySelector("[data-modal]");
     document.body.classList.toggle("modal-open", Boolean(modal));
     if (modal && !modal.contains(document.activeElement)) {
-      var first = modal.querySelector(".btn.primary, textarea, .btn");
+      // In priority order (a combined selector would return the ✕ first, in page order): the answer box, then
+      // the main choice. Pressing Enter must never cancel by accident.
+      var first = modal.querySelector("textarea") || modal.querySelector(".btn.primary");
       if (first) first.focus();
     }
   }

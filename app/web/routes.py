@@ -226,15 +226,46 @@ async def accept_invite_submit(request: Request, access_token: str = Form(...), 
 # ---------------------------------------------------------------------------
 # Home + run creation
 # ---------------------------------------------------------------------------
+RUNS_PER_PAGE = 20
+
+
 @router.get("/", response_class=HTMLResponse)
-async def home(request: Request, objective: str = "", member: Member = Depends(current_member)):
+async def runs_history(request: Request, status: str = "", q: str = "", mine: str = "", page: int = 1,
+                       objective: str = "", member: Member = Depends(current_member)):
+    """The Runs page: history with status filters, 'only mine', objective search and pagination."""
+    if objective:  # old "back to the form" links: the form now lives at /runs/new
+        return RedirectResponse("/runs/new?" + urlencode({"objective": objective}), status_code=303)
+    status = status if status in db.RUN_STATUS_GROUPS else ""
+    q, only_mine = q.strip()[:100], mine == "1"
+    page = max(1, page)
+    runs, total, counts = await db.run(db.search_runs, group=status, created_by=member.user_id if only_mine else None,
+                                       q=q, limit=RUNS_PER_PAGE, offset=(page - 1) * RUNS_PER_PAGE)
+    pages = max(1, -(-total // RUNS_PER_PAGE))
+    if page > pages:  # e.g. a filter shrank the list: go to its last page
+        return RedirectResponse(_history_url(status=status, q=q, mine=only_mine, page=pages), status_code=303)
+
+    def filter_url(**change) -> str:
+        current = {"status": status, "q": q, "mine": only_mine, "page": page, **change}
+        return _history_url(**current)
+
+    return templates.TemplateResponse(request, "history.html", _ctx(
+        request, runs=runs, total=total, counts=counts, status=status, q=q, mine=only_mine, page=page, pages=pages,
+        first=(page - 1) * RUNS_PER_PAGE + 1 if total else 0, last=min(page * RUNS_PER_PAGE, total),
+        filter_url=filter_url, active=await db.run(db.active_run)))
+
+
+def _history_url(*, status: str = "", q: str = "", mine: bool = False, page: int = 1) -> str:
+    params = {k: v for k, v in {"status": status, "q": q, "mine": "1" if mine else "", "page": page if page > 1 else ""}.items() if v}
+    return "/" + ("?" + urlencode(params) if params else "")
+
+
+@router.get("/runs/new", response_class=HTMLResponse)  # declared before /runs/{run_id}, or "new" would be an id
+async def new_run_page(request: Request, objective: str = "", member: Member = Depends(current_member)):
     settings = get_settings()
-    runs = await db.run(db.list_runs, 30)
-    runs = [r for r in runs if r["run_kind"] != "eval_record"]
     active = await db.run(db.active_run)
     mine_today = await db.run(db.count_full_runs_today, member.user_id)
-    return templates.TemplateResponse(request, "home.html", _ctx(
-        request, runs=runs, active=active, prefill=objective.strip()[:1000],
+    return templates.TemplateResponse(request, "new_run.html", _ctx(
+        request, active=active, prefill=objective.strip()[:1000],
         limits=limits_for_run(10, dev=settings.dev_limits), mine_today=mine_today, daily_cap=_daily_cap(member),
         idempotency_key=str(uuid.uuid4())))
 
@@ -374,7 +405,7 @@ async def confirm_repeat(request: Request, run_id: str, choice: str = Form(...),
     if choice == "cancel":
         await db.run(db.set_status, run_id, "cancelled", "Cancelled at the repeat check", repeat_choice="cancel")
         # Back to the new-run form, objective filled in, so the person can adjust it and try again.
-        return Response(status_code=204, headers={"HX-Redirect": "/?" + urlencode({"objective": run["objective"]})})
+        return Response(status_code=204, headers={"HX-Redirect": "/runs/new?" + urlencode({"objective": run["objective"]})})
     if choice not in {"find_new", "refresh_same"}:
         raise HTTPException(status_code=400, detail="Unknown choice.")
     if manager.active_count():

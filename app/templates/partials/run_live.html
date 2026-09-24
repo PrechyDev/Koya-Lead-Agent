@@ -95,7 +95,7 @@
 <div class="modal" role="dialog" aria-modal="true" aria-labelledby="clarify-title" data-modal>
   <header class="row between">
     <h2 id="clarify-title">A little more detail, please</h2>
-    <a class="btn small modal-close" href="/?objective={{ run.objective | urlencode }}" aria-label="Cancel and go back" data-modal-cancel>✕</a>
+    <a class="btn small modal-close" href="/runs/new?objective={{ run.objective | urlencode }}" aria-label="Cancel and go back" data-modal-cancel>✕</a>
   </header>
   <p>{{ run.clarification_question }}</p>
   <p class="small muted">Nothing has been spent on searching yet.</p>
@@ -109,7 +109,7 @@
     </div>
     <div class="row">
       <button class="btn primary" type="submit"><span class="when-idle">Continue with this answer</span><span class="when-loading"><span class="spinner"></span> Starting…</span></button>
-      <a class="btn" href="/?objective={{ run.objective | urlencode }}">Cancel</a>
+      <a class="btn" href="/runs/new?objective={{ run.objective | urlencode }}">Cancel</a>
     </div>
   </form>
 </div>

@@ -167,6 +167,51 @@ def get_run(run_id: str) -> dict | None:
     return fetch_one(f"select * from {t('runs')} where id = %s", (run_id,))
 
 
+# Run history filters (the Runs page). eval_record runs are internal and never listed.
+RUN_STATUS_GROUPS: dict[str, tuple[str, ...]] = {
+    "in_progress": ("queued", "refining_icp", "discovering", "researching", "drafting", "finalizing"),
+    "needs_you": ("awaiting_confirmation", "needs_clarification"),
+    "completed": ("completed",),
+    "partial": ("completed_partial",),
+    "failed": ("failed",),
+    "cancelled": ("cancelled", "superseded"),
+}
+
+
+def _run_filters(created_by: str | None, q: str) -> tuple[str, list]:
+    where, params = ["r.run_kind <> 'eval_record'"], []
+    if created_by:
+        where.append("r.created_by = %s")
+        params.append(created_by)
+    if q:
+        # ILIKE with the user's text as a literal: escape the LIKE wildcards % and _.
+        where.append(r"r.objective ilike %s escape '\'")
+        params.append("%" + q.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_") + "%")
+    return " and ".join(where), params
+
+
+def search_runs(*, group: str = "", created_by: str | None = None, q: str = "", limit: int = 20,
+                offset: int = 0) -> tuple[list[dict], int, dict[str, int]]:
+    """(page of runs, total matching, count per status group) for the Runs page."""
+    base, params = _run_filters(created_by, q)
+    counts_rows = fetch_all(f"select r.status, count(*) as n from {t('runs')} r where {base} group by r.status", params)
+    by_status = {row["status"]: int(row["n"]) for row in counts_rows}
+    counts = {g: sum(by_status.get(s, 0) for s in statuses) for g, statuses in RUN_STATUS_GROUPS.items()}
+    counts["all"] = sum(by_status.values())
+    where, page_params = base, list(params)
+    if group in RUN_STATUS_GROUPS:
+        where += " and r.status = any(%s)"
+        page_params.append(list(RUN_STATUS_GROUPS[group]))
+    total = counts.get(group, counts["all"]) if group in RUN_STATUS_GROUPS else counts["all"]
+    rows = fetch_all(
+        f"""select r.*, m.full_name as created_by_name
+            from {t('runs')} r left join {t('members')} m on m.user_id = r.created_by
+            where {where} order by r.created_at desc limit %s offset %s""",
+        page_params + [limit, offset],
+    )
+    return rows, total, counts
+
+
 def list_runs(limit: int = 50) -> list[dict]:
     return fetch_all(
         f"""select r.*, m.full_name as created_by_name

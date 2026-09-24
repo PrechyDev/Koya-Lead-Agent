@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% set active_nav = "runs" %}
+{% block title %}Runs · Koya Lead Research Agent{% endblock %}
+{% block content %}
+<section class="card stack" aria-labelledby="runs-title">
+  <div class="row between">
+    <h1 id="runs-title" style="margin: 0;">Runs</h1>
+    <a class="btn primary" href="/runs/new">+ New run</a>
+  </div>
+  {% if active %}
+  <p class="small">A run is in progress: <a href="/runs/{{ active.id }}">{{ active.objective[:80] }}{% if active.objective|length > 80 %}…{% endif %}</a>.
+    Only one runs at a time.</p>
+  {% endif %}
+
+  {# Filters are plain links and a GET form, so every view has its own address (bookmarkable, Back button works). #}
+  <div class="chips" role="group" aria-label="Filter by status">
+    {% for key, label in [("", "All"), ("in_progress", "In progress"), ("needs_you", "Waiting for you"),
+                          ("completed", "Completed"), ("partial", "Partial"), ("failed", "Failed"), ("cancelled", "Cancelled")] %}
+    <a class="chip" href="{{ filter_url(status=key, page=1) }}" aria-pressed="{{ 'true' if status == key else 'false' }}">{{ label }} ({{ counts.get(key or 'all', 0) }})</a>
+    {% endfor %}
+  </div>
+  <form method="get" action="/" class="row" role="search">
+    <input type="hidden" name="status" value="{{ status }}">
+    <label for="q" class="sr-only">Search objectives</label>
+    <input id="q" name="q" type="search" value="{{ q }}" placeholder="Search objectives, e.g. healthcare" style="width: 100%; max-width: 340px;">
+    <label class="row small" style="gap: 6px;"><input type="checkbox" name="mine" value="1" {% if mine %}checked{% endif %}
+      onchange="this.form.submit()"> Only my runs</label>
+    <button class="btn" type="submit">Search</button>
+    {% if q or mine or status %}<a class="btn small" href="/">Clear filters</a>{% endif %}
+  </form>
+
+  {% if runs %}
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Objective</th><th>Status</th><th>Qualified</th><th>By</th><th>Started</th><th></th></tr></thead>
+      <tbody>
+      {% for r in runs %}
+        {% set b = badge(r.status) %}
+        <tr class="clickable" tabindex="0" onclick="window.location='/runs/{{ r.id }}'">
+          <td>{{ r.objective[:110] }}{% if r.objective|length > 110 %}…{% endif %}</td>
+          <td><span class="badge {{ b[0] }}">{{ b[1] }}</span></td>
+          <td class="nums">{{ (r.usage or {}).get('qualified', 0) }} / {{ (r.limits or {}).get('target_qualified', '—') }}</td>
+          <td>{{ r.created_by_name or ('script' if r.run_kind == 'dev' else '—') }}</td>
+          <td class="small muted">{{ r.created_at | ago }}</td>
+          <td></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <nav class="row between" aria-label="Pages">
+    <span class="small muted nums">Showing {{ first }}–{{ last }} of {{ total }}</span>
+    <div class="row">
+      {% if page > 1 %}<a class="btn small" href="{{ filter_url(page=page - 1) }}">← Previous</a>
+      {% else %}<span class="btn small" aria-disabled="true">← Previous</span>{% endif %}
+      <span class="small muted">Page {{ page }} of {{ pages }}</span>
+      {% if page < pages %}<a class="btn small" href="{{ filter_url(page=page + 1) }}">Next →</a>
+      {% else %}<span class="btn small" aria-disabled="true">Next →</span>{% endif %}
+    </div>
+  </nav>
+  {% elif counts.get('all', 0) == 0 and not q and not mine %}
+  <div class="empty">No runs yet. <a href="/runs/new">Start your first run</a>.</div>
+  {% else %}
+  <div class="empty">No runs match these filters. <a href="/">Clear filters</a></div>
+  {% endif %}
+</section>
+{% endblock %}
