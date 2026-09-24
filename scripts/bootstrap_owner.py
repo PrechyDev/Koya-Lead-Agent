@@ -40,7 +40,7 @@ def main() -> int:
     if user_id:
         log.info(f"{email} already has an account in this project: adding membership (no email sent).")
     elif args.invite:
-        user_id, _ = auth.invite_user(email, args.full_name)
+        user_id, _ = auth.invite_user(email, args.full_name, role="member" if args.member else "admin")
         log.info(f"Invite email sent to {email}. They'll set a password at /accept-invite.")
     else:
         log.info(f"No account exists for {email}. Re-run with --invite to send an invite email.")

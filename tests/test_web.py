@@ -327,3 +327,20 @@ def test_only_admins_send_reset_links(client_as, monkeypatch):
     r = client_as(MEMBER).post("/team/id-active@acme.io/update", headers={"HX-Request": "true"},
                                data={"action": "send_reset", "csrf_token": auth.csrf_token_for(MEMBER.user_id)})
     assert r.status_code == 403 and sent == ["active@acme.io"]
+
+
+def test_invites_carry_the_details_the_shared_email_template_uses(monkeypatch):
+    """One Supabase invite template serves every Koya tool, filled in from what each tool sends (D-65)."""
+    from types import SimpleNamespace
+    sent = {}
+    def fake_post(url, **kw):
+        sent.update(kw["json"])
+        return SimpleNamespace(status_code=200, json=lambda: {"id": "u1"})
+    monkeypatch.setattr(auth.httpx, "post", fake_post)
+    auth.invite_user("ada@acme.io", "Ada Obi", role="member", invited_by_name="Precious Okafor")
+    data = sent["data"]
+    assert data["app_name"] == "Koya Lead Research Agent" and data["invited_by_name"] == "Precious Okafor"
+    assert data["role"] == "member" and data["full_name"] == "Ada Obi" and data["app_tagline"]
+    assert data["invited_to"] == "lead_agent"  # Week 4's trigger guard still sees it (D-26)
+    auth.invite_user("b@acme.io", "B")
+    assert "invited_by_name" not in sent["data"]  # nothing empty is sent (the template falls back instead)

@@ -44,10 +44,10 @@ headers are served; idle memory is **122 MB** (Render free allows 512 MB); a DEV
 2. Authentication → Sign-ups: keep **invite-only** (no public sign-up).
 3. **Leave the Site URL as it is** (it's shared by every tool in the project and is only a fallback). Put every Lead
    Agent address in **Redirect URLs** instead, e.g. `https://<service>.onrender.com/**` and `http://localhost:8001/**`.
-4. Authentication → Emails → Templates: paste `docs/email-templates/invite.html` into **Invite user** (subject "You're
-   invited to Koya's internal tools") and `docs/email-templates/reset_password.html` into **Reset Password** (subject
-   "Reset your Koya password"). They're shared with the other tools, so they show the Lead Agent's name only to people
-   it invited and neutral Koya wording to everyone else. Both were checked with Go's html/template (Supabase's engine).
+4. Authentication → Emails → Templates: paste `docs/email-templates/invite.html` into **Invite user** (subject: copy the
+   one-line subject template from the top of that file) and `docs/email-templates/reset_password.html` into **Reset Password** (subject
+   "Reset your Koya password"). They're shared with the other tools, so the invite is filled in from the details each tool
+   sends with it (app name, description, inviter, role); anything missing falls back to neutral Koya wording. Both were checked with Go's html/template (Supabase's engine).
 
 ## 3. Accounts ($0)
 

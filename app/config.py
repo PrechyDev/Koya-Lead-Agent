@@ -158,6 +158,12 @@ DEV_LIMITS = RunLimits(
     phase_timeout_s=900,
 )
 
+# How this tool introduces itself in shared emails (docs/email-templates/, D-65). Sent with each invite as
+# user metadata, so one Supabase template can serve every Koya tool.
+APP_NAME = "Koya Lead Research Agent"
+APP_TAGLINE = ("the tool Koya's outbound team uses to find and research companies that may need an AI automation "
+               "assistant, and to draft outreach for human review")
+
 ICP_PHASE_MAX_TURNS = 6
 ICP_PHASE_MAX_BUDGET_USD = 0.05
 ICP_PHASE_TIMEOUT_S = 240

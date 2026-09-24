@@ -21,7 +21,7 @@ from fastapi import HTTPException, Request
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from app import db
-from app.config import get_settings
+from app.config import APP_NAME, APP_TAGLINE, get_settings
 
 ACCESS_COOKIE = "la_access"
 REFRESH_COOKIE = "la_refresh"
@@ -134,13 +134,22 @@ def send_password_reset(email: str) -> None:
         raise AuthError(_message_from(response, "Couldn't send the reset email right now."), 502)
 
 
-def invite_user(email: str, full_name: str) -> tuple[str | None, bool]:
+def invite_metadata(full_name: str, role: str, invited_by_name: str | None) -> dict:
+    """What the shared invite email is personalised with (D-65). `invited_to` also tells Week 4's trigger to skip
+    this person (D-26). Cosmetic only: a user can edit their own metadata, so nothing here grants anything."""
+    data = {"invited_to": "lead_agent", "full_name": full_name, "app_name": APP_NAME, "app_tagline": APP_TAGLINE,
+            "role": role, "invited_by_name": invited_by_name}
+    return {k: v for k, v in data.items() if v}
+
+
+def invite_user(email: str, full_name: str, *, role: str = "member",
+                invited_by_name: str | None = None) -> tuple[str | None, bool]:
     """Invite by email. Returns (user_id, already_had_account). Existing accounts get no email (E-39)."""
     settings = get_settings()
     response = httpx.post(
         _auth_url("invite"), headers=_auth_headers(service=True),
         params={"redirect_to": f"{settings.app_base_url.rstrip('/')}/accept-invite"},
-        json={"email": email, "data": {"invited_to": "lead_agent", "full_name": full_name}}, timeout=20,
+        json={"email": email, "data": invite_metadata(full_name, role, invited_by_name)}, timeout=20,
     )
     if response.status_code in (200, 201):
         body = response.json()

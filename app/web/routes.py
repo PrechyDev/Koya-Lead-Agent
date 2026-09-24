@@ -506,7 +506,8 @@ async def team_invite(request: Request, email: str = Form(...), full_name: str =
     if existing and existing["is_active"]:
         return _banner(request, "info", f"{email} is already on the team.")
     try:
-        user_id, had_account = await db.run(auth.invite_user, email, full_name)
+        user_id, had_account = await db.run(auth.invite_user, email, full_name, role=role,
+                                            invited_by_name=member.full_name)
     except auth.AuthError as exc:
         return _banner(request, "error", exc.message, exc.status)
     if not user_id:
