@@ -41,15 +41,24 @@ def main() -> int:
         log.info(f"{email} already has an account in this project: adding membership (no email sent).")
     elif args.invite:
         user_id, _ = auth.invite_user(email, args.full_name, role="member" if args.member else "admin")
+        if not user_id:
+            log.error("Supabase didn't return a user id for %s; nothing was added. Try again.", email)
+            return 1
         log.info(f"Invite email sent to {email}. They'll set a password at /accept-invite.")
     else:
         log.info(f"No account exists for {email}. Re-run with --invite to send an invite email.")
         return 1
 
+    if args.owner and args.member:
+        log.error("--owner and --member can't be combined: the owner is always an admin.")
+        return 1
     role = "member" if args.member else "admin"
     db.add_member(user_id, email, args.full_name, role, None)
     if args.owner:
         admin_dsn = (dotenv_values(ROOT / ".env").get("SUPABASE_ADMIN_DSN") or "").strip()
+        if not admin_dsn:
+            log.error("SUPABASE_ADMIN_DSN is empty in .env; it's needed (laptop only) to set the owner flag.")
+            return 1
         with psycopg.connect(admin_dsn, prepare_threshold=None, autocommit=True) as conn:
             conn.execute(f"update {db.SCHEMA}.members set is_owner = true, role = 'admin' where user_id = %s",
                          (user_id,))

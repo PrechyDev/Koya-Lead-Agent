@@ -7,7 +7,7 @@ Firecrawl spend. Every replay is scored by code and written to lead_agent.eval_r
     python evals/ab.py export  <run_id> [<run_id> ...] --name prd_example      # free: build fixtures
     python evals/ab.py estimate --name prd_example                             # free: pre-flight cost
     python evals/ab.py reference --name prd_example --yes                      # Opus 5.5 answer key (~$0.15)
-    python evals/ab.py run --name prd_example --yes                            # Haiku vs Sonnet x2 (~$0.46)
+    python evals/ab.py run --name prd_example --yes                            # Haiku vs Sonnet vs Opus (estimate first)
     python evals/ab.py report --name prd_example                               # markdown table for progress.md
 
 The run refuses to start if the estimate would push eval spend past EVAL_CAP_USD ($1.20).
@@ -33,7 +33,7 @@ from app import db  # noqa: E402
 from app.agent import prompts  # noqa: E402
 from app.agent.tools import ICPModel  # noqa: E402
 from app.config import get_settings  # noqa: E402
-from app.lib.budget import cost_from_usage  # noqa: E402
+from app.lib.budget import BudgetExceeded, assert_can_spend, cost_from_usage  # noqa: E402
 from app.lib.outreach_checks import check_outreach  # noqa: E402
 from app.lib.qualification_rules import DisqualifierCheck, HardFilterCheck, SoftPreferenceCheck  # noqa: E402
 from app.logging_setup import configure_logging  # noqa: E402
@@ -286,6 +286,10 @@ def guard(requests: list[tuple[str, dict]], yes: bool) -> None:
           f"cap ${EVAL_CAP_USD}")
     if spent + est > EVAL_CAP_USD:
         raise SystemExit("REFUSED: this would exceed the eval cap. Shrink the test set or raise the cap on purpose.")
+    try:  # and the project's hard Claude budget, like every other paid call (specs §7.2, E-29)
+        assert_can_spend(db.total_spend(), est, get_settings().claude_budget_total_usd)
+    except BudgetExceeded as exc:
+        raise SystemExit(f"REFUSED: {exc}") from None
     if not yes:
         raise SystemExit("Dry run only. Re-run with --yes to spend.")
 

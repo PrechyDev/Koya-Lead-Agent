@@ -14,7 +14,7 @@ import time
 from collections.abc import Callable
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, TypeVar
+from typing import Any
 from uuid import UUID
 
 import psycopg
@@ -24,7 +24,6 @@ from psycopg_pool import ConnectionPool
 
 from app.config import get_settings
 
-T = TypeVar("T")
 SCHEMA = get_settings().supabase_db_schema
 _pool: ConnectionPool | None = None
 
@@ -82,7 +81,7 @@ def close_pool() -> None:
         _pool = None
 
 
-def _retry(fn: Callable[[], T]) -> T:
+def _retry[T](fn: Callable[[], T]) -> T:
     delay = 0.5
     for attempt in range(3):
         try:
@@ -122,7 +121,7 @@ def execute(sql: str, params: tuple | dict = ()) -> None:
     _retry(go)
 
 
-async def run(fn: Callable[..., T], *args, **kwargs) -> T:
+async def run[T](fn: Callable[..., T], *args, **kwargs) -> T:
     """Call a blocking DB function from async code without blocking the event loop."""
     return await asyncio.to_thread(fn, *args, **kwargs)
 
@@ -331,6 +330,7 @@ objective_hash: str, days: int, exclude_id: str | None = None) -> dict | None:
         f"""select * from {t('runs')}
             where objective_hash = %s and created_at > now() - make_interval(days => %s)
               and status in ('completed', 'completed_partial') and (%s::uuid is null or id <> %s::uuid)
+              and run_kind <> 'eval_record'  -- internal A/B recordings aren't shown to people
               and coalesce((usage->>'qualified')::int, 0) > 0
             order by created_at desc limit 1""",
         (objective_hash, days, exclude_id, exclude_id),
@@ -342,6 +342,7 @@ def find_recent_run_by_signature(signature: str, days: int, exclude_id: str) -> 
         f"""select * from {t('runs')}
             where icp_signature = %s and created_at > now() - make_interval(days => %s)
               and status in ('completed', 'completed_partial') and id <> %s
+              and run_kind <> 'eval_record'  -- internal A/B recordings aren't shown to people
               and coalesce((usage->>'qualified')::int, 0) > 0
             order by created_at desc limit 1""",
         (signature, days, exclude_id),
@@ -457,6 +458,8 @@ def recently_researched(domains: list[str], days: int, exclude_run_id: str) -> d
         f"""select distinct on (company_domain) company_domain, run_id from {t('leads')}
             where company_domain = any(%s) and run_id <> %s
               and qualification_status = any(%s) and created_at > now() - make_interval(days => %s)
+              -- rejected on the free pre-screen = never researched; a later run with another ICP may want it
+              and coalesce(prescreen_result, '') not like 'rejected%%'
             order by company_domain, created_at desc""",
         (domains, exclude_run_id, list(RESEARCHED_STATUSES), days),
     )

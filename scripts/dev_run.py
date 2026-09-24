@@ -35,6 +35,9 @@ async def main() -> int:
     args = parser.parse_args()
 
     settings = get_settings()
+    if db.active_run():  # one run at a time, the same rule as the web app (a web run may be going on)
+        log.error("Another run is in progress; wait for it to finish.")
+        return 1
     limits = limits_for_run(args.target, dev=not args.full)
     run, _ = db.create_run(
         idempotency_key=f"cli-{uuid.uuid4()}", objective=args.objective, objective_hash=objective_hash(args.objective),

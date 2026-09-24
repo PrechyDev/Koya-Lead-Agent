@@ -1,8 +1,11 @@
-"""Resume a run paused at the repeat gate (same as the UI's buttons).
+"""Resume a run paused at the repeat gate (same as the UI's buttons). SPENDS: runs the paid research phase.
 
-    .venv/Scripts/python scripts/resume_run.py <run_id> find_new|refresh_same
+    .venv/Scripts/python scripts/resume_run.py <run_id> find_new|refresh_same --yes
+
+Refuses unless the run is really waiting at the repeat gate, so it can't re-run a finished run's research.
 """
 
+import argparse
 import asyncio
 import logging
 import sys
@@ -18,7 +21,14 @@ log = logging.getLogger("lead_agent.scripts.resume_run")
 
 
 async def main(run_id: str, choice: str) -> None:
-    db.update_run(run_id, repeat_choice=choice, cross_run_dedupe=(choice != "refresh_same"))
+    run = db.get_run(run_id)
+    if not run or run["status"] != "awaiting_confirmation":
+        raise SystemExit(f"Run {run_id} isn't waiting at the repeat gate (status: {run and run['status']}).")
+    if db.active_run():
+        raise SystemExit("Another run is in progress; only one runs at a time.")
+    # Same as the web route (routes.confirm_repeat): skip recently researched companies only for "find new".
+    db.set_status(run_id, "queued", "Resuming after the repeat check", repeat_choice=choice,
+                  cross_run_dedupe=(choice == "find_new"))
     task = asyncio.create_task(execute_run(run_id, skip_icp=True))
     last = None
     while not task.done():
@@ -48,4 +58,11 @@ async def main(run_id: str, choice: str) -> None:
 
 if __name__ == "__main__":
     configure_logging(cli=True)
-    asyncio.run(main(sys.argv[1], sys.argv[2]))
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("run_id")
+    parser.add_argument("choice", choices=["find_new", "refresh_same"])
+    parser.add_argument("--yes", action="store_true", help="confirm: this runs the paid research phase")
+    args = parser.parse_args()
+    if not args.yes:
+        raise SystemExit("This spends (Claude + Apify + Firecrawl, capped by the run's limits). Add --yes to go ahead.")
+    asyncio.run(main(args.run_id, args.choice))
