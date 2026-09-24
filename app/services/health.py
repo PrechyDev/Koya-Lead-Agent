@@ -42,7 +42,7 @@ def check_anthropic() -> ServiceFailure | None:
     settings = get_settings()
     try:
         client = anthropic.Anthropic(api_key=settings.anthropic_api_key, max_retries=1, timeout=20)
-        response = client.messages.create(model="claude-haiku-4-5", max_tokens=1,
+        response = client.messages.create(model=settings.model_checks, max_tokens=1,
                                           messages=[{"role": "user", "content": "ok"}])
     except anthropic.APIStatusError as exc:
         return ServiceFailure(classify_claude_error(exc.status_code, str(exc)), f"HTTP {exc.status_code}")
@@ -51,8 +51,8 @@ def check_anthropic() -> ServiceFailure | None:
     try:
         from app import db
         u = response.usage
-        db.record_spend("preflight", cost_from_usage("claude-haiku-4-5", u.input_tokens, u.output_tokens),
-                        model="claude-haiku-4-5", input_tokens=u.input_tokens, output_tokens=u.output_tokens,
+        db.record_spend("preflight", cost_from_usage(settings.model_checks, u.input_tokens, u.output_tokens),
+                        model=settings.model_checks, input_tokens=u.input_tokens, output_tokens=u.output_tokens,
                         note="pre-run credit probe (1 token)")
     except Exception:  # noqa: BLE001 — never fail a check because the ledger write failed
         pass

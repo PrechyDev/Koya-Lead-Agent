@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     model_researcher: str = "claude-sonnet-5"
     model_copywriter: str = "claude-sonnet-5"
     model_grounding: str = "claude-haiku-4-5"
+    model_checks: str = "claude-haiku-4-5"  # the small checks: scope check before a run + the credit probe
     claude_budget_total_usd: Decimal = Decimal("6.00")
 
     # --- Apify / Firecrawl ---
@@ -60,7 +61,7 @@ class Settings(BaseSettings):
     cookie_secure: bool | None = Field(default=None)
 
     @field_validator("apify_actor_id", "model_orchestrator", "model_icp", "model_researcher", "model_copywriter",
-                     "model_grounding", "max_parallel_subagents", mode="before")
+                     "model_grounding", "model_checks", "max_parallel_subagents", mode="before")
     @classmethod
     def _blank_means_default(cls, value, info):
         # An empty line like `APIFY_ACTOR_ID=` in .env must not override the default with "".
@@ -178,13 +179,15 @@ def limits_for_run(target_qualified: int, dev: bool) -> RunLimits:
 
 
 # ---------------------------------------------------------------------------
-# Model prices, USD per 1M tokens (input, output). Used for calls made outside
-# the Agent SDK (grounding, evals); the SDK reports its own cost.
+# Model prices, USD per 1M tokens: (input, output, cache read). Used for calls made outside the Agent SDK
+# (fact-checks, scope check, evals, cost recovered from transcripts); the SDK reports its own cost.
+# Cache reads are each model's real price, not one multiplier: Opus 5.5 reads its cache at $0.20 (0.05x its
+# input price), the others at the standard 0.1x. Cache writes are 1.25x input for all of them.
 # ---------------------------------------------------------------------------
-MODEL_PRICES: dict[str, tuple[Decimal, Decimal]] = {
-    "claude-haiku-4-5": (Decimal("1"), Decimal("5")),
-    "claude-sonnet-5": (Decimal("2"), Decimal("10")),
-    "claude-opus-5-5": (Decimal("4"), Decimal("20")),
+MODEL_PRICES: dict[str, tuple[Decimal, Decimal, Decimal]] = {
+    "claude-haiku-4-5": (Decimal("1"), Decimal("5"), Decimal("0.10")),
+    "claude-sonnet-5": (Decimal("2"), Decimal("10"), Decimal("0.20")),
+    "claude-opus-5-5": (Decimal("4"), Decimal("20"), Decimal("0.20")),
 }
-CACHE_READ_MULTIPLIER = Decimal("0.1")
+CACHE_WRITE_MULTIPLIER = Decimal("1.25")
 BATCH_DISCOUNT = Decimal("0.5")

@@ -18,8 +18,6 @@ from app.failures import classify_claude_error
 from app.lib.budget import cost_from_usage
 from app.lib.sanitize import fence
 
-MODEL = "claude-haiku-4-5"
-
 SYSTEM = """You classify requests made to a B2B lead research tool used by Koya Talent's outbound team.
 The tool can ONLY find companies or organisations to approach as sales leads.
 
@@ -50,10 +48,11 @@ class ScopeResult:
 
 async def check_scope(objective: str, client: anthropic.AsyncAnthropic | None = None) -> ScopeResult:
     settings = get_settings()
+    model = settings.model_checks  # MODEL_CHECKS (Haiku 4.5 by default)
     client = client or anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key, max_retries=1, timeout=30)
     try:
         response = await client.messages.parse(
-            model=MODEL, max_tokens=300, system=SYSTEM,
+            model=model, max_tokens=300, system=SYSTEM,
             messages=[{"role": "user", "content": fence("request", objective[:1000])}],
             output_format=ScopeVerdict,
         )
@@ -62,5 +61,5 @@ async def check_scope(objective: str, client: anthropic.AsyncAnthropic | None = 
     except anthropic.APIConnectionError:
         return ScopeResult(None, Decimal("0"), failure_code="anthropic_unavailable")
     u = response.usage
-    cost = cost_from_usage(MODEL, u.input_tokens, u.output_tokens)
+    cost = cost_from_usage(model, u.input_tokens, u.output_tokens)
     return ScopeResult(response.parsed_output, cost, u.input_tokens, u.output_tokens)

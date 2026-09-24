@@ -2,7 +2,7 @@
 
 from decimal import ROUND_HALF_UP, Decimal
 
-from app.config import BATCH_DISCOUNT, CACHE_READ_MULTIPLIER, MODEL_PRICES
+from app.config import BATCH_DISCOUNT, CACHE_WRITE_MULTIPLIER, MODEL_PRICES
 
 
 class BudgetExceeded(Exception):
@@ -22,7 +22,7 @@ class BudgetExceeded(Exception):
         return max(Decimal("0"), self.total - self.spent)
 
 
-def _price(model: str) -> tuple[Decimal, Decimal]:
+def _price(model: str) -> tuple[Decimal, Decimal, Decimal]:
     for known, price in MODEL_PRICES.items():
         if model == known or model.startswith(known):
             return price
@@ -38,12 +38,12 @@ def cost_from_usage(
     cache_write_tokens: int = 0,
     batch: bool = False,
 ) -> Decimal:
-    price_in, price_out = _price(model)
+    price_in, price_out, price_cache_read = _price(model)
     million = Decimal(1_000_000)
     cost = (
         Decimal(input_tokens) * price_in
-        + Decimal(cache_write_tokens) * price_in * Decimal("1.25")
-        + Decimal(cache_read_tokens) * price_in * CACHE_READ_MULTIPLIER
+        + Decimal(cache_write_tokens) * price_in * CACHE_WRITE_MULTIPLIER
+        + Decimal(cache_read_tokens) * price_cache_read
         + Decimal(output_tokens) * price_out
     ) / million
     if batch:

@@ -44,6 +44,8 @@ services:
         value: claude-sonnet-5
       - key: MODEL_GROUNDING
         value: claude-haiku-4-5
+      - key: MODEL_CHECKS             # scope check + pre-run credit probe
+        value: claude-haiku-4-5
       - key: CLAUDE_BUDGET_TOTAL_USD
         value: "6.00"
       - key: DEV_LIMITS               # full limits on Render (D-27/D-33); the owner changes it in Render if needed

@@ -302,7 +302,7 @@ async def run_icp_phase(run_id: str) -> str:
     # Cheap scope check first (Haiku, ~$0.002): only lead searches may start the full ICP step (D-34).
     scope = await scope_svc.check_scope(run["objective"])
     if scope.cost_usd:
-        await db.run(db.record_spend, "icp", scope.cost_usd, ref_id=run_id, model=scope_svc.MODEL,
+        await db.run(db.record_spend, "icp", scope.cost_usd, ref_id=run_id, model=get_settings().model_checks,
                      input_tokens=scope.input_tokens, output_tokens=scope.output_tokens, note="scope pre-check")
         await db.run(_refresh_run_cost, run_id)
     if scope.failure_code in ("anthropic_no_credit", "anthropic_auth"):

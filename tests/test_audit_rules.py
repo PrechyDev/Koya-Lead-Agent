@@ -52,3 +52,22 @@ def test_sites_on_shared_hosts_keep_their_own_name(value, expected):
 def test_banned_phrases_match_whole_words_only():
     assert _banned("e", "Reach out to contact now, it has impact now") == []
     assert _banned("e", "Act now!") != []
+
+
+def test_cache_reads_use_each_models_real_price():
+    """Opus 5.5 reads its cache at $0.20/MTok (0.05x input), the others at 0.1x (D-75)."""
+    from decimal import Decimal
+
+    from app.lib.budget import cost_from_usage
+    assert cost_from_usage("claude-opus-5-5", cache_read_tokens=1_000_000) == Decimal("0.20000")
+    assert cost_from_usage("claude-sonnet-5", cache_read_tokens=1_000_000) == Decimal("0.20000")
+    assert cost_from_usage("claude-haiku-4-5", cache_read_tokens=1_000_000) == Decimal("0.10000")
+    assert cost_from_usage("claude-haiku-4-5", cache_write_tokens=1_000_000) == Decimal("1.25000")
+
+
+def test_the_small_checks_model_comes_from_settings(monkeypatch):
+    from app.config import Settings
+    monkeypatch.setenv("MODEL_CHECKS", "claude-haiku-9")
+    assert Settings().model_checks == "claude-haiku-9"
+    monkeypatch.setenv("MODEL_CHECKS", "")  # a blank line in .env keeps the default
+    assert Settings().model_checks == "claude-haiku-4-5"
