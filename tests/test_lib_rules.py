@@ -201,3 +201,32 @@ def test_blank_env_values_fall_back_to_defaults(monkeypatch):
     assert s.apify_actor_id == "harvestapi/linkedin-company-search"
     assert s.model_researcher == "claude-sonnet-5"
     assert "ANTHROPIC_API_KEY" in Settings(_env_file=None, anthropic_api_key="").missing_run_config()
+
+
+# --- ICP defaults + lead count (D-57, D-58) ---------------------------------------------------------------
+def test_defaults_fill_only_what_is_missing_and_say_so():
+    from app.lib.icp_defaults import apply_defaults
+    icp, added = apply_defaults({"target_company_type": "Marketing agency", "geography": ["United Kingdom"],
+                                 "hard_filters": ["Headquartered in the United Kingdom"], "assumptions": []})
+    assert icp["geography"] == ["United Kingdom"]                      # the user's value is kept
+    assert icp["headcount_range"] == "10-100" and "10-100 employees" in icp["hard_filters"]
+    assert "Headquartered in the United States" not in icp["hard_filters"]
+    assert len(added) == 5 and all("Koya default" in a for a in added) and icp["assumptions"] == added
+
+
+def test_same_vague_objective_gets_the_same_defaults_every_time():
+    from app.lib.icp_defaults import apply_defaults
+    assert apply_defaults({"target_company_type": "B2B SaaS"}) == apply_defaults({"target_company_type": "B2B SaaS"})
+
+
+def test_company_type_is_the_one_required_detail():
+    from app.lib.icp_defaults import has_company_type
+    assert has_company_type({"target_company_type": "B2B SaaS"}) and has_company_type({"industries": ["Dental clinics"]})
+    assert not has_company_type({"target_company_type": " ", "industries": []})
+
+
+@pytest.mark.parametrize("requested, cap, expected", [(None, 10, 10), (5, 10, 5), (25, 10, 10), (None, 2, 2), (0, 10, 10)])
+def test_lead_count_comes_from_the_objective(requested, cap, expected):
+    from app.lib.icp_defaults import decide_lead_count
+    target, note = decide_lead_count(requested, cap)
+    assert target == expected and ((note is None) == (requested is not None and 1 <= requested <= cap))

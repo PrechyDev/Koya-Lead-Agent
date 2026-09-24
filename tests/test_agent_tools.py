@@ -226,3 +226,19 @@ async def test_parallel_subagent_cap_is_enforced_by_code(run_ctx):
     assert await pre(agent, "t3", None) == {}  # a slot freed up
     blocked_rows = [c for c in db.list_tool_calls(run_ctx.run_id) if c["status"] == "blocked"]
     assert blocked_rows and "already working" in blocked_rows[0]["result_summary"]
+
+
+async def test_icp_without_company_type_asks_and_defaults_fill_the_rest(run_ctx):
+    vague = {**ICP_ARGS["icp"], "target_company_type": "", "industries": []}
+    data, _ = await call(run_ctx, "save_icp", {**ICP_ARGS, "icp": vague})
+    run = db.get_run(run_ctx.run_id)
+    assert data["is_searchable"] is False and "Which kind of companies" in run["clarification_question"]
+    minimal = {"target_company_type": "B2B SaaS", "industries": [], "geography": [], "headcount_range": "",
+               "hard_filters": ["Sells software to businesses (B2B SaaS)"], "soft_preferences": [], "disqualifiers": [],
+               "discovery_query_plan": ["b2b saas"], "assumptions": [], "user_constraints_preserved": ["SaaS"],
+               "requested_lead_count": None}
+    data, err = await call(run_ctx, "save_icp", {**ICP_ARGS, "icp": minimal})
+    run = db.get_run(run_ctx.run_id)
+    assert not err and run["icp"]["geography"] == ["United States"] and "10-100 employees" in run["icp"]["hard_filters"]
+    assert any("default" in a for a in run["icp"]["assumptions"])
+    assert run["limits"]["target_qualified"] == 1  # default 10, capped at this test run's limit of 1

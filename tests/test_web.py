@@ -58,7 +58,7 @@ def test_home_renders_form_with_states(client_as):
     assert r.status_code == 200
     html = r.text
     assert 'id="start-run"' in html and "disabled" in html            # disabled until valid, with a reason
-    assert "Enter at least 5 characters to start." in html or "A run is in progress" in html
+    assert "Enter at least 5 characters" not in html  # an empty box shows no message; the button is just disabled
     assert "Drafts are never sent" in html and "Claude budget" in html  # admin sees budget
     assert client_as(MEMBER).get("/").text.count("Claude budget") == 0  # member does not
 
@@ -90,12 +90,12 @@ def test_objective_validation_goes_to_banner(client_as):
     r = client_as(ADMIN).post("/runs", data={"objective": "abc", "idempotency_key": str(uuid.uuid4()),
                                              "csrf_token": token}, headers={"HX-Request": "true"})
     assert r.status_code == 400 and r.headers["HX-Retarget"] == "#system-message"
-    assert "at least a few words" in r.text
+    assert "at least 5 words" in r.text
 
 
 def test_double_submit_goes_to_existing_run(client_as, a_run):
     token = auth.csrf_token_for(ADMIN.user_id)
-    r = client_as(ADMIN).post("/runs", data={"objective": "anything long enough", "csrf_token": token,
+    r = client_as(ADMIN).post("/runs", data={"objective": "find software companies in Texas please", "csrf_token": token,
                                              "idempotency_key": a_run["idempotency_key"]}, headers={"HX-Request": "true"})
     assert r.status_code == 204 and r.headers["HX-Redirect"] == f"/runs/{a_run['id']}"
 

@@ -78,7 +78,7 @@ The owner is a **Python developer** who knows some TypeScript, and wants to be *
 
 Python 3.12 · `claude-agent-sdk` 0.2.158 (orchestrator + subagents, in-process MCP tools, skills as a local plugin in `agent_plugin/`) · FastAPI + Jinja2 + HTMX + plain CSS · psycopg 3 + psycopg_pool (direct Postgres, `prepare_threshold=None`) · Pydantic v2 · httpx (Firecrawl) · apify-client · anthropic (scope check + fact-check) · tldextract · pycountry · slowapi · PyJWT · pytest + respx · Render free (Docker).
 
-Models are set per role via `MODEL_ORCHESTRATOR`, `MODEL_ICP`, `MODEL_RESEARCHER`, `MODEL_COPYWRITER`, `MODEL_GROUNDING`. The final values come from the A/B test (`evals/ab.py`, not run yet; until then Sonnet 5 everywhere and Haiku 4.5 for the fact-check). Candidates: `claude-haiku-4-5`, `claude-sonnet-5`; `claude-opus-5-5` is the reference labeller only.
+Models are set per role via `MODEL_ORCHESTRATOR`, `MODEL_ICP`, `MODEL_RESEARCHER`, `MODEL_COPYWRITER`, `MODEL_GROUNDING`. The final values come from the A/B test (`evals/ab.py`, not run yet; until then Sonnet 5 everywhere and Haiku 4.5 for the fact-check). Candidates: `claude-haiku-4-5`, `claude-sonnet-5`, plus `claude-opus-5-5` on qualification and copywriting (it is also the reference labeller; specs D-59).
 
 ## Project layout
 
@@ -116,7 +116,7 @@ Models are set per role via `MODEL_ORCHESTRATOR`, `MODEL_ICP`, `MODEL_RESEARCHER
 ```
 py -3.12 -m venv .venv && .venv/Scripts/python -m pip install -r requirements.txt   # + pytest pytest-asyncio respx ruff
 .venv/Scripts/python -m uvicorn app.main:app --port 8000            # run locally (NOT --reload on Windows: it can't start the agent CLI)
-.venv/Scripts/python -m pytest -q                                   # 154 tests (real DB, paid APIs faked)
+.venv/Scripts/python -m pytest -q                                   # 176 tests (real DB, paid APIs faked)
 .venv/Scripts/python scripts/migrate.py                             # apply DB migrations (admin DSN, laptop only)
 .venv/Scripts/python scripts/create_app_role.py                     # create/sync the app DB user from the DSN you put in .env
 .venv/Scripts/python scripts/bootstrap_owner.py <email> "<Name>" --owner [--invite]   # give the first admin access

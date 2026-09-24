@@ -15,6 +15,7 @@ from app.auth import Member, current_member, require_admin
 from app.config import get_settings, limits_for_run
 from app.failures import ServiceFailure, admin_message_from_detail, message_for
 from app.lib.budget import BudgetExceeded, assert_can_spend
+from app.lib.icp_defaults import MAX_LEAD_COUNT
 from app.lib.objective import objective_hash, objective_problem
 from app.lib.validation import EMAIL_HINT, MIN_PASSWORD_LENGTH, csv_cell, is_valid_email, safe_next
 from app.main import limiter
@@ -186,7 +187,7 @@ async def objective_check(request: Request, objective: str = "", member: Member 
 
 @router.post("/runs")
 @limiter.limit("10/minute")
-async def create_run(request: Request, objective: str = Form(""), target_qualified: int = Form(10),
+async def create_run(request: Request, objective: str = Form(""),
                      idempotency_key: str = Form(...), parent_run_id: str = Form(""), csrf_token: str = Form(""),
                      member: Member = Depends(current_member)):
     _check_csrf(request, member, csrf_token)
@@ -195,8 +196,6 @@ async def create_run(request: Request, objective: str = Form(""), target_qualifi
     problem = objective_problem(objective)  # free: stops junk before any AI call (E-50)
     if problem:
         return _banner(request, "warning", problem, 400)
-    if not 1 <= target_qualified <= 10:
-        return _banner(request, "error", "Target qualified leads must be between 1 and 10.", 400)
 
     existing = await db.run(db.fetch_one, f"select id from {db.t('runs')} where idempotency_key = %s",
                             (idempotency_key,))
@@ -213,7 +212,8 @@ async def create_run(request: Request, objective: str = Form(""), target_qualifi
                                            "Try again tomorrow.", 429)
     if await db.run(db.count_full_runs_today, member.user_id) >= _daily_cap(member):
         return _banner(request, "warning", f"You've reached your daily limit of {_daily_cap(member)} runs.", 429)
-    limits = limits_for_run(target_qualified, dev=settings.dev_limits)
+    # The lead target comes from the objective once the ICP step reads it (D-57); until then, the preset maximum.
+    limits = limits_for_run(MAX_LEAD_COUNT, dev=settings.dev_limits)
     try:
         assert_can_spend(await db.run(db.total_spend), limits.max_budget_usd + 0.10, settings.claude_budget_total_usd)
     except BudgetExceeded as exc:

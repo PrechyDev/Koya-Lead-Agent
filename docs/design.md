@@ -107,7 +107,7 @@ Status badge mapping (use everywhere):
 │ ┌ New research run ─────────────────────────────────────────┐ │
 │ │ Qualification objective  [ textarea, 5–1000 chars, counter]│ │
 │ │ Examples: (chip: vague) (chip: specific)  ← fill textarea  │ │
-│ │ Target qualified leads [10 ▾ 1–10]                         │ │
+│ │ ▸ What we assume when you leave something out (defaults)   │ │
 │ │ Limits (read-only): ≤20 companies · ≤20 pages · $1.25 AI   │ │
 │ │                                   [ Start research run ]   │ │
 │ │ "Drafts are never sent. A human reviews everything."       │ │
@@ -115,7 +115,7 @@ Status badge mapping (use everywhere):
 │ Recent runs table: objective · status badge · qualified/target · date · ›  │
 └──────────────────────────────────────────────────────────────┘
 ```
-- Start is disabled until the objective is valid, with the reason shown ("Enter at least 5 characters"). While a run is active it is disabled with "A run is in progress — view it" (link).
+- Start is disabled until the objective has at least 5 words (the same rule as the server). No message for an empty box; "Describe the companies in at least 5 words." once something is typed. While a run is active it is disabled with "A run is in progress — view it" (link).
 - Inline field errors go under the field in red. Server errors go in the System Message bar.
 
 ### 4.2 Run page (`/runs/:id`)

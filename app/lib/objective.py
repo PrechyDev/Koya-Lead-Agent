@@ -13,6 +13,10 @@ import re
 
 import pycountry
 
+# An objective must be at least this many words (owner's rule, 2026-09-24). A "word" is any space-separated
+# token that contains a letter, so "B2B" and "US-based" count and "10" doesn't. app.js uses the same rule.
+MIN_OBJECTIVE_WORDS = 5
+
 # Names people use that ISO 3166 (pycountry) doesn't list. Everything else ("United States", "USA", "Kenya",
 # "DE") is resolved by pycountry. "America" is deliberately absent: it could mean the US or the continent.
 _GEO_ALIASES = {
@@ -37,12 +41,12 @@ _TYPE_SYNONYMS = {
 def objective_problem(text: str) -> str | None:
     """Free check before any AI call: None if it could be a lead objective, else a plain-language reason.
 
-    Deliberately simple: it only stops obvious junk (symbols, keyboard mashing, one or two words). Whether the
+    Deliberately simple: it stops obvious junk (symbols, keyboard mashing) and anything under 5 words. Whether the
     request is actually a *lead search* is decided next by the ICP step's request_type (cheap AI call).
     """
     t = (text or "").strip()
-    if len(t) < 5:
-        return "Describe the companies you want to find (at least a few words)."
+    if not t:
+        return f"Describe the companies you want to find, in at least {MIN_OBJECTIVE_WORDS} words."
     if len(t) > 1000:
         return "Keep the objective under 1,000 characters."
     visible = [c for c in t if not c.isspace()]
@@ -50,8 +54,8 @@ def objective_problem(text: str) -> str | None:
     if not visible or letters / len(visible) < 0.6:
         return "That looks like mostly symbols or numbers. Describe the companies you want to find in words."
     words = re.findall(r"[^\W\d_]{2,}", t)
-    if len(words) < 3:
-        return ("Please describe the companies in a short sentence, e.g. "
+    if count_words(t) < MIN_OBJECTIVE_WORDS:
+        return (f"Describe the companies in at least {MIN_OBJECTIVE_WORDS} words, e.g. "
                 "\"Find US B2B SaaS companies with 10 to 100 employees\".")
     if re.search(r"(.)\1{5,}", t):
         return "That looks like repeated characters. Describe the companies you want to find."
@@ -60,6 +64,10 @@ def objective_problem(text: str) -> str | None:
     if len(vowelless) > len(words) / 2 or long_mash:
         return "That doesn't look like a sentence. Describe the companies you want to find."
     return None
+
+
+def count_words(text: str) -> int:
+    return sum(1 for token in (text or "").split() if re.search(r"[^\W\d_]", token))
 
 
 def normalize_text(text: str) -> str:

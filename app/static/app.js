@@ -48,10 +48,13 @@
     var submit = document.getElementById("start-run");
     var reason = document.getElementById("start-run-reason");
     if (!submit || submit.hasAttribute("data-locked")) return;
+    // Same rule as the server (app/lib/objective.py): at least 5 words, a word being a token with a letter in it.
     var len = textarea.value.trim().length;
-    var ok = len >= 5 && len <= 1000;
+    var words = textarea.value.trim().split(/\s+/).filter(function (t) { return /\p{L}/u.test(t); }).length;
+    var ok = words >= 5 && len <= 1000;
     submit.disabled = !ok;
-    if (reason) reason.textContent = ok ? "" : (len < 5 ? "Enter at least 5 characters to start." : "Keep it under 1,000 characters.");
+    // An empty box needs no message (people can see it); explain only a too-short or too-long objective.
+    if (reason) reason.textContent = ok || len === 0 ? "" : (len > 1000 ? "Keep it under 1,000 characters." : "Describe the companies in at least 5 words.");
   }
   document.addEventListener("input", function (event) {
     if (event.target.matches("textarea[data-counter]")) updateCounter(event.target);

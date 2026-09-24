@@ -26,14 +26,16 @@
       </div>
       <div id="objective-hint" class="hint"></div>
     </div>
-    <div class="row">
-      <div class="field" style="max-width: 220px;">
-        <label for="target_qualified">Target qualified leads</label>
-        <select id="target_qualified" name="target_qualified">
-          {% for n in range(1, 11) %}<option value="{{ n }}" {% if n == limits.target_qualified %}selected{% endif %}>{{ n }}</option>{% endfor %}
-        </select>
-      </div>
-    </div>
+    <details class="small">
+      <summary>What we assume when you leave something out</summary>
+      <p class="muted">Only the <b>kind of company</b> is required. Anything else you don't mention uses these defaults, and
+        every one is listed on the run's ICP tab.</p>
+      <dl class="kv">
+        <dt>Number of leads</dt><dd>The number in your objective; otherwise {{ DEFAULT_LEAD_COUNT }} (at most {{ limits.target_qualified }} per run)</dd>
+        {% for d in ICP_DEFAULTS %}<dt>{{ d.label }}</dt><dd>{{ d.value | join(", ") if d.value is not string else d.value }}
+          <span class="muted">({{ d.why }})</span></dd>{% endfor %}
+      </dl>
+    </details>
     <div class="limits" aria-label="Run limits (set by the system)">
       <span>Limits: ≤ {{ limits.max_candidates }} companies</span>
       <span>≤ {{ limits.max_scrapes }} site pages</span>
@@ -52,7 +54,7 @@
       <button id="start-run" class="btn primary" type="submit" disabled data-custom-enable aria-describedby="start-run-reason">
         <span class="when-idle">Start research run</span><span class="when-loading"><span class="spinner"></span> Starting…</span>
       </button>
-      <span id="start-run-reason" class="disabled-reason">Enter at least 5 characters to start.</span>
+      <span id="start-run-reason" class="disabled-reason"></span>
       {% endif %}
     </div>
     <p class="help">Drafts are never sent. A human reviews every company and every email before anything is used.</p>

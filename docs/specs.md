@@ -284,7 +284,7 @@ Alerts for admins (D-38): `severity (info|warning|critical), service, code, mess
 
 | Limit | Full run | DEV_LIMITS | Enforced where |
 | --- | --- | --- | --- |
-| `target_qualified` | 10 (form field, 1–10) | 2 | `save_qualification`, `finish_run` |
+| `target_qualified` | from the objective (default 10, max 10), set by `save_icp` (D-57) | max 2 | `save_qualification`, `finish_run` |
 | `first_pool` (first Apify call) | **12** | 3 | `discover_companies` |
 | `topup_size` (each later call) | **≤ 5** | 2 | `discover_companies` |
 | `max_candidates` (hard total) | **20** | 5 | `discover_companies` clamps the actor's item cap to what's left |
@@ -321,7 +321,7 @@ A refused call returns a normal result such as `{ "ok": false, "reason": "scrape
 | --- | --- |
 | Spike (0.2) | $0.20 |
 | Dev runs (~4 × DEV_LIMITS; one records the A/B fixtures; they alternate orchestrator models) | $0.80 |
-| Model A/B (§9, lean) | $0.90 (est. ~$0.70) |
+| Model A/B (§9, lean; Opus 5.5 competes on 2 stages) | $1.20 (est. ~$1.00) |
 | Test matrix (§13) | $1.00 |
 | Final 10-lead run | $1.25 |
 | Second final run (if the first fails or is weak) | $1.25 |
@@ -421,7 +421,7 @@ Env vars: `MODEL_ORCHESTRATOR`, `MODEL_ICP`, `MODEL_RESEARCHER`, `MODEL_COPYWRIT
 
 **Scope guard:** this is an **internal, one-off model-selection exercise**. It isn't part of the app, isn't deployed, isn't in the UI, and isn't a deliverable. Its only outputs are (1) the `MODEL_*` settings and (2) the results table in progress.md §8, which is cited in Reflection Q5. Keep the harness a small dev-only script in `evals/`. Don't polish it.
 
-**Method: record once, replay many; lean budget [Confirmed: est. ~$0.70, hard cap $0.90].**
+**Method: record once, replay many; lean budget [Confirmed: est. ~$1.00, hard cap $1.20; Opus 5.5 added as a contestant on qualification and copywriting, D-59].**
 
 The cost-saving measures:
 - **Reuse runs we already do.** The fixture recording run is one of the dev runs (no extra cost). The orchestrator comparison uses the dev and test-matrix runs, alternating `MODEL_ORCHESTRATOR` between Haiku and Sonnet. No dedicated orchestrator replays.
@@ -431,14 +431,14 @@ The cost-saving measures:
 Steps:
 1. **Record** (part of the dev-run bucket; Apify ≤ $0.10, ~10 Firecrawl credits): one DEV run with `run_kind=eval_record`, the PRD objective and a first pool of 12, scraping each candidate. Exported to `evals/fixtures/prd_example.json`.
 2. **Reference labels [Confirmed: Opus 5.5 as reference]:** a single `claude-opus-5-5` pass at **medium** effort, batched, labels the 8 selected companies (hard-filter checks + status) → the "answer key". **Caveat, stated honestly:** it's a model grading models. So Opus is the reference, not a contestant, on qualification. The owner may also spot-check only the cases where Haiku or Sonnet disagree with it (~5 min). Est. ~$0.15.
-3. **Replay:** each step × {Haiku 4.5, Sonnet 5} × 2 repeats, served from fixtures (**no Apify or Firecrawl spend**). `evals/ab.py` (`export → estimate → reference → run → report`) prints a pre-flight estimate, needs `--yes`, and stops itself at $0.90 cumulative (read from `spend_ledger`).
+3. **Replay:** each step × {Haiku 4.5, Sonnet 5} × 2 repeats (+ Opus 5.5 on qualification and copywriting), served from fixtures (**no Apify or Firecrawl spend**). `evals/ab.py` (`export → estimate → reference → run → report`) prints a pre-flight estimate, needs `--yes`, and stops itself at $0.90 cumulative (read from `spend_ledger`).
 4. **Score & pick:** results go to `lead_agent.eval_results` and the progress.md §8 table.
 
 | Step | Candidates | Test set | Scored by | Pass bar (both repeats) | Est. cost |
 | --- | --- | --- | --- | --- | --- |
 | ICP refinement | Haiku 4.5, Sonnet 5 | 3 objectives: vague, specific, unsearchable | code: constraints preserved word for word; correct searchable decision | 100% | ~$0.03 |
-| Research / qualification | Haiku 4.5, Sonnet 5 (vs the Opus reference) | 8 recorded companies (mix of likely fit / misfit / ambiguous) | agreement with the reference; false-`qualified` count | ≥ 7/8 agreement **and 0 false qualified** | ~$0.25 |
-| Copywriting | Haiku 4.5, Sonnet 5 | 3 qualified companies | code checks + unsupported claims (grounding) + owner's blind 1–5 rating | 0 unsupported, average ≥ 4 | ~$0.10 |
+| Research / qualification | Haiku 4.5, Sonnet 5, **Opus 5.5** (vs the Opus reference; Opus's own agreement is self-consistency, so the owner spot-checks its disagreements with Sonnet) | 8 recorded companies (mix of likely fit / misfit / ambiguous) | agreement with the reference; false-`qualified` count | ≥ 7/8 agreement **and 0 false qualified** | ~$0.25 |
+| Copywriting | Haiku 4.5, Sonnet 5, **Opus 5.5** | 3 qualified companies | code checks + unsupported claims (grounding) + owner's blind 1–5 rating | 0 unsupported, average ≥ 4 | ~$0.10 |
 | Grounding checker | Haiku 4.5, Sonnet 5 | 6 drafts, 3 with planted fake facts | catch rate, false alarms | 3/3 caught, ≤ 1 false alarm | ~$0.08 |
 | Orchestrator | Haiku 4.5, Sonnet 5 | the dev/test runs we do anyway, alternating models (≥ 2 each) | code: correct order, respects `blocked`, calls `finish_run`; turns; cost; latency | 0 protocol breaks | $0 extra |
 | Reference pass | Opus 5.5 | 8 companies, 1 pass | — | — | ~$0.15 |
@@ -526,7 +526,7 @@ Lowercase · strip protocol, `www.`, path, query and port · IDNA-encode · reje
 | E-02 | Vague but searchable | Gaps filled with Koya defaults, recorded in `icp_assumptions` | T-01 |
 | E-03 | Specific objective with hard numbers/geo | `hard_filters` + `user_constraints_preserved`; checked per lead | T-02 |
 | E-04 | Conflicting constraints | Flagged in assumptions; hard numeric filters win | unit |
-| E-05 | Empty / >1,000 chars / non-English objective | 400 for empty or too long; non-English accepted, ICP written in English | unit |
+| E-05 | Empty / fewer than 5 words / >1,000 chars / non-English objective | Refused by the free gate (browser and server use the same 5-word rule); non-English accepted, ICP written in English | unit + Chrome |
 | E-06 | Objective asks for more leads than allowed | The run limit wins; noted in the ICP | T-03 |
 | E-07 | Apify returns 0 results | The first empty search is given back (D-54); the orchestrator tries the next query, within the limits; else `completed_partial` | live cc84694e + test |
 | E-08 | Apify fails (auth, no credit, wrong actor, 5xx, timeout, odd output) | **No automatic re-run of an actor** (PRD: "if a run fails or behaves oddly, stop and ask before re-running"). HTTP retry only when *no* actor run was started. Apify's own `run_timeout` stops a slow run. The Apify run ID is logged; credit/auth/actor failures stop the run at once with a plain client message and an admin alert ("check the Apify console before re-running") | integration (mock) |
@@ -583,6 +583,10 @@ Lowercase · strip protocol, `www.`, path, query and port · IDNA-encode · reje
 | E-59 | An email with no company-specific fact | Fact-checker tags claims per draft; code rejects an email with no supported company claim (D-50) | test_grounding_rejects_unsupported_company_claims |
 | E-60 | More subagents started at once than allowed | The hook denies delegations beyond `max_parallel_subagents` (= 1); the `target_reached` reservation is atomic anyway (D-49) | test_parallel_subagent_cap_is_enforced_by_code |
 | E-61 | LinkedIn returns 0 for a query | First empty search per run is given back (D-54) | test_empty_search_is_given_back_once_and_queries_append |
+| E-64 | Objective names no kind of company ("find companies that need help") | `save_icp` turns it into a clarification question (the one required detail, D-58) | test_icp_without_company_type_asks_and_defaults_fill_the_rest |
+| E-65 | Server started with `uvicorn --reload` on Windows (the agent CLI can't start) | Run refused before anything is created or spent, with the real fix (`agent_cannot_start`) | test_agent_can_start_depends_on_the_event_loop, test_run_refused_with_the_real_fix_when_the_agent_cannot_start |
+| E-66 | Login link that redirects elsewhere (`/login?next=/\evil.com`) | `safe_next` allows only same-site paths | test_login_redirect_stays_on_this_site |
+| E-67 | Stored text that is a `javascript:` link / starts with `=` | `safe_url` for every link built from data; `csv_cell` in the CSV export | tests |
 | E-62 | A submit button is clicked with required inputs missing | Buttons stay disabled until the form is valid (a message only for problems you can't see, shown after leaving the field); the loading state starts only on a validated submit (design.md) | test_buttons_wait_for_required_inputs + real-Chrome checks |
 | E-63 | An email without a proper domain (`sam@acme`) | One shared rule (`app/lib/validation.py`): the field's `pattern` in the browser and a server check on login and invites | test_email_rule, test_login_rejects_malformed_email_before_supabase |
 
@@ -671,6 +675,10 @@ Numbers are stable (other docs refer to them); rows are grouped by topic. Status
 | --- | --- | --- | --- | --- |
 | **D-48** | **The system computes the fit ("confidence") score; the AI only records evidence.** Code turns the recorded checks into a score with an itemised breakdown (`app/lib/scoring.py`): qualified 0.70 base + 0.05 two independent sources + 0.05 headcount confirmed twice + 0.05 per evidenced nice-to-have (max 0.10) − 0.05 per code-detected red flag (LinkedIn count far below the band; text aimed at AI tools), clamped to 0.70–1.00; needs review 0.40 + 0.25 × share of hard filters passing; not qualified 0.30 × share passing. A lower status chosen by the researcher wins and caps the score, with the reason recorded. Pre-screen rejections score 0.00 | **Confirmed** (owner's choice, 2026-09-23) | The rules don't say who scores (PRD: records need "a confidence score"; guide: "qualify from evidence… explain the decision"). The owner requires the score to be **repeatable and fully explainable**: only code guarantees the same evidence gives the same score, and every point is itemised for reviewers and graders. It can't be talked up by website text, it makes the model A/B fair (models are compared on evidence, not generosity), and it matches D-03 (Claude judges, code does rules and arithmetic). **Trade-off accepted:** less nuance (a doubt that isn't a check only shows as a written concern); scores move in 0.05 steps; the pipeline is still only as repeatable as the AI's pass/fail judgments | The AI choosing a number from a rubric (not repeatable, not explainable, varies by model); code score + AI "major/minor concern" tags (adds judgment back into the number) |
 | D-35 | Disqualifiers checked per company and enforced (applies → not qualified; unknown → needs review) | Confirmed | User exclusions must hold even if the ICP step didn't restate them as hard filters | Relying on the model to copy them into hard filters |
+| **D-57** | **The lead count comes from the objective**, not a form field: `save_icp` sets the run's target from `requested_lead_count` (default 10, never above the run's limit, max 10) and records any change as an assumption | Confirmed (owner, 2026-09-24) | The dropdown was set before the AI read the objective, so "Find 5 …" with the dropdown at 10 contradicted itself | Keeping the dropdown; asking to confirm the number every run |
+| **D-58** | **Only the kind of company is required; everything else has a fixed Koya default applied by code** (`app/lib/icp_defaults.py`): US; 10–100 employees; founder/COO/ops lead; repetitive operational work; excluding automation agencies and consumer-only products; the guide's three nice-to-haves; 10 leads. Each default is recorded as an assumption and listed on the home page | Confirmed (owner, 2026-09-24) | The AI used to invent defaults, and stored runs showed different assumptions for the same objective; fixed defaults make vague objectives repeatable and visible. Without a company type there's nothing to search, so that one detail triggers a question | Requiring type + geography (more questions); requiring type + geography + size (the PRD's vague example would always stop) |
+| **D-59** | **Opus 5.5 competes in the model A/B on qualification and copywriting** (A/B cap $0.90 → $1.20); the cheapest model that meets the bar in both repeats is used | Confirmed (owner, 2026-09-24) | The owner wants the best quality at a reasonable cost; Opus costs ~2× Sonnet 5, so it has to earn its place with evidence | Opus for copywriting only (~$1.65/run); Opus for research + copy (~$2.40/run); Sonnet everywhere |
+| **D-62** | An objective needs at least 5 words (a token with a letter in it; the same rule in the browser and the server) | Confirmed (owner, 2026-09-24) | 5 characters let through objectives too short to search on | 5 characters; 3 words |
 | **D-53** | **Disqualifiers must name what to exclude; `save_icp` refuses any starting with "Not"** | Default, Verified (found in stored dev ICPs) | The researcher answers "does it apply?". Dev ICPs contained "Not an agency…" and "Not headquartered outside the United States": "applies" would then mean *is not an agency* and reject good companies | Letting the model interpret double negatives |
 | D-36b | Soft preferences checked per company with evidence; never change the status | Confirmed | Nice-to-haves inform fit and copy without disqualifying | Treating preferences as filters (guide: "do not treat every preference as a hard filter") |
 | D-40b | Two-step draft checks: free code checks first, then the Haiku fact-check; ≤ 2 rewrites; a checker outage doesn't use a rewrite | Default | Obvious problems are bounced for free; claims must trace to stored sources. Extended by D-50 (the copywriter runs the code checks itself before saving) | Model self-review only |
@@ -682,7 +690,7 @@ Numbers are stable (other docs refer to them); rows are grouped by topic. Status
 | --- | --- | --- | --- | --- |
 | D-34 | Three-layer request check: free code gate → Haiku scope check → server-enforced `request_type` | Confirmed, Verified | Junk costs $0; off-topic ~$0.0008 (was ~$0.018); only lead searches can be searched | Keyword allowlists (block legit wording/languages); the ICP agent alone (10× cost) |
 | D-07 | Claude budget $6 enforced from the spend ledger + $7 Console spend limit | Confirmed | Owner budget; a hard stop in code plus a backstop outside it | Per-run caps only |
-| D-08 | Lean per-step model A/B (≤ $0.90): record once/replay many, Batch API, 2 repeats, Opus 5.5 as reference labeller | Confirmed | Evidence-based model choice without eating the real-run budget | $2.10 plan; picking by gut |
+| D-08 | Lean per-step model A/B (≤ $1.20 after D-59): record once/replay many, Batch API, 2 repeats, Opus 5.5 as reference labeller | Confirmed | Evidence-based model choice without eating the real-run budget | $2.10 plan; picking by gut |
 | D-30 | Per-phase watchdog + transcript cost recovery | Default, Verified | A hang can't block the run slot; recovered $0.19 a killed run would have hidden | Trusting the SDK to always finish/report |
 | D-45 | DEV limits (target 2, 5 companies, 4 pages, $0.30) for all development | Default | Real runs during development at ~20% of the full cost | Developing on full limits |
 | D-27/D-33 | Grader/client runs use full limits on Render (`DEV_LIMITS=false`) | Confirmed | "Use it like the client would" | Demo-only limits |
@@ -709,6 +717,8 @@ Numbers are stable (other docs refer to them); rows are grouped by topic. Status
 | D-32 | Python 3.12; sync psycopg pool via `asyncio.to_thread` | Default | Matches Docker; avoids a Windows event-loop conflict between psycopg async and the SDK subprocess | Python 3.14 (the owner's default); psycopg async |
 | D-56 | `create_app_role.py` is read-only on `.env`: the owner creates the app password and DSN; the script creates/syncs the role and verifies it | Confirmed (owner request), Verified | *Problem:* the committed script generated the password and wrote it into `.env`; a program that writes secrets is more exposure than one that doesn't. *Fix:* the owner writes the DSN; the script only reads it, checks it's the app user with a strong password on the right host, and syncs the role. Ran against the real project: `.env` unchanged byte for byte | The script generating the password and writing `.env` |
 | D-44 | Tests hit the real DB with throwaway rows; every paid API is faked | Default | Proves SQL, RLS and constraints for real at $0 | Mocking the DB (misses permission bugs) |
+| **D-60** | Security hardening from the audit: same-site-only redirect after login; rate-limit key from the last `X-Forwarded-For` entry (the one Render's proxy appends); only http(s) links from stored data; CSV cells can't start a formula; CSP + HSTS headers; admins can't remove their own admin access (server-side) | Default, Verified (tests) | *Problems found:* `/\evil.com` passed the redirect check; the first forwarded address is chosen by the visitor, so the login limit could be dodged; a failed, AI-written `evidence_ref` was rendered as a clickable link; website text in the CSV could run as a spreadsheet formula | Trusting the model's output and the client's headers |
+| **D-61** | The app refuses to start a run when its event loop can't start the Claude CLI (Windows + `uvicorn --reload`), with its own failure code `agent_cannot_start` | Default, Verified | *Problem:* the owner's local run 27b7e5f0 failed with an empty "Failed to start Claude Code: " and was mislabelled "Anthropic unavailable" | Letting runs start and fail |
 | **D-55** | One logging setup (`app/logging_setup.py`) for the app, scripts, evals and spikes; a filter masks emails, API keys and DB passwords in every log line; no `print()` | Confirmed (owner request) | Consistent, levelled logs on Render; a leaked secret in an exception message can't reach the logs | print() in scripts |
 
 ---

@@ -10,7 +10,7 @@ Firecrawl spend. Every replay is scored by code and written to lead_agent.eval_r
     python evals/ab.py run --name prd_example --yes                            # Haiku vs Sonnet x2 (~$0.46)
     python evals/ab.py report --name prd_example                               # markdown table for progress.md
 
-The run refuses to start if the estimate would push eval spend past EVAL_CAP_USD ($0.90).
+The run refuses to start if the estimate would push eval spend past EVAL_CAP_USD ($1.20).
 """
 
 import argparse
@@ -40,9 +40,13 @@ from app.logging_setup import configure_logging  # noqa: E402
 
 FIXTURES = ROOT / "evals" / "fixtures"
 SKILLS = ROOT / "agent_plugin" / "skills"
-EVAL_CAP_USD = Decimal("0.90")
+EVAL_CAP_USD = Decimal("1.20")  # owner-approved 2026-09-24: +$0.30 so Opus 5.5 can compete on two stages (D-59)
 CANDIDATES = ["claude-haiku-4-5", "claude-sonnet-5"]
 REFERENCE_MODEL = "claude-opus-5-5"
+# Opus 5.5 also competes where quality matters most and a quality gain could justify ~2x the price. On
+# qualification it is scored against its own reference labels, so its agreement is self-consistency, not
+# accuracy: the owner spot-checks its disagreements with Sonnet before choosing it.
+OPUS_STAGES = {"qual", "copy"}
 REPEATS = 2
 
 ICP_CASES = [
@@ -298,15 +302,16 @@ def build_ab_requests(name: str) -> list[tuple[str, dict]]:
     fx, ref = load(name), load_reference(name)
     reqs: list[tuple[str, dict]] = []
     qualified = [c for c in fx["companies"] if ref.get(c["domain"], {}).get("status") == "qualified"][:3]
-    for model in CANDIDATES:
+    for model in CANDIDATES + [REFERENCE_MODEL]:
+        opus = model == REFERENCE_MODEL
         for rep in range(1, REPEATS + 1):
-            for case in ICP_CASES:
+            for case in ([] if opus else ICP_CASES):
                 reqs.append((f"icp::{model}::{rep}::{case['id']}", icp_request(model, case)))
             for c in fx["companies"][:8]:
                 reqs.append((f"qual::{model}::{rep}::{c['domain']}", qual_request(model, c, fx["icp"])))
             for c in qualified:
                 reqs.append((f"copy::{model}::{rep}::{c['domain']}", copy_request(model, c, ref)))
-            for i, (fake, _) in enumerate(PLANTED):
+            for i, (fake, _) in enumerate([] if opus else PLANTED):
                 c = fx["companies"][i % len(fx["companies"])]
                 reqs.append((f"ground::{model}::{rep}::{i}", ground_request(model, c, planted_draft(c, fake))))
     return reqs

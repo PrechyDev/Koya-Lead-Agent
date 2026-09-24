@@ -56,6 +56,8 @@ def test_classify_apify_errors(status, text, code):
 
 # --- free input gate (E-50) -------------------------------------------------------------
 @pytest.mark.parametrize("text", ["......,,,,,,,huovivpfefopfo", "find leads", "asdf qwrt zxcvb plkj",
+                                  "Find SaaS firms Lagos",  # 4 words: needs 5
+                                  "Find B2B SaaS companies",
                                   "zzzzzzzzzzz find companies now", "12345 678 910 1112", "  "])
 def test_junk_is_stopped_before_any_ai_call(text):
     assert objective_problem(text) is not None

@@ -21,6 +21,7 @@ from app.config import get_settings
 from app.failures import ServiceFailure
 from app.lib.budget import BudgetExceeded, assert_can_spend
 from app.lib.domain import homepage_url, normalize_domain
+from app.lib.icp_defaults import apply_defaults, decide_lead_count, has_company_type
 from app.lib.limits import next_discovery_batch
 from app.lib.objective import icp_signature, parse_headcount_range
 from app.lib.outreach_checks import WRITING_RULES, check_outreach, measure
@@ -46,6 +47,9 @@ OUT_OF_SCOPE_QUESTION = {
                  "agent find (industry, location, size)? For example: \"UK marketing agencies with 20 to 50 staff\".",
     "too_vague": "",
 }
+MISSING_TYPE_QUESTION = ("Which kind of companies should the agent look for? For example: \"B2B SaaS companies\", "
+                         "\"marketing agencies\" or \"dental clinics\". Location, size and the rest have sensible "
+                         "defaults if you leave them out.")
 GROUNDING_CALL_CAP_USD = 0.03
 MAX_FREE_EMPTY_SEARCHES = 1    # an Apify search that returns nothing is given back once per run
 MAX_DRAFT_CHECKS_PER_LEAD = 5  # free self-checks before save_outreach; bounded so a confused writer can't loop
@@ -270,8 +274,18 @@ def build_handlers(ctx: RunContext) -> dict:
             # Server rule: only a lead search may proceed, whatever else the model decided (E-50).
             parsed.is_searchable = False
             parsed.clarification_question = OUT_OF_SCOPE_QUESTION[parsed.request_type]
+        if parsed.is_searchable and not has_company_type(icp):
+            # The one required detail (D-58): without a company type or industry there's nothing to search for.
+            parsed.is_searchable, parsed.request_type = False, "too_vague"
+            parsed.clarification_question = MISSING_TYPE_QUESTION
         if not parsed.is_searchable and not (parsed.clarification_question or "").strip():
             return failure("is_searchable is false, so clarification_question is required.")
+        lead_note = None
+        if parsed.is_searchable:
+            icp, _ = apply_defaults(icp)  # Koya's fixed defaults, each recorded as an assumption (D-58)
+            target, lead_note = decide_lead_count(icp.get("requested_lead_count"), int(ctx.limits["target_qualified"]))
+            if lead_note:
+                icp["assumptions"] = list(icp["assumptions"]) + [lead_note]
         if parsed.is_searchable and (not icp["hard_filters"] or not icp["discovery_query_plan"]):
             return failure("A searchable ICP needs at least one hard filter and one discovery query.")
         negative = [d for d in icp["disqualifiers"] if NEGATIVE_DISQUALIFIER_RE.match(d)]
@@ -287,6 +301,8 @@ def build_handlers(ctx: RunContext) -> dict:
         else:
             fields["clarification_question"] = redact(parsed.clarification_question.strip())[0][:500]
         await db.run(db.update_run, ctx.run_id, **fields)
+        if parsed.is_searchable:
+            ctx.limits = await db.run(db.set_target_qualified, ctx.run_id, target)  # from the objective (D-57)
         ctx.icp = icp
         what = "searchable ICP" if parsed.is_searchable else "clarification needed"
         return success({"saved": True, "is_searchable": parsed.is_searchable},

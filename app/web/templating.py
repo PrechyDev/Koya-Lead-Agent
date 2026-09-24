@@ -5,6 +5,7 @@ from pathlib import Path
 
 from fastapi.templating import Jinja2Templates
 
+from app.lib.icp_defaults import DEFAULT_LEAD_COUNT, DEFAULTS
 from app.lib.validation import EMAIL_PATTERN, MIN_PASSWORD_LENGTH, safe_url
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
@@ -116,6 +117,7 @@ def stepper(status: str, last_active_step: int = 0, usage: dict | None = None) -
 
 
 templates.env.globals.update(badge=badge, ago=ago, money=money, ACTIVE=ACTIVE, EMAIL_PATTERN=EMAIL_PATTERN, shortfall_sentence=shortfall_sentence,
+                            ICP_DEFAULTS=DEFAULTS, DEFAULT_LEAD_COUNT=DEFAULT_LEAD_COUNT,
                             MIN_PASSWORD_LENGTH=MIN_PASSWORD_LENGTH)
 templates.env.filters["money"] = money
 templates.env.filters["safe_url"] = safe_url

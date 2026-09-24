@@ -237,6 +237,17 @@ def append_usage_item(run_id: str, key: str, value: str) -> None:
     )
 
 
+def set_target_qualified(run_id: str, target: int) -> dict:
+    """The one limit that may change after a run is created: the lead target, set from the objective by
+    save_icp (D-57). Everything else in `limits` is fixed when the run is created."""
+    row = fetch_one(
+        f"""update {t('runs')} set limits = jsonb_set(limits, '{{target_qualified}}', to_jsonb(%s::int))
+            where id = %s returning limits""",
+        (int(target), run_id),
+    )
+    return row["limits"] if row else {}
+
+
 def next_tool_call_seq(run_id: str) -> int:
     row = fetch_one(
         f"update {t('runs')} set tool_call_count = tool_call_count + 1 where id = %s returning tool_call_count",
