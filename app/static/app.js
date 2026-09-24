@@ -41,25 +41,28 @@
     updateCounter(target);
   });
 
-  // Character counter + Start button enablement for the objective.
+  // Word counter + Start button enablement for the objective. The "at least 5 words" message itself is shown
+  // under the box by the field checks below (data-min-words), like every other field message.
+  function countWords(text) {
+    // Same rule as the server (app/lib/objective.py): a word is a space-separated token containing a letter.
+    return (text || "").trim().split(/\s+/).filter(function (t) { return /\p{L}/u.test(t); }).length;
+  }
   function updateCounter(textarea) {
     var counter = document.getElementById(textarea.id + "-count");
     if (counter) counter.textContent = textarea.value.trim().length + " / 1000";
     var submit = document.getElementById("start-run");
-    var reason = document.getElementById("start-run-reason");
     if (!submit || submit.hasAttribute("data-locked")) return;
-    // Same rule as the server (app/lib/objective.py): at least 5 words, a word being a token with a letter in it.
-    var len = textarea.value.trim().length;
-    var words = textarea.value.trim().split(/\s+/).filter(function (t) { return /\p{L}/u.test(t); }).length;
-    var ok = words >= 5 && len <= 1000;
-    submit.disabled = !ok;
-    // An empty box needs no message (people can see it); explain only a too-short or too-long objective.
-    if (reason) reason.textContent = ok || len === 0 ? "" : (len > 1000 ? "Keep it under 1,000 characters." : "Describe the companies in at least 5 words.");
+    submit.disabled = countWords(textarea.value) < parseInt(textarea.getAttribute("data-min-words") || "5", 10);
   }
   document.addEventListener("input", function (event) {
     if (event.target.matches("textarea[data-counter]")) updateCounter(event.target);
   });
   document.addEventListener("DOMContentLoaded", function () {
+    document.querySelectorAll("textarea[data-counter]").forEach(updateCounter);
+  });
+  // Safety net: after any HTMX request, put Start back to what the objective allows (HTMX re-enables buttons
+  // it disabled during a request, whatever their state was before).
+  document.addEventListener("htmx:afterRequest", function () {
     document.querySelectorAll("textarea[data-counter]").forEach(updateCounter);
   });
 
@@ -97,91 +100,105 @@
     if (close) close.closest(".banner").remove();
   });
 
-  // Required inputs (design.md §2): a submit button stays disabled until every required field in its form is
-  // valid. An EMPTY field needs no message (people can see it); a message appears only for problems they can't
-  // see: a malformed email, a short password, passwords that differ. Buttons can add their own condition with
-  // data-requires="<field id>" (e.g. Reject needs a note). Buttons marked data-locked (server decided) or
-  // data-custom-enable (own script) are left alone.
-  function fieldName(el) {
-    var label = el.id && document.querySelector('label[for="' + el.id + '"]');
-    return label ? label.textContent.replace(/\(.*?\)/g, "").trim() : (el.name || "a field");
+  // Field checks (design.md §2), like Google Forms: a problem is shown in red directly UNDER the field it's
+  // about, with a red border, while the person types (after a short pause, so it doesn't flash on every key)
+  // and at once when they leave the field. It disappears as soon as the value is fixed. An EMPTY field shows
+  // nothing (people can see it's empty); the submit button just stays disabled until the form is complete.
+  // Buttons can add their own condition with data-requires="<field id>" (e.g. Reject needs a note). Buttons
+  // marked data-locked (server decided) or data-custom-enable (own script) are left alone.
+  var FIELDS = "input:not([type=hidden]), textarea, select";
+
+  function fieldError(el) {
+    var value = el.value.trim();
+    if (!value) return "";
+    var minWords = parseInt(el.getAttribute("data-min-words") || "0", 10);
+    if (minWords && countWords(value) < minWords) return "Describe the companies in at least " + minWords + " words.";
+    if (el.type === "email" && !el.checkValidity()) return "Enter a valid email address, like name@company.com.";
+    if (el.minLength > 0 && el.value.length < el.minLength) return "Use at least " + el.minLength + " characters.";
+    if (!el.checkValidity()) return "Please check this field.";
+    var other = el.getAttribute("data-match") && document.getElementById(el.getAttribute("data-match"));
+    if (other && other.value && el.value !== other.value) return "The passwords don't match.";
+    return "";
   }
 
-  // Returns {blocked, message}: blocked disables the button; message (may be "") explains a non-obvious problem.
-  function formProblem(form) {
-    var fields = Array.prototype.filter.call(form.querySelectorAll("input, textarea, select"), function (el) {
-      return !el.disabled && el.type !== "hidden";
-    });
-    var filled = fields.filter(function (el) { return el.value.trim(); });
-    var invalid = filled.filter(function (el) { return !el.checkValidity(); });
-    if (invalid.length) {
-      var el = invalid[0];
-      // Explain only once the person has left the field, so the message doesn't nag while they type.
-      if (!el.hasAttribute("data-touched")) return { blocked: true, message: "" };
-      if (el.type === "email") return { blocked: true, message: "Enter a valid email address, like name@company.com." };
-      if (el.minLength > 0 && el.value.length < el.minLength) {
-        return { blocked: true, message: fieldName(el) + " needs at least " + el.minLength + " characters." };
-      }
-      return { blocked: true, message: "Check " + fieldName(el) + "." };
-    }
-    var mismatch = filled.filter(function (el) {
-      var other = el.getAttribute("data-match") && document.getElementById(el.getAttribute("data-match"));
-      return other && other.value && el.value !== other.value;
-    });
-    if (mismatch.length) {
-      return { blocked: true, message: mismatch[0].hasAttribute("data-touched") ? "The passwords don't match." : "" };
-    }
-    var missing = fields.filter(function (el) { return el.required && !el.value.trim(); });
-    return { blocked: missing.length > 0, message: "" };
-  }
-
-  function reasonSlot(form) {
-    var slot = form.querySelector("[data-form-reason]");
+  function showFieldError(el, message) {
+    var id = (el.id || el.name) + "-error";
+    var slot = document.getElementById(id);
+    if (!slot && !message) return;
     if (!slot) {
       slot = document.createElement("p");
-      slot.className = "disabled-reason";
-      slot.setAttribute("data-form-reason", "");
+      slot.id = id;
+      slot.className = "field-error";
       slot.setAttribute("aria-live", "polite");
-      // Right after the buttons: inside their row if they sit in one, else at the end of the form.
-      var buttons = form.querySelectorAll('button[type="submit"]');
-      var last = buttons[buttons.length - 1];
-      if (last && last.parentElement === form) last.insertAdjacentElement("afterend", slot);
-      else (last ? last.parentElement : form).appendChild(slot);
+      el.insertAdjacentElement("afterend", slot);
+      el.setAttribute("aria-describedby", ((el.getAttribute("aria-describedby") || "") + " " + id).trim());
     }
-    return slot;
+    slot.textContent = message;
+    el.classList.toggle("invalid", Boolean(message));
+    el.setAttribute("aria-invalid", message ? "true" : "false");
+  }
+
+  function checkNow(el) {
+    showFieldError(el, fieldError(el));
+    // Changing a password re-checks its confirmation (and the reverse), so "don't match" updates both ways.
+    var form = el.closest("form");
+    if (!form) return;
+    form.querySelectorAll('[data-match="' + el.id + '"]').forEach(function (c) { if (c.value) showFieldError(c, fieldError(c)); });
+  }
+
+  var timers = {};
+  function checkSoon(el) {
+    var key = el.id || el.name;
+    clearTimeout(timers[key]);
+    // A confirmation box showing "don't match" is re-checked at once when this field changes.
+    var form = el.closest("form");
+    if (form) form.querySelectorAll('[data-match="' + el.id + '"].invalid').forEach(function (c) { showFieldError(c, fieldError(c)); });
+    // Already showing a message? Update it at once (so it clears the moment the value is fixed).
+    if (el.classList.contains("invalid")) return checkNow(el);
+    timers[key] = setTimeout(function () { checkNow(el); }, 600);
+  }
+
+  function formBlocked(form) {
+    return Array.prototype.some.call(form.querySelectorAll(FIELDS), function (el) {
+      if (el.disabled) return false;
+      if (el.required && !el.value.trim()) return true;
+      var minWords = parseInt(el.getAttribute("data-min-words") || "0", 10);
+      if (minWords && countWords(el.value) < minWords) return true;
+      return Boolean(fieldError(el));
+    });
   }
 
   function refreshForm(form) {
     var buttons = Array.prototype.filter.call(form.querySelectorAll('button[type="submit"]'), function (b) {
       return !b.hasAttribute("data-locked") && !b.hasAttribute("data-custom-enable");
     });
-    var guarded = form.querySelector("[required], [minlength], [data-match]");
+    var guarded = form.querySelector("[required], [minlength], [data-match], [data-min-words], [type=email]");
     var withOwnRule = buttons.filter(function (b) { return b.hasAttribute("data-requires"); });
     if (!guarded && !withOwnRule.length) return;
-    var problem = guarded ? formProblem(form) : { blocked: false, message: "" };
+    var blocked = guarded ? formBlocked(form) : false;
     buttons.forEach(function (b) {
       var need = b.getAttribute("data-requires") && document.getElementById(b.getAttribute("data-requires"));
-      b.disabled = problem.blocked || Boolean(need && !need.value.trim());
+      b.disabled = blocked || Boolean(need && !need.value.trim());
     });
-    reasonSlot(form).textContent = problem.message;
   }
 
   function refreshAll(root) {
     (root || document).querySelectorAll("form").forEach(refreshForm);
   }
+  document.addEventListener("input", function (event) {
+    var el = event.target;
+    if (!el.matches || !el.matches(FIELDS)) return;
+    checkSoon(el);
+    var form = el.closest("form");
+    if (form) refreshForm(form);
+  });
+  document.addEventListener("change", function (event) {
+    var form = event.target.closest && event.target.closest("form");
+    if (form) refreshForm(form);
+  });
   document.addEventListener("focusout", function (event) {
     var el = event.target;
-    if (el.matches && el.matches("input, textarea, select") && el.value.trim()) {
-      el.setAttribute("data-touched", "");
-      var form = el.closest("form");
-      if (form) refreshForm(form);
-    }
-  });
-  ["input", "change"].forEach(function (type) {
-    document.addEventListener(type, function (event) {
-      var form = event.target.closest && event.target.closest("form");
-      if (form) refreshForm(form);
-    });
+    if (el.matches && el.matches(FIELDS)) { clearTimeout(timers[el.id || el.name]); checkNow(el); }
   });
   // Browser autofill may not fire input events until the user interacts with the page.
   ["pointerdown", "keydown", "focusin"].forEach(function (type) {

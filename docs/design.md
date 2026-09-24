@@ -44,7 +44,7 @@ Error messages say **what failed · why (if known) · what to do next**. Never s
 | Active (pressed) | darker still + `transform: translateY(1px)` |
 | Disabled | `--disabled-bg`, `--disabled-text`, `cursor: not-allowed`, and a **tooltip/helper text saying why** ("A run is already in progress") |
 | Loading | spinner + verb-ing label ("Starting…", "Exporting…"); disabled while loading so it can't be double-clicked. **Starts only on a validated submit, never on click** (a click fires before the browser checks required fields) |
-| Required inputs | **A submit button is disabled until every required field in its form is valid.** An empty field needs no message (people can see it). A message appears right under the button only for problems people *can't* see: "Enter a valid email address, like name@company.com.", "Password needs at least 8 characters.", "The passwords don't match." A button with its own condition declares it (`data-requires="<field id>"`, e.g. Reject needs a note, whose label says so). Handled once for every form, including HTMX-loaded ones, in `app/static/app.js` |
+| Required inputs | **A submit button is disabled until every required field in its form is valid.** Problems are shown **like Google Forms: in red directly under the field, with a red border, while typing** (after a ~0.6 s pause, and at once on leaving the field), and they vanish as soon as the value is fixed: "Enter a valid email address, like name@company.com.", "Use at least 8 characters.", "The passwords don't match.", "Describe the companies in at least 5 words." An empty field shows nothing (people can see it). Not a hover tooltip: tooltips don't appear on phones and are easy to miss. A button with its own condition declares it (`data-requires="<field id>"`, e.g. Reject needs a note, whose label says so). Handled once for every form, including HTMX-loaded ones, in `app/static/app.js` |
 | Email fields | `name@domain.tld`: at least one dot after the @ and a final part of 2+ letters (`sam@acme` is rejected; `sam@mail.acme.co.uk` is fine). One rule, `app/lib/validation.py`, used as the field's `pattern` **and** checked again on the server |
 | Done feedback | short confirmation in place, e.g. Copy → "Copied ✓" for 2s; Approve → button turns into an "Approved ✓" badge + success banner |
 
@@ -115,7 +115,7 @@ Status badge mapping (use everywhere):
 │ Recent runs table: objective · status badge · qualified/target · date · ›  │
 └──────────────────────────────────────────────────────────────┘
 ```
-- Start is disabled until the objective has at least 5 words (the same rule as the server). No message for an empty box; "Describe the companies in at least 5 words." once something is typed. While a run is active it is disabled with "A run is in progress — view it" (link).
+- Start is disabled until the objective has at least 5 words (the same rule as the server). No message for an empty box; once something is typed, "Describe the companies in at least 5 words." appears under the box. While a run is active it is disabled with "A run is in progress — view it" (link).
 - Inline field errors go under the field in red. Server errors go in the System Message bar.
 
 ### 4.2 Run page (`/runs/:id`)

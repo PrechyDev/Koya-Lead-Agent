@@ -149,7 +149,7 @@ def test_buttons_wait_for_required_inputs():
     detail = (root / "templates" / "partials" / "lead_detail.html").read_text(encoding="utf-8")
     assert 'value="rejected" data-requires="note-' in detail
     js = (root / "static" / "app.js").read_text(encoding="utf-8")
-    assert 'addEventListener("submit"' in js and "formProblem" in js and 'data-requires' in js
+    assert 'addEventListener("submit"' in js and "showFieldError" in js and 'data-requires' in js
 
 
 @pytest.mark.parametrize("email, ok", [

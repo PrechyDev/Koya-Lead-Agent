@@ -83,7 +83,7 @@
     <input type="hidden" name="target_qualified" value="{{ limits.get('target_qualified', 10) }}">
     <div class="field">
       <label for="clarified">Your answer, as a fuller objective</label>
-      <textarea id="clarified" name="objective" maxlength="1000" required>{{ run.objective }} — </textarea>
+      <textarea id="clarified" name="objective" maxlength="1000" data-min-words="5" required>{{ run.objective }} — </textarea>
     </div>
     <div><button class="btn primary" type="submit"><span class="when-idle">Continue with this answer</span><span class="when-loading"><span class="spinner"></span> Starting…</span></button></div>
   </form>

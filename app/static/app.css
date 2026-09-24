@@ -103,6 +103,10 @@ main { max-width: 1180px; margin: 0 auto; padding: 16px; display: flex; flex-dir
 @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } .btn { transition: none; } }
 .help { font-size: 0.85rem; color: var(--text-muted); }
 .disabled-reason { font-size: 0.85rem; color: var(--warning); }
+/* Field problems sit directly under the field, like Google Forms (app.js). */
+.field-error { margin: 4px 0 0; font-size: 0.85rem; color: var(--danger); }
+input.invalid, textarea.invalid, select.invalid { border-color: var(--danger); box-shadow: 0 0 0 1px var(--danger); }
+input.invalid:focus, input.invalid:focus-visible, textarea.invalid:focus, textarea.invalid:focus-visible { outline-color: var(--danger); border-color: var(--danger); }
 
 /* ---------- Forms (zone 2: controls) ---------- */
 label { font-weight: 600; display: block; margin-bottom: 4px; }
