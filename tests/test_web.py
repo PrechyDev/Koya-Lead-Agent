@@ -283,3 +283,47 @@ def test_sign_in_with_an_unverifiable_token_gets_a_plain_message(client_as, monk
     monkeypatch.setattr(routes.alerts, "raise_alert", lambda *a, **k: None)
     r = client_as(None).post("/login", data={"email": "sam@acme.io", "password": "x", "next": "/"})
     assert r.status_code == 503 and "confirm your sign-in" in r.text and "Something went wrong" not in r.text
+
+
+# --- password reset (D-64) ---------------------------------------------------------------------------------
+def _people(monkeypatch, **by_email):
+    rows = {e: {"user_id": f"id-{e}", "email": e, "is_active": active} for e, active in by_email.items()}
+    monkeypatch.setattr(db, "get_member_by_email", lambda email: rows.get(email))
+    monkeypatch.setattr(db, "get_member", lambda uid: next((r for r in rows.values() if r["user_id"] == uid), None))
+    return rows
+
+
+def test_reset_email_only_for_active_members_and_the_same_answer_for_everyone(client_as, monkeypatch):
+    _people(monkeypatch, **{"active@acme.io": True, "gone@acme.io": False})
+    sent = []
+    monkeypatch.setattr(auth, "send_password_reset", lambda email: sent.append(email))
+    pages = [client_as(None).post("/forgot-password", data={"email": e}).text
+             for e in ("active@acme.io", "gone@acme.io", "stranger@acme.io")]
+    assert sent == ["active@acme.io"]                          # deactivated people and strangers get no email
+    assert all("If this email has access" in p for p in pages)  # and nobody can tell who has an account
+
+
+def test_deactivated_person_cannot_finish_a_reset_here(client_as, monkeypatch):
+    _people(monkeypatch, **{"gone@acme.io": False, "active@acme.io": True})
+    changed = []
+    monkeypatch.setattr(auth, "set_password", lambda token, pw, name=None: changed.append(token))
+    monkeypatch.setattr(auth, "verify_access_token", lambda t: {"sub": "id-gone@acme.io"})
+    form = {"access_token": "t1", "password": "new-password", "confirm": "new-password"}
+    r = client_as(None).post("/reset-password", data=form)
+    assert r.status_code == 403 and "doesn" in r.text and changed == []
+    monkeypatch.setattr(auth, "verify_access_token", lambda t: {"sub": "id-active@acme.io"})
+    r = client_as(None).post("/reset-password", data=form)
+    assert r.status_code == 303 and changed == ["t1"] and "la_access" in r.headers.get("set-cookie", "")
+
+
+def test_only_admins_send_reset_links(client_as, monkeypatch):
+    _people(monkeypatch, **{"active@acme.io": True, "gone@acme.io": False})
+    sent = []
+    monkeypatch.setattr(auth, "send_password_reset", lambda email: sent.append(email))
+    admin_post = lambda uid: client_as(ADMIN).post(f"/team/{uid}/update", headers={"HX-Request": "true"},
+                                                   data={"action": "send_reset", "csrf_token": auth.csrf_token_for(ADMIN.user_id)})
+    assert "Reset link sent" in admin_post("id-active@acme.io").text and sent == ["active@acme.io"]
+    assert "Reactivate them first" in admin_post("id-gone@acme.io").text and sent == ["active@acme.io"]
+    r = client_as(MEMBER).post("/team/id-active@acme.io/update", headers={"HX-Request": "true"},
+                               data={"action": "send_reset", "csrf_token": auth.csrf_token_for(MEMBER.user_id)})
+    assert r.status_code == 403 and sent == ["active@acme.io"]

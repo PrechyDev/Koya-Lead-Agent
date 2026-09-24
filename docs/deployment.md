@@ -38,6 +38,8 @@ headers are served; idle memory is **122 MB** (Render free allows 512 MB); a DEV
 ## 2. Supabase Auth settings ($0)
 
 1. Authentication → URL configuration: **Site URL** = the Render URL; add `https://<service>.onrender.com/accept-invite`
+   and `https://<service>.onrender.com/reset-password` (for local Docker tests also `http://localhost:8001/accept-invite` and
+   `http://localhost:8001/reset-password`)
    to **Redirect URLs**.
 2. Authentication → Sign-ups: keep **invite-only** (no public sign-up).
 

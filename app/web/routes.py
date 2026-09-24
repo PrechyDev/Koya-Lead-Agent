@@ -129,6 +129,63 @@ async def logout(request: Request):
     return response
 
 
+# ---------------------------------------------------------------------------
+# Password reset (D-64): self-service and admin-triggered; only active members of THIS app get an email, and
+# everyone sees the same answer, so the page never reveals who has an account.
+# ---------------------------------------------------------------------------
+@router.get("/forgot-password", response_class=HTMLResponse)
+async def forgot_password_page(request: Request):
+    return templates.TemplateResponse(request, "forgot_password.html", _ctx(request))
+
+
+@router.post("/forgot-password")
+@limiter.limit("3/15minutes")
+async def forgot_password_submit(request: Request, email: str = Form(...)):
+    email = email.strip().lower()
+    if not is_valid_email(email):
+        return templates.TemplateResponse(request, "forgot_password.html",
+                                          _ctx(request, error=EMAIL_HINT, email=email), status_code=400)
+    member = await db.run(db.get_member_by_email, email)
+    if member and member["is_active"]:
+        try:
+            await db.run(auth.send_password_reset, email)
+        except auth.AuthError as exc:  # tell the admin; the person still sees the neutral answer
+            await db.run(alerts.raise_alert, "unexpected", f"password reset email failed: {exc.message}")
+    return templates.TemplateResponse(request, "forgot_password.html", _ctx(request, sent=True))
+
+
+@router.get("/reset-password", response_class=HTMLResponse)
+async def reset_password_page(request: Request):
+    return templates.TemplateResponse(request, "reset_password.html", _ctx(request))
+
+
+@router.post("/reset-password")
+@limiter.limit("10/15minutes")
+async def reset_password_submit(request: Request, access_token: str = Form(...), refresh_token: str = Form(""),
+                                password: str = Form(...), confirm: str = Form(...)):
+    def fail(msg: str, status: int = 400):
+        return templates.TemplateResponse(request, "reset_password.html", _ctx(request, error=msg), status_code=status)
+
+    if len(password) < MIN_PASSWORD_LENGTH or password != confirm:
+        return fail(f"Passwords must match and be at least {MIN_PASSWORD_LENGTH} characters.")
+    try:
+        claims = await db.run(auth.verify_access_token, access_token)
+    except Exception:  # noqa: BLE001
+        return fail("This reset link is invalid or has expired. Request a new one from the sign-in page.", 401)
+    member = await db.run(db.get_member, claims.get("sub", ""))
+    if not member or not member["is_active"]:
+        # A reset never grants access: only active members of this app can finish one here.
+        return fail("This account doesn't have access to this app. Ask an admin if you think it should.", 403)
+    try:
+        await db.run(auth.set_password, access_token, password)
+    except auth.AuthError as exc:
+        return fail(exc.message)
+    response = RedirectResponse("/", status_code=303)
+    auth.set_session_cookies(response, {"access_token": access_token, "refresh_token": refresh_token,
+                                        "expires_in": 3600})
+    return response
+
+
 @router.get("/accept-invite", response_class=HTMLResponse)
 async def accept_invite_page(request: Request):
     return templates.TemplateResponse(request, "accept_invite.html", _ctx(request))
@@ -467,6 +524,18 @@ async def team_invite(request: Request, email: str = Form(...), full_name: str =
 async def team_update(request: Request, user_id: str, action: str = Form(...), csrf_token: str = Form(""),
                       member: Member = Depends(require_admin)):
     _check_csrf(request, member, csrf_token)
+    if action == "send_reset":  # admin-triggered password reset (D-64)
+        target = await db.run(db.get_member, user_id)
+        if not target:
+            raise HTTPException(status_code=404, detail="Member not found.")
+        if not target["is_active"]:
+            return _banner(request, "warning", "Reactivate them first; deactivated people can't reset a password here.", 400)
+        try:
+            await db.run(auth.send_password_reset, target["email"])
+        except auth.AuthError as exc:
+            return _banner(request, "error", exc.message, exc.status)
+        return _banner(request, "success", f"Reset link sent to {target['email']}. They choose a new password from the "
+                                           "email; it changes their password for every Koya tool.")
     fields = {"deactivate": {"is_active": False}, "reactivate": {"is_active": True},
               "make_admin": {"role": "admin"}, "make_member": {"role": "member"}}.get(action)
     if fields is None:

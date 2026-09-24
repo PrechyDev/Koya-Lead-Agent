@@ -26,7 +26,8 @@ ROOT = Path(__file__).resolve().parent
 CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
        "img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; "
        "frame-ancestors 'none'")
-PUBLIC_PATHS = ("/login", "/accept-invite", "/health", "/static/", "/fixtures/", "/favicon.ico")
+PUBLIC_PATHS = ("/login", "/accept-invite", "/forgot-password", "/reset-password", "/health", "/static/",
+                "/fixtures/", "/favicon.ico")
 
 
 def client_ip(request: Request) -> str:

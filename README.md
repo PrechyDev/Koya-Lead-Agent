@@ -48,7 +48,7 @@ git config core.hooksPath .githooks        # secret scan before every commit
 ## Tests
 
 ```bash
-.venv/Scripts/python -m pytest -q          # 176 tests; uses the real DB (throwaway rows), fakes all paid APIs
+.venv/Scripts/python -m pytest -q          # 181 tests; uses the real DB (throwaway rows), fakes all paid APIs
 ```
 
 ## Useful scripts
@@ -68,7 +68,7 @@ git config core.hooksPath .githooks        # secret scan before every commit
 3. Set the secret env vars in the Render dashboard:
    - `SUPABASE_DB_DSN` is the **app-role** DSN. Never set the admin DSN on Render.
    - Also: the API keys, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, and `APP_BASE_URL` (your `https://….onrender.com`).
-4. In Supabase → Authentication → URL configuration, add `https://….onrender.com/accept-invite` to the redirect URLs.
+4. In Supabase → Authentication → URL configuration, add `https://….onrender.com/accept-invite` and `https://….onrender.com/reset-password` to the redirect URLs.
 5. Deploy, then open `/health` (expects `"database": "ok"`). The full, ordered plan with checks and costs is in `docs/deployment.md`.
 
 ## Owner alerts (n8n → email)
@@ -84,7 +84,7 @@ The same problem within 30 minutes is counted, not re-sent. Client-facing messag
 
 ## Safety summary
 
-- Nothing public except `/login`, `/accept-invite` and `/health` (plus two test pages, only while `FIXTURE_MODE=true`).
+- Nothing public except `/login`, `/accept-invite`, `/forgot-password`, `/reset-password` and `/health` (plus two test pages, only while `FIXTURE_MODE=true`).
 - Supabase Auth logins, admin/member roles checked on the server, and CSRF tokens on every action.
 - The app DB user has no DELETE, no DROP, and no access to other schemas. RLS is on.
 - The agent has no web browsing, shell or file tools. Our tools enforce all limits from the run record.

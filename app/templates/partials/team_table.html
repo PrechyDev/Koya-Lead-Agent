@@ -18,6 +18,8 @@
             <button class="btn small" type="submit" name="action" value="make_member" {% if protected %}disabled title="{{ 'The owner stays an admin' if m.is_owner else 'At least one active admin must remain' }}"{% endif %}>Make member</button>
             {% endif %}
             {% if m.is_active %}
+            <button class="btn small" type="submit" name="action" value="send_reset"
+              hx-confirm="Email {{ m.full_name }} a link to choose a new password? It changes their password for every Koya tool.">Send reset link</button>
             <button class="btn small danger" type="submit" name="action" value="deactivate" hx-confirm="Deactivate {{ m.full_name }}? They lose access immediately."
               {% if protected or m.user_id|string == member.user_id %}disabled title="{{ 'You can’t deactivate yourself' if m.user_id|string == member.user_id else ('The owner can’t be deactivated' if m.is_owner else 'At least one active admin must remain') }}"{% endif %}>Deactivate</button>
             {% else %}

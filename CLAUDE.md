@@ -55,7 +55,7 @@ The owner is a **Python developer** who knows some TypeScript, and wants to be *
 10. **Database:** only the `lead_agent` schema in the existing Supabase project. It is **not** exposed via the Data API. Connect directly (psycopg) through the Session pooler. **Schema-qualify every query** (`lead_agent.runs`); never rely on `search_path`. The deployed app uses the least-privilege `lead_agent_app` role (no DELETE/DROP). The admin DSN is local-only, for migrations. Never touch other schemas (Week 3/4 data lives there).
 11. **No bypassing access controls:** public pages only; never Firecrawl stealth/proxy options; a 401/403/login wall means `needs_review`.
 12. **Drafts leave the app only after human approval** (JSON export includes approved drafts only).
-13. **Access:** Supabase Auth logins (Week 4 pattern), with tokens in HttpOnly cookies and verified server-side via JWKS. Roles are `admin` / `member` in `lead_agent.members`, checked on the server for every request, never just by hiding UI. Invite-only; nothing is public except `/login`, `/accept-invite` and `/health`. **Never add a trigger on `auth.users`.** The Supabase anon and service-role keys are server-side only.
+13. **Access:** Supabase Auth logins (Week 4 pattern), with tokens in HttpOnly cookies and verified server-side via JWKS. Roles are `admin` / `member` in `lead_agent.members`, checked on the server for every request, never just by hiding UI. Invite-only; nothing is public except `/login`, `/accept-invite`, `/forgot-password`, `/reset-password` and `/health`. Logins are shared across Koya's tools (single sign-on, specs D-63); access is per tool. **Never add a trigger on `auth.users`.** The Supabase anon and service-role keys are server-side only.
 14. **Never touch another project's schema or migrations** (Week 3/4) without showing the owner the exact SQL and getting an OK.
 
 ## Process rules
@@ -116,7 +116,7 @@ Models are set per role via `MODEL_ORCHESTRATOR`, `MODEL_ICP`, `MODEL_RESEARCHER
 ```
 py -3.12 -m venv .venv && .venv/Scripts/python -m pip install -r requirements.txt   # + pytest pytest-asyncio respx ruff
 .venv/Scripts/python -m uvicorn app.main:app --port 8000            # run locally (NOT --reload on Windows: it can't start the agent CLI)
-.venv/Scripts/python -m pytest -q                                   # 176 tests (real DB, paid APIs faked)
+.venv/Scripts/python -m pytest -q                                   # 181 tests (real DB, paid APIs faked)
 .venv/Scripts/python scripts/migrate.py                             # apply DB migrations (admin DSN, laptop only)
 .venv/Scripts/python scripts/create_app_role.py                     # create/sync the app DB user from the DSN you put in .env
 .venv/Scripts/python scripts/bootstrap_owner.py <email> "<Name>" --owner [--invite]   # give the first admin access

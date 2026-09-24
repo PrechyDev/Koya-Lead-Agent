@@ -108,12 +108,30 @@ def refresh_session(refresh_token: str) -> dict | None:
     return response.json() if response.status_code == 200 else None
 
 
-def set_password(access_token: str, password: str, full_name: str) -> None:
+def set_password(access_token: str, password: str, full_name: str | None = None) -> None:
     headers = {**_auth_headers(), "Authorization": f"Bearer {access_token}"}
-    response = httpx.put(_auth_url("user"), headers=headers,
-                         json={"password": password, "data": {"full_name": full_name}}, timeout=15)
+    body: dict = {"password": password}
+    if full_name:
+        body["data"] = {"full_name": full_name}
+    response = httpx.put(_auth_url("user"), headers=headers, json=body, timeout=15)
     if response.status_code >= 400:
         raise AuthError(_message_from(response, "Couldn't set your password. Ask for a new invite."), 400)
+
+
+def send_password_reset(email: str) -> None:
+    """Ask Supabase to email a password-reset link that opens /reset-password (D-64).
+
+    Callers decide WHO may get one (only active members of this app); this just sends it. The login is shared
+    by Koya's tools (D-63), so the new password applies to all of them.
+    """
+    settings = get_settings()
+    response = httpx.post(_auth_url("recover"), headers=_auth_headers(),
+                          params={"redirect_to": f"{settings.app_base_url.rstrip('/')}/reset-password"},
+                          json={"email": email}, timeout=20)
+    if response.status_code == 429:
+        raise AuthError("Reset emails are being rate-limited by Supabase. Wait a bit and try again.", 429)
+    if response.status_code >= 400:
+        raise AuthError(_message_from(response, "Couldn't send the reset email right now."), 502)
 
 
 def invite_user(email: str, full_name: str) -> tuple[str | None, bool]:
