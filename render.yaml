@@ -46,8 +46,8 @@ services:
         value: claude-haiku-4-5
       - key: CLAUDE_BUDGET_TOTAL_USD
         value: "6.00"
-      - key: DEV_LIMITS               # "true" for the first deploy's checks; "false" for the real runs (deployment.md)
-        value: "true"
+      - key: DEV_LIMITS               # full limits on Render (D-27/D-33); the owner changes it in Render if needed
+        value: "false"
       - key: MAX_RUNS_PER_DAY
         value: "5"
       - key: FIXTURE_MODE             # "true" only while running the public injection test (deployment.md 5.5)
