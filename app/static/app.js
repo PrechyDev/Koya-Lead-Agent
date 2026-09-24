@@ -100,13 +100,52 @@
     if (close) close.closest(".banner").remove();
   });
 
+  // Show/hide password: an eye button inside every password field (added here, so every form gets it).
+  var EYE = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" ' +
+    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/>' +
+    '<circle cx="12" cy="12" r="3"/></svg>';
+  var EYE_OFF = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" ' +
+    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.7 10.7 0 0 1 12 19c-7 0-11-7-11-7' +
+    'a19.8 19.8 0 0 1 5.06-5.94M9.9 4.24A9.1 9.1 0 0 1 12 4c7 0 11 7 11 7a19.9 19.9 0 0 1-2.16 3.19M1 1l22 22"/></svg>';
+  function addPasswordToggles(root) {
+    (root || document).querySelectorAll('input[type="password"]:not([data-has-toggle])').forEach(function (input) {
+      input.setAttribute("data-has-toggle", "");
+      var wrap = document.createElement("span");
+      wrap.className = "pw-wrap";
+      input.parentNode.insertBefore(wrap, input);
+      wrap.appendChild(input);
+      var btn = document.createElement("button");
+      btn.type = "button";  // never submits the form
+      btn.className = "pw-toggle";
+      btn.setAttribute("aria-label", "Show password");
+      btn.setAttribute("aria-pressed", "false");
+      if (input.id) btn.setAttribute("aria-controls", input.id);
+      btn.innerHTML = EYE;
+      btn.addEventListener("click", function () {
+        var show = input.type === "password";
+        input.type = show ? "text" : "password";
+        btn.innerHTML = show ? EYE_OFF : EYE;
+        btn.setAttribute("aria-label", show ? "Hide password" : "Show password");
+        btn.setAttribute("aria-pressed", show ? "true" : "false");
+        input.focus();
+      });
+      wrap.appendChild(btn);
+    });
+  }
+  document.addEventListener("DOMContentLoaded", function () { addPasswordToggles(); });
+  document.addEventListener("htmx:load", function (event) { addPasswordToggles(event.target); });
+  // Never submit a password while it's visible (browsers could then save/autofill it as plain text).
+  document.addEventListener("submit", function (event) {
+    event.target.querySelectorAll('input[data-has-toggle][type="text"]').forEach(function (input) { input.type = "password"; });
+  }, true);
+
   // Field checks (design.md §2), like Google Forms: a problem is shown in red directly UNDER the field it's
   // about, with a red border, while the person types (after a short pause, so it doesn't flash on every key)
   // and at once when they leave the field. It disappears as soon as the value is fixed. An EMPTY field shows
   // nothing (people can see it's empty); the submit button just stays disabled until the form is complete.
   // Buttons can add their own condition with data-requires="<field id>" (e.g. Reject needs a note). Buttons
   // marked data-locked (server decided) or data-custom-enable (own script) are left alone.
-  var FIELDS = "input:not([type=hidden]), textarea, select";
+  var FIELDS = "input:not([type=hidden]), textarea, select";  // includes a shown password (type=text)
 
   function fieldError(el) {
     var value = el.value.trim();
@@ -130,7 +169,7 @@
       slot.id = id;
       slot.className = "field-error";
       slot.setAttribute("aria-live", "polite");
-      el.insertAdjacentElement("afterend", slot);
+      (el.closest(".pw-wrap") || el).insertAdjacentElement("afterend", slot);
       el.setAttribute("aria-describedby", ((el.getAttribute("aria-describedby") || "") + " " + id).trim());
     }
     slot.textContent = message;

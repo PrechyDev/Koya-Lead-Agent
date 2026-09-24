@@ -87,6 +87,11 @@ CATALOGUE: dict[str, FailureKind] = {k.code: k for k in [
                 "The app can't reach its database right now. Please try again in a few minutes.",
                 "Postgres is unreachable (Supabase paused, down, or the DSN/password changed). Check the Supabase "
                 "dashboard; a paused free project needs 'Restore'."),
+    FailureKind("auth_token_rejected", "app", "warning", False,
+                "We couldn't confirm your sign-in. Please try again in a moment.",
+                "Supabase issued a login token this server refused (e.g. 'not yet valid' or 'expired' right after "
+                "sign-in). Usually this server's clock is off: on Docker Desktop, restart Docker (or run "
+                "`wsl --shutdown`) to resync it; on Render this shouldn't happen. The detail names the exact error."),
     FailureKind("unexpected", "app", "critical", False,
                 "Something went wrong on our side. Your admin has been told.",
                 "Unhandled error (see detail and the server logs for the reference id)."),

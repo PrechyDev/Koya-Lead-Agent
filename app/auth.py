@@ -26,6 +26,10 @@ from app.config import get_settings
 ACCESS_COOKIE = "la_access"
 REFRESH_COOKIE = "la_refresh"
 CSRF_MAX_AGE_S = 12 * 3600
+# Supabase stamps each login token with the time it was issued. A server whose clock runs even a second behind
+# Supabase's would see a brand-new token as "not yet valid" and refuse the sign-in (found in Docker on Windows,
+# whose VM clock drifts). Allowing a small difference is standard practice; expired tokens are still refused.
+JWT_CLOCK_SKEW_S = 60
 _jwks_client: jwt.PyJWKClient | None = None
 
 
@@ -58,7 +62,8 @@ def _jwks() -> jwt.PyJWKClient:
 def verify_access_token(token: str) -> dict:
     settings = get_settings()
     key = _jwks().get_signing_key_from_jwt(token)
-    return jwt.decode(token, key.key, algorithms=["ES256", "RS256"], audience=settings.supabase_jwt_audience)
+    return jwt.decode(token, key.key, algorithms=["ES256", "RS256"], audience=settings.supabase_jwt_audience,
+                      leeway=JWT_CLOCK_SKEW_S)
 
 
 def _auth_headers(service: bool = False) -> dict[str, str]:

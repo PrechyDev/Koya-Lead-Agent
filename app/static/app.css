@@ -103,6 +103,15 @@ main { max-width: 1180px; margin: 0 auto; padding: 16px; display: flex; flex-dir
 @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } .btn { transition: none; } }
 .help { font-size: 0.85rem; color: var(--text-muted); }
 .disabled-reason { font-size: 0.85rem; color: var(--warning); }
+/* Show/hide password (app.js): the eye sits inside the right edge of the box. */
+.pw-wrap { position: relative; display: block; }
+.pw-wrap input { width: 100%; padding-right: 44px; }
+.pw-toggle { position: absolute; top: 50%; right: 6px; transform: translateY(-50%); display: inline-flex; align-items: center;
+  justify-content: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: var(--radius); background: transparent;
+  color: var(--text-muted); cursor: pointer; }
+.pw-toggle:hover { color: var(--text); background: var(--surface-2); }
+.pw-toggle:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.pw-toggle:active { transform: translateY(-50%) scale(0.95); }
 /* Field problems sit directly under the field, like Google Forms (app.js). */
 .field-error { margin: 4px 0 0; font-size: 0.85rem; color: var(--danger); }
 input.invalid, textarea.invalid, select.invalid { border-color: var(--danger); box-shadow: 0 0 0 1px var(--danger); }

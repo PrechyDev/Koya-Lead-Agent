@@ -6,6 +6,7 @@ import re
 import uuid
 from datetime import datetime
 
+import jwt
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 
@@ -13,7 +14,7 @@ from app import alerts, auth, db
 from app.agent.runner import AGENT_CANNOT_START, agent_can_start
 from app.auth import Member, current_member, require_admin
 from app.config import get_settings, limits_for_run
-from app.failures import ServiceFailure, admin_message_from_detail, message_for
+from app.failures import CATALOGUE, ServiceFailure, admin_message_from_detail, message_for
 from app.lib.budget import BudgetExceeded, assert_can_spend
 from app.lib.icp_defaults import MAX_LEAD_COUNT
 from app.lib.objective import objective_hash, objective_problem
@@ -105,7 +106,12 @@ async def login_submit(request: Request, email: str = Form(...), password: str =
     except auth.AuthError as exc:
         return templates.TemplateResponse(request, "login.html", _ctx(request, next=next, error=exc.message,
                                                                       email=email), status_code=exc.status)
-    claims = await db.run(auth.verify_access_token, tokens["access_token"])
+    try:
+        claims = await db.run(auth.verify_access_token, tokens["access_token"])
+    except jwt.PyJWTError as exc:  # e.g. this server's clock is behind Supabase's (auth_token_rejected)
+        await db.run(alerts.raise_alert, "auth_token_rejected", f"{type(exc).__name__}: {exc}")
+        return templates.TemplateResponse(request, "login.html", _ctx(
+            request, next=safe_next(next), email=email, error=CATALOGUE["auth_token_rejected"].client), status_code=503)
     member = await db.run(auth.load_member, claims.get("sub", ""))
     if member is None:
         return templates.TemplateResponse(request, "login.html", _ctx(

@@ -245,3 +245,41 @@ def test_security_headers_and_no_self_demotion(client_as):
     r = client_as(ADMIN).post(f"/team/{ADMIN.user_id}/update", data={"action": "deactivate", "csrf_token": token},
                               headers={"HX-Request": "true"})
     assert r.status_code == 400 and "own admin access" in r.text
+
+
+def _signed_token(iat_offset_s: int):
+    import time
+    from types import SimpleNamespace
+
+    import jwt as pyjwt
+    from cryptography.hazmat.primitives.asymmetric import ec
+    key = ec.generate_private_key(ec.SECP256R1())
+    now = int(time.time())
+    token = pyjwt.encode({"sub": "u1", "aud": "authenticated", "iat": now + iat_offset_s, "exp": now + 3600},
+                         key, algorithm="ES256")
+    return token, SimpleNamespace(get_signing_key_from_jwt=lambda t: SimpleNamespace(key=key.public_key()))
+
+
+def test_token_from_a_slightly_faster_clock_is_accepted(monkeypatch):
+    """Docker's clock ran ~1 s behind Supabase's: a brand-new token looked 'not yet valid' (owner's sign-in)."""
+    import jwt as pyjwt
+    token, jwks = _signed_token(iat_offset_s=5)
+    monkeypatch.setattr(auth, "_jwks", lambda: jwks)
+    assert auth.verify_access_token(token)["sub"] == "u1"
+    far, jwks = _signed_token(iat_offset_s=300)  # a clock 5 minutes off is still refused
+    monkeypatch.setattr(auth, "_jwks", lambda: jwks)
+    with pytest.raises(pyjwt.ImmatureSignatureError):
+        auth.verify_access_token(far)
+
+
+def test_sign_in_with_an_unverifiable_token_gets_a_plain_message(client_as, monkeypatch):
+    import jwt as pyjwt
+
+    from app.web import routes
+    monkeypatch.setattr(auth, "password_sign_in", lambda e, p: {"access_token": "t", "refresh_token": "r"})
+    def refuse(token):
+        raise pyjwt.ImmatureSignatureError("The token is not yet valid (iat)")
+    monkeypatch.setattr(auth, "verify_access_token", refuse)
+    monkeypatch.setattr(routes.alerts, "raise_alert", lambda *a, **k: None)
+    r = client_as(None).post("/login", data={"email": "sam@acme.io", "password": "x", "next": "/"})
+    assert r.status_code == 503 and "confirm your sign-in" in r.text and "Something went wrong" not in r.text
