@@ -300,6 +300,13 @@ def next_tool_call_seq(run_id: str) -> int:
     return int(row["tool_call_count"]) if row else 0
 
 
+def count_tool_calls(run_id: str, tool_names: list[str]) -> int:
+    """Calls to our own tools so far (the max_tool_calls cap); logged events like skill loads aren't counted."""
+    row = fetch_one(f"select count(*) as n from {t('tool_calls')} where run_id = %s and tool_name = any(%s)",
+                    (run_id, tool_names))
+    return int(row["n"]) if row else 0
+
+
 def active_run() -> dict | None:
     return fetch_one(
         f"select * from {t('runs')} where status = any(%s) order by created_at desc limit 1",
@@ -476,17 +483,18 @@ def get_cached_page(url: str, max_age_days: int) -> dict | None:
 
 def put_cached_page(*, url: str, domain: str, final_url: str | None, title: str | None, content: str,
                     truncated: bool, status_code: int | None, injection_flags: list[str],
-                    tools_detected: list[dict] | None = None) -> None:
+                    tools_detected: list[dict] | None = None, links: list[str] | None = None,
+                    parked: bool = False) -> None:
     execute(
         f"""insert into {t('scrape_cache')} (url, domain, final_url, title, content, truncated, status_code,
-                                           injection_flags, tools_detected, fetched_at)
-            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, now())
+                                           injection_flags, tools_detected, links, parked, fetched_at)
+            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
             on conflict (url) do update set final_url = excluded.final_url, title = excluded.title,
               content = excluded.content, truncated = excluded.truncated, status_code = excluded.status_code,
               injection_flags = excluded.injection_flags, tools_detected = excluded.tools_detected,
-              fetched_at = now()""",
+              links = excluded.links, parked = excluded.parked, fetched_at = now()""",
         (url, domain, final_url, title, content, truncated, status_code, Jsonb(injection_flags),
-         Jsonb(tools_detected or [])),
+         Jsonb(tools_detected or []), Jsonb(links or []), parked),
     )
 
 
@@ -500,6 +508,13 @@ def record_spend(source: str, cost_usd: Decimal | float, *, ref_id: str | None =
             values (%s, %s, %s, %s, %s, %s, %s)""",
         (source, ref_id, model, input_tokens, output_tokens, Decimal(str(cost_usd)), note),
     )
+
+
+def run_spend(run_id: str, source: str | None = None) -> Decimal:
+    """Ledger spend recorded against one run (optionally one source, e.g. 'grounding')."""
+    row = fetch_one(f"select coalesce(sum(cost_usd), 0) as s from {t('spend_ledger')} where ref_id = %s"
+                    + (" and source = %s" if source else ""), (run_id, source) if source else (run_id,))
+    return Decimal(str(row["s"]))
 
 
 def total_spend() -> Decimal:

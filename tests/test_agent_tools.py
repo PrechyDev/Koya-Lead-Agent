@@ -175,12 +175,25 @@ async def test_full_tool_flow(run_ctx, fake_apify, fake_scrape, monkeypatch):
     assert all(c["finished_at"] for c in calls)
 
 
-async def test_tool_call_cap_blocks(run_ctx):
+async def test_tool_call_cap_blocks_work_but_never_finishing(run_ctx):
     ctx = run_ctx
     ctx.limits = {**ctx.limits, "max_tool_calls": 1}
-    await call(ctx, "get_run_state", {"purpose": "1"})
-    data, _ = await call(ctx, "get_run_state", {"purpose": "2"})
+    await call(ctx, "get_research_brief", {"purpose": "1", "domain": "nowhere.example"})
+    data, _ = await call(ctx, "get_research_brief", {"purpose": "2", "domain": "nowhere.example"})
     assert data["reason"] == "tool_call_limit_reached"
+    # Looking at the run and finishing it stay allowed at the cap (audit fix: finish_run used to be blocked too).
+    data, err = await call(ctx, "get_run_state", {"purpose": "3"})
+    assert not err and data.get("reason") != "tool_call_limit_reached"
+
+
+async def test_logged_events_do_not_use_up_the_tool_call_cap(run_ctx):
+    from app.agent.logging import log_event
+    ctx = run_ctx
+    ctx.limits = {**ctx.limits, "max_tool_calls": 1}
+    for _ in range(3):
+        await log_event(ctx, "orchestrator", "Skill", "leadagent:lead-qualification")
+    data, _ = await call(ctx, "get_research_brief", {"purpose": "1", "domain": "nowhere.example"})
+    assert data.get("reason") != "tool_call_limit_reached"
 
 
 async def test_negative_disqualifiers_are_refused(run_ctx):
@@ -242,3 +255,69 @@ async def test_icp_without_company_type_asks_and_defaults_fill_the_rest(run_ctx)
     assert not err and run["icp"]["geography"] == ["United States"] and "10-100 employees" in run["icp"]["hard_filters"]
     assert any("default" in a for a in run["icp"]["assumptions"])
     assert run["limits"]["target_qualified"] == 1  # default 10, capped at this test run's limit of 1
+
+
+# --- final audit regressions -------------------------------------------------------------------------------------
+async def _one_lead(ctx):
+    await call(ctx, "save_icp", ICP_ARGS)
+    await call(ctx, "discover_companies", {"purpose": "p", "search_query": "workflow automation saas"})
+    return db.get_lead_by_domain(ctx.run_id, "alpha-tooltest.com")
+
+
+async def test_too_vague_keeps_the_models_question(run_ctx):
+    """too_vague has no fixed wording, so the model's question must be kept (it used to be blanked -> retry loop)."""
+    args = {**ICP_ARGS, "request_type": "too_vague", "is_searchable": False,
+            "clarification_question": "Which industry should the companies be in?"}
+    data, err = await call(run_ctx, "save_icp", args)
+    assert not err, data
+    run = db.get_run(run_ctx.run_id)
+    assert run["clarification_question"] == "Which industry should the companies be in?"
+
+
+async def test_the_website_is_citable_only_after_it_was_scraped(run_ctx, fake_apify, fake_scrape):
+    lead = await _one_lead(run_ctx)
+    assert lead["fetched_urls"] == ["https://www.linkedin.com/company/alpha-tooltest/"]
+    checks = [{"filter": f, "result": "pass", "evidence": "site", "source_url": "https://alpha-tooltest.com/"}
+              for f in ICP_ARGS["icp"]["hard_filters"]]
+    data, err = await call(run_ctx, "save_qualification", {
+        "purpose": "q", "domain": "alpha-tooltest.com", "status": "qualified", "hard_filter_checks": checks,
+        "source_urls": ["https://alpha-tooltest.com/"], "source_summary": "Alpha sells B2B SaaS to clinics."})
+    assert err and "never fetched" in data["error"]
+
+
+async def test_a_failed_page_cannot_be_retried_for_free(run_ctx, fake_apify, monkeypatch):
+    await _one_lead(run_ctx)
+    tries = []
+
+    async def broken(url, **kwargs):
+        tries.append(url)
+        raise fc.ScrapeError("access_denied", "Page is behind a login or bot check.", 403)
+    monkeypatch.setattr(T.fc, "scrape", broken)
+    run_ctx.limits = {**run_ctx.limits, "max_pages_per_domain": 1}
+    await call(run_ctx, "scrape_website", {"purpose": "home", "domain": "alpha-tooltest.com", "path": "/"})
+    data, _ = await call(run_ctx, "scrape_website", {"purpose": "again", "domain": "alpha-tooltest.com", "path": "/"})
+    assert data["reason"] == "already_failed" and len(tries) == 1
+
+
+async def test_a_cached_homepage_keeps_its_links_and_parked_flag(run_ctx, fake_apify, fake_scrape):
+    await _one_lead(run_ctx)
+    db.put_cached_page(url="https://alpha-tooltest.com/", domain="alpha-tooltest.com", final_url=None, title="Alpha",
+                       content="This domain is for sale. " * 5, truncated=False, status_code=200, injection_flags=[],
+                       links=["/team"], parked=True)
+    data, _ = await call(run_ctx, "scrape_website", {"purpose": "home", "domain": "alpha-tooltest.com", "path": "/"})
+    assert data["from_cache"] and data["internal_links"] == ["/team"] and data["parked_or_for_sale"]
+    assert fake_scrape == []
+
+
+async def test_a_budget_stop_does_not_use_up_a_draft_attempt(run_ctx, fake_apify, monkeypatch):
+    lead = await _one_lead(run_ctx)
+    db.update_lead(str(lead["id"]), qualification_status="qualified", source_urls=["https://alpha-tooltest.com/"])
+    monkeypatch.setattr(T, "GROUNDING_RUN_CAP_USD", 0.0)  # this run's fact-check allowance is used up
+    steps = [{"step": i, "subject": f"Clinic onboarding {i}", "body": "Hi {{first_name}}, Alpha sells SaaS to "
+              "clinics. Is onboarding still manual? {{sender_name}}", "personalization_note": "clinics",
+              "evidence_ref": "https://alpha-tooltest.com/"} for i in (1, 2, 3)]
+    data, err = await call(run_ctx, "save_outreach", {"purpose": "o", "domain": "alpha-tooltest.com", "emails": steps,
+                                                      "linkedin_message": "Hi {{first_name}}, quick question?"})
+    assert err and "budget" in data["error"]
+    assert db.get_lead(str(lead["id"]))["outreach_attempts"] == 0
+    assert run_ctx.fatal and run_ctx.fatal.code == "budget_exhausted"

@@ -71,7 +71,7 @@ Before finalizing copy, check:
 
 ## Project rules
 
-1. **Start with `get_lead`** for the domain. Use ONLY its `source_summary`, `fit_reasons`, `hard_filter_checks` evidence and discovery facts. Nothing else is known about the company.
+1. **Start with `get_lead`** for the domain. Use ONLY its `source_summary`, `fit_reasons`, `hard_filter_evidence` and discovery facts. Nothing else is known about the company.
 2. **The offer (Koya Talent):** we connect founders and operators with trained AI automation assistants who take over repetitive workflows and build AI-enabled internal systems. Never invent Koya pricing, customers, statistics, timelines or guarantees.
 3. **Placeholders:** greet with `{{first_name}}` (we never know or guess the person's name) and sign off with `{{sender_name}}`. No other `{{...}}` placeholders.
 4. **Limits (checked by code):** subject ≤ 60 characters; body ≤ 120 words; email 3 ≤ 80 words; LinkedIn message ≤ 300 characters (write about 40 words, ~250 characters, to leave room); **no email addresses, phone numbers or URLs** anywhere in the copy.

@@ -2,7 +2,8 @@
 
 `logged_call` wraps a tool handler:
   1. takes the next sequence number for the run;
-  2. refuses (status 'blocked') once the run's max_tool_calls is reached;
+  2. refuses (status 'blocked') once the run's max_tool_calls is reached (skill loads and delegations don't
+     count, and finish_run / get_run_state are always allowed so a run can still end properly);
   3. writes a 'running' row, runs the handler, then updates the row with the
      outcome, a short result summary, duration and any external cost;
   4. turns unexpected exceptions into a logged 'error' + a safe message for
@@ -28,8 +29,11 @@ ROLE_BY_TOOL = {
     "scrape_website": "researcher",
     "save_qualification": "researcher",
     "get_lead": "copywriter",
+    "check_drafts": "copywriter",
     "save_outreach": "copywriter",
 }
+# Always allowed, even at the cap: the agent must still be able to look at the run and finish it properly.
+NEVER_CAPPED = {"finish_run", "get_run_state"}
 
 
 @dataclass
@@ -79,7 +83,8 @@ async def logged_call(
     seq = await db.run(db.next_tool_call_seq, ctx.run_id)
     input_summary = summarize_input(args, input_keys)
 
-    if seq > int(ctx.limits.get("max_tool_calls", 10**6)):
+    tool_calls = await db.run(db.count_tool_calls, ctx.run_id, list(ROLE_BY_TOOL))  # our tools only, not events
+    if tool_name not in NEVER_CAPPED and tool_calls >= int(ctx.limits.get("max_tool_calls", 10**6)):
         out = blocked("tool_call_limit_reached",
                       f"This run reached its limit of {ctx.limits['max_tool_calls']} tool calls. Stop and call "
                       "finish_run if you haven't.")

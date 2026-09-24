@@ -49,6 +49,8 @@ def test_classify_claude_errors(status, text, code):
     (402, "not enough usage", "apify_no_credit"),
     (403, "platform-feature-disabled: monthly usage limit exceeded", "apify_no_credit"),
     (503, "service unavailable", "apify_unavailable"),
+    (400, "invalid-input: Field input.locations is not valid", "apify_bad_input"),
+    (403, "insufficient-permissions: token can't run this actor", "apify_auth"),
 ])
 def test_classify_apify_errors(status, text, code):
     assert classify_apify(status, text) == code

@@ -98,13 +98,24 @@ def normalize_geo(value: str) -> str:
     return country_code(value) or normalize_text(value)
 
 
+_UNDER_RE = re.compile(r"\b(?:under|below|fewer\s+than|less\s+than)\b|<", re.I)
+_UP_TO_RE = re.compile(r"\b(?:up\s+to|at\s+most|no\s+more\s+than|max(?:imum)?)\b", re.I)
+
+
 def normalize_headcount(value: str | None) -> str:
-    """'10 to 100 employees' / '10–100' / '10-100' -> '10-100'."""
-    numbers = re.findall(r"\d+", (value or "").replace(",", ""))
+    """'10 to 100 employees' / '10–100' / '10-100' -> '10-100'; '50+' / 'over 50' -> '50+';
+    'under 50' -> '1-49' and 'up to 50' -> '1-50' (an upper bound, not a lower one)."""
+    text = (value or "").replace(",", "")
+    numbers = re.findall(r"\d+", text)
     if len(numbers) >= 2:
         return f"{int(numbers[0])}-{int(numbers[1])}"
     if len(numbers) == 1:
-        return f"{int(numbers[0])}+"
+        n = int(numbers[0])
+        if _UNDER_RE.search(text):
+            return f"1-{max(1, n - 1)}"
+        if _UP_TO_RE.search(text):
+            return f"1-{n}"
+        return f"{n}+"
     return ""
 
 

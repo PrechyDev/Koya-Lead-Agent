@@ -61,6 +61,10 @@ CATALOGUE: dict[str, FailureKind] = {k.code: k for k in [
                 "Your admin has been told. Anything found so far is saved.",
                 "An Apify actor run ended FAILED/TIMED-OUT/ABORTED. Open it in the Apify console (run id in the "
                 "detail) before re-running — PRD rule: stop and ask."),
+    FailureKind("apify_bad_input", "apify", "warning", True,
+                "Company search couldn't understand this search, so this research stopped. Your admin has been told.",
+                "Apify rejected the actor input (HTTP 400), e.g. an unknown location name or size band. See the "
+                "tool call's detail, fix the input mapping in app/services/apify.py, then run again."),
     FailureKind("apify_unavailable", "apify", "warning", True,
                 "Company search is temporarily unavailable. Please try again shortly.",
                 "Apify API returned a server error or didn't answer in time. Retry later; check status.apify.com."),
@@ -153,9 +157,13 @@ def classify_apify(status: int | None, text: str | None = "") -> str:
         return "apify_auth"
     if status == 404 or "record-not-found" in t or "actor with this name was not found" in t:
         return "apify_actor_not_found"
+    if "insufficient-permissions" in t:
+        return "apify_auth"  # before the credit check below, where "insufficient" would read as no credit
     if status == 402 or "usage" in t and "limit" in t or "not enough" in t or "insufficient" in t \
             or "platform-feature-disabled" in t or "max-total-charge" in t:
         return "apify_no_credit"
+    if status == 400 or "invalid-input" in t:
+        return "apify_bad_input"  # our input mapping is wrong: not an outage, and never retried
     if status == 403:
         return "apify_auth"
     return "apify_unavailable"

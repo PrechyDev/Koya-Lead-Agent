@@ -51,7 +51,8 @@ def _placeholder_problems(label: str, text: str) -> list[str]:
 
 def _banned(label: str, text: str) -> list[str]:
     lower = (text or "").lower()
-    return [f'{label} uses a banned phrase: "{p}"' for p in BANNED_PHRASES if p in lower]
+    return [f'{label} uses a banned phrase: "{p}"' for p in BANNED_PHRASES
+            if re.search(rf"(?<!\w){re.escape(p)}(?!\w)", lower)]
 
 
 # Shown to the copywriter up front (get_lead) so drafts are written to the rules, not fixed afterwards.

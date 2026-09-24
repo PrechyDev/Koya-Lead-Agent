@@ -14,7 +14,7 @@ from urllib.parse import urljoin, urlsplit
 import httpx
 
 from app.config import get_settings
-from app.lib.sanitize import sanitize_page
+from app.lib.sanitize import find_injection_flags, redact, sanitize_page
 from app.lib.tech_signals import detect_tools
 
 API_URL = "https://api.firecrawl.dev/v2/scrape"
@@ -136,9 +136,12 @@ async def scrape(url: str, *, max_chars: int = 6000, client: httpx.AsyncClient |
         raise ScrapeError("access_denied", "Page is behind a login or bot check.", site_status)
 
     clean = sanitize_page(text, max_chars=max_chars)
+    # The title is page text too: redacted and checked like the body (the model sees it outside the fence).
+    title, _ = redact((meta.get("title") or "")[:200])
+    flags = sorted(set(clean.injection_flags) | set(find_injection_flags(title)))
     return ScrapedPage(
-        url=url, final_url=final_url, title=(meta.get("title") or "")[:200], content=clean.text,
-        truncated=clean.truncated, status_code=site_status, injection_flags=clean.injection_flags,
+        url=url, final_url=final_url, title=title, content=clean.text,
+        truncated=clean.truncated, status_code=site_status, injection_flags=flags,
         redactions=clean.redactions, parked=bool(PARKED_RE.search(text[:3000])),
         links=internal_links(raw_markdown, final_url),
         tools=detect_tools(data.get("rawHtml")),

@@ -29,7 +29,13 @@ from app import alerts, db
 from app.agent import prompts
 from app.agent.context import RunContext
 from app.agent.logging import log_event
-from app.agent.tools import OUT_OF_SCOPE_QUESTION, build_scorecard, build_server, mcp_name
+from app.agent.tools import (
+    GROUNDING_RUN_CAP_USD,
+    OUT_OF_SCOPE_QUESTION,
+    build_scorecard,
+    build_server,
+    mcp_name,
+)
 from app.agent.transcripts import session_cost
 from app.config import ICP_PHASE_MAX_BUDGET_USD, ICP_PHASE_MAX_TURNS, ICP_PHASE_TIMEOUT_S, get_settings
 from app.failures import ServiceFailure, classify_claude_error
@@ -52,11 +58,7 @@ ICP_TOOLS = ["save_icp"]
 ORCHESTRATOR_TOOLS = ["discover_companies", "get_run_state", "finish_run"]
 RESEARCHER_TOOLS = ["get_research_brief", "scrape_website", "save_qualification"]
 COPYWRITER_TOOLS = ["get_lead", "check_drafts", "save_outreach"]
-GROUNDING_RESERVE_USD = Decimal("0.10")
-
-
-class RunAborted(Exception):
-    pass
+GROUNDING_RESERVE_USD = Decimal(str(GROUNDING_RUN_CAP_USD))  # the fact-checks' share, enforced per run by save_outreach
 
 
 def agent_can_start() -> bool:
@@ -469,8 +471,6 @@ async def execute_run(run_id: str, skip_icp: bool = False) -> None:
             if state != "ready":
                 return
         await run_research_phase(run_id)
-    except RunAborted as exc:
-        await db.run(fail_run, run_id, ServiceFailure("unexpected", str(exc)))
     except Exception as exc:  # noqa: BLE001 — visible failure, never silent
         log.exception("run %s failed", run_id)
         text = redact(f"{type(exc).__name__}: {exc}")[0][:900]

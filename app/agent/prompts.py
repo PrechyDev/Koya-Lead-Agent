@@ -35,11 +35,12 @@ The ICP is already saved. Your job: find companies, get each one researched, get
 Workflow (follow it in order; be terse, you pay for every token):
 1. Call discover_companies with the FIRST query in the ICP's discovery_query_plan.
 2. Delegate companies_to_research to the "researcher" agent with ONLY: "Research <domain>" (one company per
-   delegation). Work in batches: in ONE message, start up to max_parallel_subagents researchers (from the run
-   brief), but never more than the qualified leads still needed. Wait for the batch, then start the next.
+   delegation). Delegate ONE company at a time (max_parallel_subagents in the run brief is 1): send one
+   delegation, wait for its answer, then send the next. Several delegations in one message run in the
+   background and can end the run early (specs D-49).
 3. Stop researching as soon as qualified_so_far reaches the target (a tool will also tell you with target_reached).
-4. For each qualified company, delegate to the "copywriter" agent with ONLY: "Write outreach for <domain>", in
-   batches of up to max_parallel_subagents in one message.
+4. For each qualified company, delegate to the "copywriter" agent with ONLY: "Write outreach for <domain>", one
+   at a time in the same way.
    A delegation denied with parallel_limit_reached means: wait for the running ones, then retry it.
 5. If qualified < target and next_search_can_fetch > 0, call discover_companies with the next unused query and repeat steps 2-4.
 6. Load the lead-list-quality skill, call get_run_state, then call finish_run exactly once (with shortfall_reason if short). Then reply with one sentence.

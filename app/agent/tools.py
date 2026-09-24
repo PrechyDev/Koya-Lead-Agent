@@ -20,7 +20,7 @@ from app.agent.logging import Outcome, blocked, failure, logged_call, success
 from app.config import get_settings
 from app.failures import ServiceFailure
 from app.lib.budget import BudgetExceeded, assert_can_spend
-from app.lib.domain import homepage_url, normalize_domain
+from app.lib.domain import normalize_domain
 from app.lib.icp_defaults import apply_defaults, decide_lead_count, has_company_type
 from app.lib.limits import next_discovery_batch
 from app.lib.objective import icp_signature, parse_headcount_range
@@ -37,7 +37,7 @@ from app.lib.sanitize import contains_contact_details, redact, redact_obj, wrap_
 from app.lib.scoring import cap_for_status, compute_fit_score
 from app.services import apify as apify_svc
 from app.services import firecrawl as fc
-from app.services.grounding import check_grounding
+from app.services.grounding import check_grounding, grounding_call_cap
 
 SERVER_NAME = "leadtools"
 OUT_OF_SCOPE_QUESTION = {
@@ -50,7 +50,7 @@ OUT_OF_SCOPE_QUESTION = {
 MISSING_TYPE_QUESTION = ("Which kind of companies should the agent look for? For example: \"B2B SaaS companies\", "
                          "\"marketing agencies\" or \"dental clinics\". Location, size and the rest have sensible "
                          "defaults if you leave them out.")
-GROUNDING_CALL_CAP_USD = 0.03
+GROUNDING_RUN_CAP_USD = 0.10   # fact-check spend per run; equals the reserve the run start checks for
 MAX_FREE_EMPTY_SEARCHES = 1    # an Apify search that returns nothing is given back once per run
 MAX_DRAFT_CHECKS_PER_LEAD = 5  # free self-checks before save_outreach; bounded so a confused writer can't loop
 # A disqualifier is answered "does it apply?", so it must name what to EXCLUDE. "Not an agency" inverts that:
@@ -273,7 +273,9 @@ def build_handlers(ctx: RunContext) -> dict:
         if parsed.request_type != "lead_search":
             # Server rule: only a lead search may proceed, whatever else the model decided (E-50).
             parsed.is_searchable = False
-            parsed.clarification_question = OUT_OF_SCOPE_QUESTION[parsed.request_type]
+            # Fixed wording for questions / unrelated requests; for too_vague, the model's own question is kept.
+            parsed.clarification_question = (OUT_OF_SCOPE_QUESTION[parsed.request_type]
+                                             or parsed.clarification_question or MISSING_TYPE_QUESTION)
         if parsed.is_searchable and not has_company_type(icp):
             # The one required detail (D-58): without a company type or industry there's nothing to search for.
             parsed.is_searchable, parsed.request_type = False, "too_vague"
@@ -344,6 +346,7 @@ def build_handlers(ctx: RunContext) -> dict:
                           apify_run_id=exc.apify_run_id)
             out.summary = f"Apify discovery failed ({exc.code}) for '{query}'; run {exc.apify_run_id or '-'}"
             out.error = exc.message
+            out.external_cost_usd = exc.cost_usd  # a failed run that started is still billed: record it
             return out
 
         await db.run(db.add_usage, ctx.run_id, "candidates_found", result.raw_count)
@@ -365,8 +368,9 @@ def build_handlers(ctx: RunContext) -> dict:
                 continue
             screen, reason = prescreen(company, icp)
             status = "not_qualified" if screen.startswith("rejected") else "pending"
-            fetched = [u for u in (company.get("linkedin_url"), company.get("website"),
-                                   homepage_url(company["domain"])) if u]
+            # Citable sources = pages really fetched in this run. Apify fetched the LinkedIn page; the website only
+            # becomes citable once scrape_website succeeds (a failed or skipped scrape must not be cited).
+            fetched = [company["linkedin_url"]] if company.get("linkedin_url") else []
             lead = await db.run(
                 db.insert_lead_if_new, ctx.run_id, company_name=company["name"][:200],
                 company_domain=company["domain"], linkedin_url=company.get("linkedin_url"),
@@ -446,10 +450,13 @@ def build_handlers(ctx: RunContext) -> dict:
             return failure(f"Path '{path}' isn't allowed. Use '/' or one of the internal_links from the homepage.",
                            internal_links=sorted(known))
         scraped = list(data.get("scraped_pages") or [])
+        if path in (data.get("failed_pages") or []):
+            return blocked("already_failed", f"{path} already failed for this company in this run. Don't retry; "
+                                             "decide with the evidence you have.")
         if path not in scraped and len(scraped) >= int(ctx.limits["max_pages_per_domain"]):
             return blocked("page_limit_reached", f"Already scraped {len(scraped)} page(s) of this site (the limit). "
                                                  "Decide with the evidence you have.")
-        url = f"https://{lead['company_domain']}{path if path != '/' else '/'}"
+        url = f"https://{lead['company_domain']}{path}"
         if "researching" not in ctx.status_seen:
             await db.run(ctx.move_to, "researching", "Researching company websites")
 
@@ -460,7 +467,8 @@ def build_handlers(ctx: RunContext) -> dict:
             page = fc.ScrapedPage(url=url, final_url=cached["final_url"] or url, title=cached["title"] or "",
                                   content=cached["content"], truncated=cached["truncated"],
                                   status_code=cached["status_code"], injection_flags=cached["injection_flags"] or [],
-                                  links=list(known) if path == "/" else [], tools=cached.get("tools_detected") or [])
+                                  links=list(cached.get("links") or known) if path == "/" else [],
+                                  parked=bool(cached.get("parked")), tools=cached.get("tools_detected") or [])
         else:
             if await db.run(db.reserve_usage, ctx.run_id, "scrapes", "max_scrapes") is None:
                 return blocked("scrape_limit_reached", f"The run's scrape limit ({ctx.limits['max_scrapes']}) is "
@@ -471,7 +479,8 @@ def build_handlers(ctx: RunContext) -> dict:
                 if exc.failure_code:
                     ctx.scraping_disabled_reason = exc.message
                     ctx.fatal = ServiceFailure(exc.failure_code, exc.message)
-                data["scraped_pages"] = scraped + [path]
+                data["scraped_pages"] = scraped + ([path] if path not in scraped else [])
+                data["failed_pages"] = sorted(set((data.get("failed_pages") or []) + [path]))
                 await db.run(db.update_lead, str(lead["id"]), discovery_data=data)
                 advice = ("Mark this company needs_review with the concern "
                           f"'website not usable: {exc.message}'.") if path == "/" else "Decide with the homepage evidence."
@@ -481,7 +490,7 @@ def build_handlers(ctx: RunContext) -> dict:
             await db.run(db.put_cached_page, url=url, domain=lead["company_domain"], final_url=page.final_url,
                          title=page.title, content=page.content, truncated=page.truncated,
                          status_code=page.status_code, injection_flags=page.injection_flags,
-                         tools_detected=page.tools)
+                         tools_detected=page.tools, links=page.links, parked=page.parked)
 
         data["scraped_pages"] = scraped + ([path] if path not in scraped else [])
         if path == "/" and page.links:
@@ -629,20 +638,30 @@ def build_handlers(ctx: RunContext) -> dict:
                                                     "for a human to fix.")
         if "drafting" not in ctx.status_seen:
             await db.run(ctx.move_to, "drafting", "Drafting outreach for qualified leads")
-        await db.run(db.update_lead, str(lead["id"]), outreach_attempts=attempts)
         steps = [e.model_dump() for e in sorted(parsed.emails, key=lambda e: e.step)]
+        problems = check_outreach(steps, parsed.linkedin_message, lead["source_urls"] or [])
+        source_context = ""
+        if not problems:
+            # Checked before an attempt is used up: a budget stop is not the draft's fault.
+            source_context = await db.run(_grounding_context, lead)
+            call_cap = grounding_call_cap(source_context, steps, parsed.linkedin_message)
+            try:
+                assert_can_spend(await db.run(db.total_spend), call_cap, settings.claude_budget_total_usd)
+                # The run's own fact-check allowance (reserved when the run started, runner.GROUNDING_RESERVE_USD).
+                assert_can_spend(await db.run(db.run_spend, ctx.run_id, "grounding"), call_cap,
+                                 GROUNDING_RUN_CAP_USD)
+            except BudgetExceeded as exc:
+                ctx.fatal = ServiceFailure("budget_exhausted", f"fact-check budget: {exc}")
+                out = failure("The AI budget for fact-checking is used up, so no more drafts can be checked. "
+                              "Stop now; the run will finish with what it has.")
+                out.error = str(exc)
+                return out
+        await db.run(db.update_lead, str(lead["id"]), outreach_attempts=attempts)
         left = max_attempts - attempts
 
-        problems = check_outreach(steps, parsed.linkedin_message, lead["source_urls"] or [])
         report: dict = {"deterministic_problems": problems}
         cost = None
         if not problems:
-            try:
-                assert_can_spend(await db.run(db.total_spend), GROUNDING_CALL_CAP_USD,
-                                 settings.claude_budget_total_usd)
-            except BudgetExceeded as exc:
-                return failure(str(exc))
-            source_context = await db.run(_grounding_context, lead)
             flags = (lead.get("discovery_data") or {}).get("injection_flags") or []
             result = await check_grounding(source_context, steps, parsed.linkedin_message, injection_flags=flags)
             if result.cost_usd:

@@ -98,6 +98,19 @@ def emails_without_specifics(verdict: "GroundingVerdict", email_count: int) -> l
     return [f"email {i}" for i in range(1, email_count + 1) if f"email {i}" not in has_detail]
 
 
+GROUNDING_MAX_TOKENS = 3000
+
+
+def grounding_call_cap(source_context: str, steps: list[dict], linkedin_message: str,
+                       model: str | None = None) -> Decimal:
+    """Most one fact-check can cost with this model: the prompt (about 3.5 characters per token, rounded up
+    generously) plus a full-length answer. Used for the budget check before the call."""
+    model = model or get_settings().model_grounding
+    prompt_chars = len(source_context) + len(linkedin_message) + len(SYSTEM) + 1500 + sum(
+        len(str(s.get("subject", ""))) + len(str(s.get("body", ""))) for s in steps)
+    return cost_from_usage(model, int(prompt_chars / 3.5) + 500, GROUNDING_MAX_TOKENS)
+
+
 async def check_grounding(
     source_context: str, steps: list[dict], linkedin_message: str, *, model: str | None = None,
     client: anthropic.AsyncAnthropic | None = None, injection_flags: list[str] | None = None,
@@ -108,7 +121,7 @@ async def check_grounding(
     try:
         response = await client.messages.parse(
             model=model,
-            max_tokens=3000,
+            max_tokens=GROUNDING_MAX_TOKENS,
             system=SYSTEM,
             messages=[{"role": "user",
                        "content": build_prompt(source_context, steps, linkedin_message, injection_flags)}],
@@ -121,6 +134,11 @@ async def check_grounding(
     except anthropic.APIConnectionError:
         return GroundingResult(False, None, [], Decimal("0"), model, 0, 0, "fact-checker could not reach the API",
                                failure_code="anthropic_unavailable")
+    except Exception as exc:  # noqa: BLE001 — e.g. the answer was cut off and couldn't be parsed
+        # The call was billed but its usage is lost with the response: record the most it could have cost.
+        cap = grounding_call_cap(source_context, steps, linkedin_message, model)
+        return GroundingResult(False, None, [], cap, model, 0, 0,
+                               f"grounding check returned no usable verdict ({type(exc).__name__})")
 
     usage = response.usage
     cost = cost_from_usage(

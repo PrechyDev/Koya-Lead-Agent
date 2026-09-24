@@ -10,8 +10,9 @@ from urllib.parse import urlsplit
 
 import tldextract
 
-# Offline: use the suffix list bundled with tldextract, never fetch it at runtime.
-_extract = tldextract.TLDExtract(suffix_list_urls=())
+# Offline: use the suffix list bundled with tldextract, never fetch it at runtime. Private suffixes are included,
+# so a site on a shared host keeps its own name ("acme.github.io", "acme.vercel.app"), not the host's.
+_extract = tldextract.TLDExtract(suffix_list_urls=(), include_psl_private_domains=True)
 
 # Hosts that are profiles/directories/app stores, not a company's own site.
 NOT_A_COMPANY_SITE = {
@@ -53,8 +54,8 @@ def normalize_domain(value: str | None) -> str | None:
     if not parts.domain or not parts.suffix:
         return None
     registrable = f"{parts.domain}.{parts.suffix}"
-    if registrable in NOT_A_COMPANY_SITE:
-        return None
+    if registrable in NOT_A_COMPANY_SITE or parts.suffix in NOT_A_COMPANY_SITE:
+        return None  # e.g. "acme.wixsite.com" / "acme.notion.site": a page on a platform, not a company site
     if parts.suffix in {"local", "internal", "lan", "test", "invalid", "example"}:
         return None
     return registrable

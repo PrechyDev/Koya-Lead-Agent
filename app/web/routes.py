@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 
 from app import alerts, auth, db
-from app.agent.runner import AGENT_CANNOT_START, agent_can_start
+from app.agent.runner import AGENT_CANNOT_START, GROUNDING_RESERVE_USD, agent_can_start
 from app.auth import Member, current_member, require_admin
 from app.config import get_settings, limits_for_run
 from app.failures import CATALOGUE, ServiceFailure, admin_message_from_detail, message_for
@@ -320,7 +320,8 @@ async def create_run(request: Request, objective: str = Form(""),
     # The lead target comes from the objective once the ICP step reads it (D-57); until then, the preset maximum.
     limits = limits_for_run(MAX_LEAD_COUNT, dev=settings.dev_limits)
     try:
-        assert_can_spend(await db.run(db.total_spend), limits.max_budget_usd + 0.10, settings.claude_budget_total_usd)
+        assert_can_spend(await db.run(db.total_spend), limits.max_budget_usd + float(GROUNDING_RESERVE_USD),
+                         settings.claude_budget_total_usd)
     except BudgetExceeded as exc:
         failure = ServiceFailure("budget_exhausted", str(exc))
         await db.run(alerts.raise_alert, failure.code, failure.detail)

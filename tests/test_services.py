@@ -81,25 +81,36 @@ async def test_scrape_timeout_twice_raises():
 
 # --- Apify (E-07, E-08, E-09, E-11) ------------------------------------------------
 class _FakeActor:
-    def __init__(self, run):
-        self.run, self.calls = run, []
+    """start() only creates the run (the real client's shape); waiting is the run client's job."""
+    def __init__(self, run, start_errors=()):
+        self.run, self.calls, self._start_errors = run, [], list(start_errors)
 
-    async def call(self, **kwargs):
+    async def start(self, **kwargs):
         self.calls.append(kwargs)
-        return self.run
+        if self._start_errors:
+            raise self._start_errors.pop(0)
+        return {"id": self.run["id"], "status": "READY"}
 
 
 class _FakeClient:
-    def __init__(self, run, items):
-        self._actor, self._items = _FakeActor(run), items
+    def __init__(self, run, items, *, settled=0.013, wait_error=None, start_errors=()):
+        self._actor, self._items = _FakeActor(run, start_errors), items
+        self._final, self._settled, self._wait_error = run, settled, wait_error
 
     def actor(self, _):
         return self._actor
 
     def run(self, _):
+        outer = self
+
         class _R:
+            async def wait_for_finish(self, wait_duration=None):
+                if outer._wait_error:
+                    raise outer._wait_error
+                return outer._final
+
             async def get(self):
-                return {"usageTotalUsd": 0.013}
+                return None if outer._settled is None else {"usageTotalUsd": outer._settled}
         return _R()
 
     def dataset(self, _):
@@ -223,17 +234,50 @@ async def test_scrape_returns_useful_internal_links_only():
 
 async def test_cost_never_below_known_price(monkeypatch):
     # Charges not posted yet: the recorded cost falls back to items x price + start fee.
-    fake = _FakeClient({"id": "r", "status": "SUCCEEDED", "usageTotalUsd": 0.001, "defaultDatasetId": "d"}, RAW)
-    fake.run = lambda _: type("R", (), {"get": staticmethod(lambda: _none())})()
+    fake = _FakeClient({"id": "r", "status": "SUCCEEDED", "usageTotalUsd": 0.001, "defaultDatasetId": "d"}, RAW,
+                       settled=None)
     monkeypatch.setattr(apify_svc, "ApifyClientAsync", lambda token: fake)
     monkeypatch.setattr(apify_svc.asyncio, "sleep", _no_sleep)
     res = await apify_svc.find_companies(query="saas", geos=[], size_bands=[], max_items=3, max_charge_usd=0.25)
     assert res.cost_usd == pytest.approx(3 * 0.004 + 0.001)
 
 
-async def _none():
-    return None
-
-
 async def _no_sleep(_):
     return None
+
+
+def _apify_503():
+    from apify_client.errors import ApifyApiError
+
+    class _Unavailable(ApifyApiError):  # built by hand: the real one needs an HTTP response object
+        def __new__(cls):
+            return Exception.__new__(cls)
+
+        def __init__(self):
+            Exception.__init__(self, "service unavailable")
+            self.status_code, self.type = 503, "server-error"
+    return _Unavailable()
+
+
+async def test_a_problem_while_waiting_never_starts_a_second_paid_run(monkeypatch):
+    """Audit fix (rule 9): actor.call() used to be retried as a whole, so a hiccup while WAITING started a new run."""
+    err_503 = _apify_503()
+    fake = _FakeClient({"id": "run3", "status": "RUNNING", "defaultDatasetId": "d"}, RAW, settled=0.02,
+                       wait_error=err_503)
+    monkeypatch.setattr(apify_svc, "ApifyClientAsync", lambda token: fake)
+    monkeypatch.setattr(apify_svc.asyncio, "sleep", _no_sleep)
+    with pytest.raises(apify_svc.DiscoveryError) as err:
+        await apify_svc.find_companies(query="x", geos=[], size_bands=[], max_items=3, max_charge_usd=0.05)
+    assert len(fake._actor.calls) == 1                          # started once, never again
+    assert err.value.apify_run_id == "run3" and err.value.cost_usd == pytest.approx(0.02)  # cost still recorded
+    assert "Apify console" in err.value.message
+
+
+async def test_a_failed_start_request_is_retried_once(monkeypatch):
+    err_503 = _apify_503()
+    fake = _FakeClient({"id": "run4", "status": "SUCCEEDED", "usageTotalUsd": 0.013, "defaultDatasetId": "d"}, RAW,
+                       start_errors=[err_503])
+    monkeypatch.setattr(apify_svc, "ApifyClientAsync", lambda token: fake)
+    monkeypatch.setattr(apify_svc.asyncio, "sleep", _no_sleep)
+    res = await apify_svc.find_companies(query="x", geos=[], size_bands=[], max_items=3, max_charge_usd=0.05)
+    assert len(fake._actor.calls) == 2 and res.apify_run_id == "run4"

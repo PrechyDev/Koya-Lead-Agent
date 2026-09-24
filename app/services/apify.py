@@ -37,9 +37,11 @@ LOCATION_NAMES = {"us": "United States", "gb": "United Kingdom", "ca": "Canada",
 class DiscoveryError(Exception):
     """`failure_code` is a key of app.failures.CATALOGUE (None for 'no slots left', which isn't a failure)."""
 
-    def __init__(self, code: str, message: str, apify_run_id: str | None = None, failure_code: str | None = None):
+    def __init__(self, code: str, message: str, apify_run_id: str | None = None, failure_code: str | None = None,
+                 cost_usd: float | None = None):
         super().__init__(message)
         self.code, self.message, self.apify_run_id, self.failure_code = code, message, apify_run_id, failure_code
+        self.cost_usd = cost_usd  # what a run that DID start was billed, so failed runs are costed too
 
 
 @dataclass
@@ -53,17 +55,20 @@ class DiscoveryResult:
 
 
 def size_bands_for(low: int | None, high: int | None) -> list[str]:
-    """LinkedIn bands that overlap [low, high]. A band touching only at one end (1-10 vs 10-100) is skipped."""
+    """LinkedIn bands that overlap [low, high]. A band that only touches the range at one end (1-10 for 10-100,
+    or 51-200 for 10-51) is skipped, unless nothing else is left (an exact size like 10-10 keeps its band)."""
     if low is None and high is None:
         return []
-    bands = []
+    lo = low if low is not None else 0
+    hi = high if high is not None else 10**9
+    overlapping, touching = [], []
     for name, b_low, b_high in SIZE_BANDS:
         top = b_high if b_high is not None else 10**9
-        lo = low if low is not None else 0
-        hi = high if high is not None else 10**9
-        if b_low <= hi and top >= lo and not (top == lo and b_low < lo):
-            bands.append(name)
-    return bands
+        if b_low > hi or top < lo:
+            continue
+        only_touches = (top == lo and b_low < lo) or (b_low == hi and top > hi)
+        (touching if only_touches and lo < hi else overlapping).append(name)
+    return overlapping or touching
 
 
 def location_names(geos: list[str]) -> list[str]:
@@ -160,44 +165,53 @@ async def find_companies(
 
     client = ApifyClientAsync(settings.apify_token)
     actor = client.actor(settings.apify_actor_id)
-    run = None
+    # 1) START the run. Only this request is retried (once, on a 5xx/429 from Apify): it failed, so no run
+    #    exists yet. Waiting is a separate step, so a hiccup while waiting can never start a second paid run.
+    started = None
     for attempt in range(2):
         try:
-            run = await asyncio.wait_for(
-                actor.call(
-                    run_input=actor_input,
-                    max_items=int(max_items),
-                    max_total_charge_usd=Decimal(str(max_charge_usd)),
-                    run_timeout=timedelta(seconds=timeout_s),
-                    logger=None,
-                ),
-                timeout=timeout_s + 60,
+            started = await actor.start(
+                run_input=actor_input,
+                max_items=int(max_items),
+                max_total_charge_usd=Decimal(str(max_charge_usd)),
+                run_timeout=timedelta(seconds=timeout_s),
             )
             break
         except ApifyApiError as exc:
             status = getattr(exc, "status_code", None)
             failure = classify_apify(status, f"{getattr(exc, 'type', '')} {exc}")
             if failure == "apify_unavailable" and attempt == 0:
-                await asyncio.sleep(2)  # start request failed before any run existed: safe to retry once
+                await asyncio.sleep(2)
                 continue
             raise DiscoveryError(failure, f"Apify API error ({status}): {str(exc)[:200]}", failure_code=failure) from exc
-        except TimeoutError as exc:
-            raise DiscoveryError("timeout", "Apify did not answer in time. Check the Apify console before re-running.",
-                                 failure_code="apify_unavailable") from exc
+    if started is None:
+        raise DiscoveryError("apify_error", "Apify returned no run.", failure_code="apify_unavailable")
+    s = started if isinstance(started, dict) else started.model_dump(by_alias=True)
+    run_id = s.get("id")
 
-    if run is None:
-        raise DiscoveryError("apify_error", "Apify returned no run.")
-    r = run if isinstance(run, dict) else run.model_dump(by_alias=True)
-    run_id, status = r.get("id"), r.get("status")
+    # 2) From here a paid run exists: never retry, and always carry its id and cost into any error (rule 9).
+    def stopped(code: str, message: str, failure_code: str, cost: float | None = None) -> DiscoveryError:
+        return DiscoveryError(code, f"{message} Check run {run_id} in the Apify console before re-running.",
+                              apify_run_id=run_id, failure_code=failure_code, cost_usd=cost)
+
+    try:
+        run = await asyncio.wait_for(client.run(run_id).wait_for_finish(wait_duration=timedelta(seconds=timeout_s + 30)),
+                                     timeout=timeout_s + 60)
+    except (ApifyApiError, TimeoutError) as exc:
+        raise stopped("wait_failed", f"Lost track of the Apify run while waiting ({type(exc).__name__}).",
+                      "apify_run_failed", await _settled_cost(client, run_id, 0.0, 0)) from exc
+    r = run if isinstance(run, dict) else (run.model_dump(by_alias=True) if run else {})
+    status = r.get("status")
     cost = float(r.get("usageTotalUsd") or 0)
     if status != "SUCCEEDED":
-        # Never re-run automatically (PRD). Tell the human where to look.
-        raise DiscoveryError(
-            "actor_" + str(status or "unknown").lower(),
-            f"Apify run {run_id} ended {status}. Check it in the Apify console before re-running.",
-            apify_run_id=run_id, failure_code="apify_run_failed",
-        )
-    listing = await client.dataset(r["defaultDatasetId"]).list_items(limit=int(max_items))
+        # Never re-run automatically (PRD). Tell the human where to look; the billed cost is still recorded.
+        raise stopped("actor_" + str(status or "unknown").lower(), f"The Apify run ended {status}.",
+                      "apify_run_failed", await _settled_cost(client, run_id, cost, 0))
+    try:
+        listing = await client.dataset(r["defaultDatasetId"]).list_items(limit=int(max_items))
+    except Exception as exc:  # noqa: BLE001 — the run succeeded and was paid for; stop, don't search again
+        raise stopped("dataset_failed", f"The Apify run finished but its results couldn't be read ({type(exc).__name__}).",
+                      "apify_run_failed", await _settled_cost(client, run_id, cost, 0)) from exc
     raw = listing.items or []
     cost = await _settled_cost(client, run_id, cost, len(raw))
     companies, dropped = [], 0
