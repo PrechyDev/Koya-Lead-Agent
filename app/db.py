@@ -1,4 +1,6 @@
-"""Data access layer: every SQL statement in the app lives here (specs.md §6).
+"""Data access layer: the app's SQL lives here (specs.md §6). The exceptions are small queries kept next to
+the feature they serve: System issues (alerts.py), the orphan/idempotency checks in routes.py and runner.py,
+the auth user lookup (auth.py) and the eval harness (evals/ab.py). All of them are schema-qualified too.
 
 * Connects as the least-privilege `lead_agent_app` role (SUPABASE_DB_DSN).
 * Every table name is schema-qualified via SCHEMA (never relies on search_path).

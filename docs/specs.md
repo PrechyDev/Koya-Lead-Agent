@@ -1,6 +1,6 @@
 # specs.md — AI Lead Research & Outreach Agent
 
-Owner: Precious Okafor · Project: Koya Cohort 3, Week 5 · Last updated: 2026-09-23
+Owner: Precious Okafor · Project: Koya Cohort 3, Week 5 · Last updated: 2026-09-24
 Architecture diagram: https://claude.ai/artifact/BqreZcpTyneniDSVNuu3bQ
 
 This is the single source of truth for **what the system does, why, and how it behaves when things go wrong**. If code and spec disagree, fix one of them and log it in §14 Decisions. Section tags: **[Confirmed]** = decided with the owner · **[Default]** = my call, open to change. Everything that was an open question during planning has been checked against the real SDK and APIs (§4.2); a fix is always recorded as *problem → fix → how verified* (§14 and progress.md §4).
@@ -148,7 +148,7 @@ The choice is stored in `runs.repeat_choice`. Runs older than 30 days only show 
 
 Accidental double submits are handled separately and earlier, by the idempotency key (E-20).
 
-### 5.2 Pages & API (every route requires login except `/login`, `/accept-invite`, `/health`)
+### 5.2 Pages & API (every route requires login except `/login`, `/accept-invite`, `/forgot-password`, `/reset-password`, `/health`, and `/fixtures/…` when `FIXTURE_MODE=true`)
 
 | Method | Path | Who | Notes |
 | --- | --- | --- | --- |
@@ -160,7 +160,7 @@ Accidental double submits are handled separately and earlier, by the idempotency
 | GET | `/` | member | **Runs** history: status filters (all, in progress, waiting for you, completed, partial, failed, cancelled) with counts, "only my runs", objective search, 20 per page; a **New run** button (D-67) |
 | GET | `/runs/new` | member | the new-run form (declared before `/runs/{id}`); `?objective=` pre-fills it (used by Cancel in the waiting-for-you dialogs) |
 | GET | `/objective-check` | member | HTMX: stage-1 text match hint |
-| POST | `/runs` | member | `{objective, target_qualified, idempotency_key, parent_run_id?}` + CSRF token. 409 if a run is active · 429 if a daily cap is hit · refused if the budget guard or the free pre-run checks fail · the free input gate rejects junk. Redirects to the run page at once; the work continues in the background |
+| POST | `/runs` | member | `{objective, idempotency_key, parent_run_id?}` + CSRF token (the lead count comes from the objective, D-57). Answering a clarification marks the old run `superseded` and links it to the new one (D-73). 409 if a run is active · 429 if a daily cap is hit · refused if the budget guard or the free pre-run checks fail · the free input gate rejects junk. Redirects to the run page at once; the work continues in the background |
 | POST | `/runs/{id}/confirm` | run creator or admin | the stage-2 gate choice |
 | POST | `/runs/{id}/cancel` | run creator or admin | aborts the SDK query → `cancelled` |
 | GET | `/runs/{id}`, `/runs/{id}/live`, `/runs/{id}/tab/{name}` | member | Run page; HTMX polling partial (HTTP 286 once terminal); tabs (ICP, leads, tool calls, summary) |
@@ -173,7 +173,7 @@ Accidental double submits are handled separately and earlier, by the idempotency
 | GET | `/system`; POST `/system/{id}/resolve`, `/system/test-alert` | **admin** | System issues: alerts with the cause and fix (D-38) |
 | GET | `/fixtures/{name}` | public | test pages (prompt injection, parked domain) served only when `FIXTURE_MODE=true` |
 
-Errors: in pages they show in the System Message banner (design.md); on JSON routes they come back as `{error:{code, message, step}}`. A missing or expired session → redirect to `/login?next=…`; not a member or deactivated → 403 page.
+Errors: in pages they show in the System Message banner (design.md): HTMX requests get the banner with `HX-Retarget: #system-message`, and `app.js` swaps it in even for 4xx/5xx (D-68). On JSON routes they come back as `{error:{code, message}}`. IDs in URLs must be UUIDs (anything else is a 404, not a 500). A missing or expired session → redirect to `/login?next=…`; not a member or deactivated → 403 page.
 
 ---
 
@@ -260,12 +260,12 @@ Rules: at least one active admin must always remain, and the owner can't be demo
 | created_at / updated_at | timestamptz | |
 
 ### `lead_agent.tool_calls`
-`id, run_id, seq, agent_role (orchestrator|icp-refiner|researcher|copywriter|system), tool_name, purpose, input_summary, result_summary, status (success|error|blocked), error_message, duration_ms, external_cost_usd, created_at`
+`id, run_id, seq, agent_role (orchestrator|icp-refiner|researcher|copywriter|system), tool_name, purpose, input_summary, result_summary, status (running|success|error|blocked), error_message, duration_ms, external_cost_usd, created_at, finished_at`. `runs.tool_call_count` hands out `seq`; the `max_tool_calls` cap counts only rows for our own tools (D-70).
 
 Besides our tools, this table also logs, via SDK hooks, **skill loads** (`Skill:<name>`), **subagent delegations** (`Delegate:<role>`, with the brief the orchestrator gave) and **denied tools** (`blocked`). The evidence then shows the agent's whole decision trail, not just its API calls (verified in every dev run).
 
 ### `lead_agent.scrape_cache`
-`url pk, domain, final_url, content (sanitized, truncated), title, status_code, injection_flags, tools_detected, fetched_at`. Reused for 7 days across runs, and it is the fixture store for the A/B replays.
+`url pk, domain, final_url, content (sanitized, truncated), title (redacted), status_code, injection_flags, tools_detected, links, parked, fetched_at` (`links`/`parked` from migration 0007, so a cache hit gives the researcher the same facts as a fresh scrape). Reused for 7 days across runs, and it is the fixture store for the A/B replays.
 
 ### `lead_agent.spend_ledger`
 `id, source (icp|run|grounding|preflight|eval|spike), ref_id, model, input_tokens, output_tokens, cost_usd, note, created_at`. **The global budget guard reads this** (§7.2).
@@ -305,7 +305,7 @@ Alerts for admins (D-38): `severity (info|warning|critical), service, code, mess
 | Runs per day (global) | `MAX_RUNS_PER_DAY` = 5 | — | `POST /runs` |
 | Concurrent runs | 1 | 1 | RunManager |
 | Full runs per user per day | 2 (admins: 5) | — | `POST /runs` |
-| HTTP rate limits (per IP, and per user when logged in) | pages ~120/min · actions (POST) 10/min · `/login` 5 per 15 min · `/team/invite` 10/hour | same | `slowapi` middleware → 429 with a friendly banner |
+| HTTP rate limits (per IP, and per user when logged in) | pages ~120/min · `POST /runs` 10/min · review 30/min · team update 20/min · `/login` 5 per 15 min · `/forgot-password` 3 per 15 min · reset/accept-invite 10 per 15 min · `/team/invite` 10/hour | same | `slowapi` middleware → 429 with a friendly banner |
 | `max_parallel_subagents` | 1 | 1 | a PreToolUse hook denies delegations beyond it (`MAX_PARALLEL_SUBAGENTS` env). Kept at 1: parallel delegation was tried and failed live (D-49) |
 
 **Why 12 → +5 → max 20 [Confirmed]:** the PRD says to test small, cap every run, and "if it cannot find 10 from the first pool, search again within the limit or return fewer with an explanation". The bigger cost of each candidate is Claude (scrape + qualify), not Apify. So:
@@ -333,7 +333,7 @@ A refused call returns a normal result such as `{ "ok": false, "reason": "scrape
 
 - **App-level hard stop:** `CLAUDE_BUDGET_TOTAL_USD=6.00`. Before starting any run, eval or grounding call, the code sums `spend_ledger`. If `spent + this job's cap > total`, it refuses with a clear message. Every Claude call writes to the ledger.
 - **Backstop:** a **$7 monthly spend limit on the Anthropic Console workspace** (set by the owner; to confirm before deploying).
-- **Spent so far (2026-09-23): $1.01 of $6.00**, all development and tests. The dev-runs bucket ran over by ~$0.16 (two live bug-finding runs and the Docker tests); the reserve covers it. Live figures: progress.md §7.
+- **Spent so far (2026-09-24): $1.04 of $6.00**, all development and tests (the final audit spent $0: every paid API is faked in tests). The dev-runs bucket ran over by ~$0.16 (two live bug-finding runs and the Docker tests); the reserve covers it. Live figures: progress.md §7.
 - Prices used by the ledger for calls outside the SDK (per 1M tokens, input/output): Haiku 4.5 $1/$5 · Sonnet 5 $2/$10 · Opus 5.5 $4/$20. Stored in `config.py`.
 
 ### 7.3 Apify budget
@@ -433,8 +433,8 @@ The cost-saving measures:
 
 Steps:
 1. **Record** (part of the dev-run bucket; Apify ≤ $0.10, ~10 Firecrawl credits): one DEV run with `run_kind=eval_record`, the PRD objective and a first pool of 12, scraping each candidate. Exported to `evals/fixtures/prd_example.json`.
-2. **Reference labels [Confirmed: Opus 5.5 as reference]:** a single `claude-opus-5-5` pass at **medium** effort, batched, labels the 8 selected companies (hard-filter checks + status) → the "answer key". **Caveat, stated honestly:** it's a model grading models. So Opus is the reference, not a contestant, on qualification. The owner may also spot-check only the cases where Haiku or Sonnet disagree with it (~5 min). Est. ~$0.15.
-3. **Replay:** each step × {Haiku 4.5, Sonnet 5} × 2 repeats (+ Opus 5.5 on qualification and copywriting), served from fixtures (**no Apify or Firecrawl spend**). `evals/ab.py` (`export → estimate → reference → run → report`) prints a pre-flight estimate, needs `--yes`, and stops itself at $0.90 cumulative (read from `spend_ledger`).
+2. **Reference labels [Confirmed: Opus 5.5 as reference]:** a single `claude-opus-5-5` pass at **medium** effort, batched, labels the 8 selected companies (hard-filter checks + status) → the "answer key". **Caveat, stated honestly:** it's a model grading models. Opus also competes on qualification and copywriting (D-59), so its agreement with its own reference is self-consistency, not accuracy: the owner spot-checks only the cases where Haiku or Sonnet disagree with it (~5 min). Est. ~$0.15.
+3. **Replay:** each step × {Haiku 4.5, Sonnet 5} × 2 repeats (+ Opus 5.5 on qualification and copywriting), served from fixtures (**no Apify or Firecrawl spend**). `evals/ab.py` (`export → estimate → reference → run → report`) prints a pre-flight estimate, needs `--yes`, and refuses to start if eval spend would pass `EVAL_CAP_USD` = $1.20 or the project total would pass `CLAUDE_BUDGET_TOTAL_USD` (both read from `spend_ledger`).
 4. **Score & pick:** results go to `lead_agent.eval_results` and the progress.md §8 table.
 
 | Step | Candidates | Test set | Scored by | Pass bar (both repeats) | Est. cost |
@@ -471,7 +471,7 @@ The same redaction and injection flagging run on Apify results (the LinkedIn Abo
 
 ### 10.2 Access control **[Confirmed: Supabase Auth logins, Week 4 pattern]**
 
-Framing: this is an **internal tool delivered to a client** (Koya). The grader uses it **as the client would**, with an admin account. Prospect lists and outreach drafts are commercially confidential, so **nothing is public** except `/login`, `/accept-invite` and `/health`.
+Framing: this is an **internal tool delivered to a client** (Koya). The grader uses it **as the client would**, with an admin account. Prospect lists and outreach drafts are commercially confidential, so **nothing is public** except `/login`, `/accept-invite`, `/forgot-password`, `/reset-password` and `/health` (plus the `/fixtures/…` test pages while `FIXTURE_MODE=true`).
 
 **Sign-in (server-side, no tokens in the browser's JavaScript):**
 1. `/login` form → FastAPI posts email + password to Supabase Auth (`/auth/v1/token?grant_type=password`, using the anon key server-side).
@@ -489,7 +489,7 @@ Framing: this is an **internal tool delivered to a client** (Koya). The grader u
 | Export CSV / JSON (approved drafts only) | ✅ | ✅ |
 | Cancel/confirm **anyone's** run | ❌ | ✅ |
 | Team page: invite, deactivate/reactivate, change role | ❌ | ✅ |
-| Spend page (project budget, per-model/run/Apify cost) | ❌ (own run costs only) | ✅ |
+| Spend page (project budget, per-model/run/Apify cost) | ❌ (no AI costs or model names anywhere, D-66) | ✅ |
 
 Admin-only UI is hidden for members **and** refused server-side. Hiding is not security. Accounts: the owner (builder; `is_owner`, can't be removed) + the grader/client (admin). Everyone else is a member.
 
@@ -603,6 +603,18 @@ Lowercase · strip protocol, `www.`, path, query and port · IDNA-encode · reje
 | E-66 | Login link that redirects elsewhere (`/login?next=/\evil.com`) | `safe_next` allows only same-site paths | test_login_redirect_stays_on_this_site |
 | E-67 | Stored text that is a `javascript:` link / starts with `=` | `safe_url` for every link built from data; `csv_cell` in the CSV export | tests |
 | E-62 | A submit button is clicked with required inputs missing | Buttons stay disabled until the form is valid (a message only for problems you can't see, shown after leaving the field); the loading state starts only on a validated submit (design.md) | test_buttons_wait_for_required_inputs + real-Chrome checks |
+| E-68 | The ICP step classifies an objective as `too_vague` | The model's own question is kept (the fixed map only covers questions/unrelated) → `needs_clarification` | test_too_vague_keeps_the_models_question |
+| E-69 | A lead cites its homepage although the scrape failed | Refused: only pages fetched in this run are citable (D-69) | test_the_website_is_citable_only_after_it_was_scraped |
+| E-70 | The researcher retries a page that failed | Blocked (`already_failed`), no second credit | test_a_failed_page_cannot_be_retried_for_free |
+| E-71 | The homepage comes from the cache | Links + parked flag come from the cache too | test_a_cached_homepage_keeps_its_links_and_parked_flag |
+| E-72 | The fact-check allowance runs out mid-run | Checked before an attempt is used; the run stops cleanly (D-71) | test_a_budget_stop_does_not_use_up_a_draft_attempt |
+| E-73 | The tool-call cap is reached | Work tools are blocked; `finish_run` / `get_run_state` still work; logged events don't count (D-70) | test_tool_call_cap_blocks_work_but_never_finishing, test_logged_events_do_not_use_up_the_tool_call_cap |
+| E-74 | Apify errors while we wait for a run | No second run; the error carries the run id + billed cost (D-72) | test_a_problem_while_waiting_never_starts_a_second_paid_run |
+| E-75 | "Under 50 employees" | An upper bound: `1-49`, not `50+` | test_headcount_upper_bounds_stay_upper_bounds |
+| E-76 | A page title with an email, phone or instructions | Redacted and injection-checked like the body | firecrawl title handling |
+| E-77 | Marketing copy ("Contact our sales team now", "Never share your password") / figures ("10 000 000", "2019-2020-2021") | Not flagged as injection / not redacted as phones; "ignore your instructions" and "+14155550100" still are | tests/test_audit_rules.py |
+| E-78 | A Supabase password rule rejects the new password on reset/accept-invite | The page keeps the single-use session, so the person just tries another password | test_a_rejected_password_keeps_the_reset_link_usable |
+| E-79 | A signed-in person without access | No-access page with Sign out (`/logout` is reachable), not a loop back to the 403 | real Chrome |
 | E-63 | An email without a proper domain (`sam@acme`) | One shared rule (`app/lib/validation.py`): the field's `pattern` in the browser and a server check on login and invites | test_email_rule, test_login_rejects_malformed_email_before_supabase |
 
 ---
@@ -657,7 +669,7 @@ Numbers are stable (other docs refer to them); rows are grouped by topic. Status
 | D-31 | Researcher reads ICP filters + facts via `get_research_brief`; orchestrator's own thread is denied research/copy tools | Default, Verified | Exact filter wording from the DB; forced delegation keeps the orchestrator's context (and cost) small | Orchestrator copying filters into prompts; orchestrator doing research itself |
 | D-14 | Researchers and copywriters run **one at a time** | Default, **Verified** (re-confirmed after D-49 failed) | The mode that runs cleanly in this CLI (run cc84694e). Cost: ~35 s per company, so a full run takes ~15–25 min, inside the 30-min watchdog | Parallel subagents (tried in D-49; the run ended early) |
 | **D-49** | **Parallel subagents: built, tested live, switched off (cap = 1)** | Default, **Verified (failed → off)** | *Why we tried:* most of a researcher's ~35 s is model time, not scraping (Firecrawl ~4–5 s), so parallel subagents could make research ~3× faster at the same cost. *What was built:* a PreToolUse hook denies delegations beyond `max_parallel_subagents` and PostToolUse frees the slot; the one read-modify-write on `usage` was made atomic (D-54). *Problem found live (run a1f525ef, Docker, 512 MB):* two researchers started in one message ran as **background** tasks in CLI 2.1.280 despite `background=False`; the next delegation came back from the CLI as "The user doesn't want to take this action right now. STOP"; the orchestrator obeyed and ended after 2 turns, with no drafts (errors log #19). *Fix:* the cap is 1 (D-14); the machinery and `MAX_PARALLEL_SUBAGENTS` stay so it can be retried after an SDK upgrade | Parallel Firecrawl prefetch in code (saves only the ~5 s scrape); background subagents (hung, #7); unlimited parallelism |
-| D-22 | Grounding (fact-check) is a direct Messages API call inside `save_outreach`, not an SDK agent | Default (open for the owner to confirm) | It's a validator inside a tool the agent can't skip; structured output; cheap | A one-shot SDK agent (more overhead, weaker output guarantees) |
+| D-22 | Grounding (fact-check) is a direct Messages API call inside `save_outreach`, not an SDK agent | Default, Verified | It's a validator inside a tool the agent can't skip; structured output; cheap | A one-shot SDK agent (more overhead, weaker output guarantees) |
 | D-46 | Runs execute in-process as background asyncio tasks; one uvicorn worker; one active run | Default | Runs take minutes and must share the one-run guard; serverless timeouts would kill them | A job queue/worker (more infrastructure than a one-team tool needs) |
 
 ### Discovery (Apify)
@@ -726,6 +738,13 @@ Numbers are stable (other docs refer to them); rows are grouped by topic. Status
 | D-18 | Least-privilege `lead_agent_app` role (no DELETE/DROP, no other schemas); RLS on with an app-only policy | Default, Verified | "No destructive DB actions"; protects Week 3/4 data | Deploying the `postgres` DSN |
 | D-11 | Supabase Auth logins (server-side HttpOnly cookies, JWKS verification), admin/member, invite-only, nothing public | Confirmed | Internal client tool with confidential prospect data; proven approval attribution | Shared passcode; public viewing |
 | D-26 | No `auth.users` trigger in Week 5; Week 4's trigger skips Lead Agent invitees | Confirmed (owner, 2026-09-24), **Applied + Verified** | *Problem:* Week 4's trigger gave every new login Week 4 access, so a new Week 5 invitee would get it too. *Fix:* Week 4 migration `0012_skip_lead_agent_invitees.sql` (§10.2). Verified in a rolled-back transaction | Manual clean-up per user |
+| **D-74** | Company identity uses the public suffix list **including private suffixes**: `acme.github.io`, `acme.vercel.app` are the company's own domain; pages on site builders in `NOT_A_COMPANY_SITE` (`acme.wixsite.com`, `acme.notion.site`) are still not company sites | Default, Verified (tests) | *Problem found in the audit:* every company hosted on one platform collapsed into a single lead named after the platform (`github.io`), and the researcher scraped the platform's homepage | Rejecting all hosted sites |
+| **D-73** | Answering a clarification marks the old run `superseded` ("Answered; continued in a follow-up run"), with a link to the follow-up run; the badge reads "Replaced" | Default, Verified | *Problem:* the old run stayed `needs_clarification` for ever: its dialog kept asking, and it was counted under "Waiting for you" | Deleting the old run; leaving it waiting |
+| **D-72** | Apify: **start** and **wait** are separate calls. Only a failed start request is retried (once, 5xx/429, no run exists yet); once a run exists nothing is retried, and every error carries the run id and its billed cost. A 400 is `apify_bad_input` (our input mapping, never retried) | Default, Verified (tests) | *Problem found in the audit:* `actor.call()` (start + wait) was retried as a whole, so a hiccup while *waiting* could start a second paid run (rule 9), and failed runs' cost was never logged | Retrying `actor.call()`; not retrying at all |
+| **D-71** | The per-run **fact-check reserve ($0.10)** that the run start already set aside is now enforced by `save_outreach`, and each call's cap is priced from the fact-check model and the prompt size. A budget stop is checked **before** a draft attempt is used, and it stops the run (`budget_exhausted`). A fact-check whose answer can't be parsed is recorded at its maximum cost | Default, Verified (tests) | *Problem:* only the global $6 guard applied to fact-checks, a budget refusal still used up an attempt, and a parse error lost a billed call from the ledger (rule 5). Real cost per check ≈ $0.005, so $0.10 covers ~20 checks | A bigger reserve (would change the $1.25 story); no per-run cap |
+| **D-70** | `max_tool_calls` counts only calls to our own tools (not skill loads, delegations or denied tools, which are logged in the same table), and `finish_run` / `get_run_state` are never blocked by it | Default, Verified (tests) | *Problem:* a full run logs ~6 rows per company, so 20 candidates could reach 120 and then even `finish_run` was refused; the run ended "Finalized by the system" and lost the agent's summary | Raising the cap only |
+| **D-69** | A company's website becomes a citable source only after `scrape_website` fetched it in this run; discovery seeds only the LinkedIn page Apify fetched. A page that failed can't be tried again for free | Default, Verified (tests) | *Problem found in the audit:* the homepage URL was marked "fetched" at discovery, so a lead whose scrape failed (or never ran) could still cite it, and even earn the "two sources" bonus: a hole in rule 7 | Trusting the model's citations |
+| **D-68** | Error and warning banners are swapped in by `app.js` for any 4xx/5xx response that carries `HX-Retarget` (our banners); other error responses are still ignored. Confirm prompts on buttons use `data-confirm` (checked before htmx submits); every button of a sending form is disabled and exactly those are re-enabled | Default, Verified (real Chrome) | *Problem found in the audit:* htmx 2 drops 4xx/5xx responses by default, so **no warning banner ever showed** (run already in progress, daily cap, budget, "add a note to reject"...); `hx-confirm` on a button in a multi-button form never fired (Deactivate, Send reset link, Reject); `hx-disabled-elt="find button"` disabled only the first button | A global `htmx-config` swapping all errors (would paste error pages into small targets) |
 | **D-67** | **Runs history and New run are separate pages**; paused runs (repeat check, clarification) open **full-screen dialogs**, and the progress bar shows "waiting for you" instead of a spinner | Confirmed (owner, 2026-09-24) | *Problem:* after starting a run that matched an earlier one, the page kept spinning on "Refine ICP" and the choice sat below the fold, so the run looked stuck; and the form + history on one page got crowded. Filters are plain links / a GET form, so every view has its own address and the Back button works | Choices inline on the run page; one combined page |
 | **D-66** | **Agencies are not excluded by default**; the only default exclusion is a direct competitor (recruiting/staffing firms placing AI or automation talent). The home page shows no cost limits and no budget card (Spend page for admins); test mode is shown to admins only, with how to turn it off; the run page's AI cost is admin-only; no internal jargon ("PRD", "guide") in user-facing text | Confirmed (owner, 2026-09-24) | *Problem:* the defaults excluded agencies, but the PRD's business context names **agency owners** as people Koya reaches, and the AI's skill examples pushed the same exclusion. Members don't need cost limits; "PRD example" means nothing to a client | Keeping agency exclusions; showing limits to everyone |
 | **D-65** | Supabase's Site URL stays with Week 4; the Lead Agent always sends its own `redirect_to` and its addresses go in Redirect URLs. The shared Invite and Reset email templates are Koya-branded and **personalised from the invite's details**: each invite sends `app_name`, `app_tagline`, `role`, `invited_by_name` and `full_name` as user metadata ("Precious Okafor has invited you to Koya Lead Research Agent as a member"); missing details fall back to neutral Koya wording, so any tool can use the same template. Resets stay login-wide (Supabase's reset can't carry per-request details) (`docs/email-templates/`) | Confirmed (owner, 2026-09-24) | Both settings are project-wide, shared by every tool; changing them for one tool would break the others | A Week 5-only Site URL (breaks Week 4's fallback); a Lead Agent-only template (Week 4 invitees would get Lead Agent emails) |

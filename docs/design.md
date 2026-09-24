@@ -59,11 +59,11 @@ Clickable table rows show a `›` chevron on the right and the hover background.
 | Need | How |
 | --- | --- |
 | Hover/focus/active/disabled | plain CSS on `.btn`, `.btn:hover`, `.btn:focus-visible`, `.btn:active`, `.btn:disabled` |
-| Loading + no double-submit | HTMX forms: `hx-disabled-elt` disables the button during the request and the `.htmx-request` class shows the spinner (`.btn .when-loading`). Plain forms (login, accept invite): `app.js` adds `.is-loading` on the `submit` event |
-| Server errors → banner, not results | the server answers errors with the `HX-Retarget: #system-message` + `HX-Reswap: innerHTML` headers and renders `partials/banner.html`. So errors can **never** land inside a results block |
+| Loading + no double-submit | HTMX forms: `app.js` disables **every** button of the form while it sends and afterwards re-enables exactly those it disabled (so buttons the server disabled stay disabled); `hx-disabled-elt="find button"` is not used because htmx only takes the first match (D-68). The `.htmx-request` class shows the spinner (`.btn .when-loading`). The New run form keeps `hx-disabled-elt="#start-run"`. Plain forms (login, accept invite): `app.js` adds `.is-loading` on the `submit` event |
+| Server errors → banner, not results | the server answers errors with the `HX-Retarget: #system-message` + `HX-Reswap: innerHTML` headers and renders `partials/banner.html`. htmx 2 ignores 4xx/5xx by default, so `app.js` (`htmx:beforeSwap`) swaps in error responses **that carry `HX-Retarget`**; any other error response is still ignored. So errors can **never** land inside a results block |
 | Live run updates | `hx-get="/runs/{id}/live" hx-trigger="every 3s"`; the server returns **HTTP 286** once the run is terminal, which stops polling |
 | Copied ✓ feedback | a tiny inline script: `navigator.clipboard.writeText(...)`, then swap the label for 2s (plus a fallback that selects the text) |
-| Confirm destructive actions | `hx-confirm="Cancel this run? Work done so far is kept."` |
+| Confirm destructive actions | a form with one button: `hx-confirm="Cancel this run? Work done so far is kept."` on the form. A button in a form with several buttons: `data-confirm="…"` on the **button** (htmx reads `hx-confirm` from the form, not the clicked button; `app.js` asks before htmx submits) |
 
 ## 3. Design tokens (top of `app/static/app.css`; a dark-mode set follows under `prefers-color-scheme: dark`)
 
@@ -142,10 +142,10 @@ Sections in order, each with a heading:
 
 ### 4.5 Repeat-objective gate
 - **Stage 1 (form):** as you type (debounced), an info hint appears *under the objective field*: "You ran this on Sep 20: 10 qualified. [View results]". It's informational; Start stays enabled.
-- **Stage 2 (run page, status `awaiting_confirmation`):** a warning banner reads "This matches run #X from 3 days ago (10 qualified)." In the Controls zone: [Open it] (primary) · [Find new companies] · [Refresh the same companies] · [Cancel] (red outline). Each has a one-line explanation of its cost underneath.
+- **Stage 2 (run page, status `awaiting_confirmation`):** a **full-screen dialog** (D-67) says the run matches an earlier one (with a link and its qualified count), with the choices [Open it] (primary) · [Find new companies] · [Refresh the same companies], each with a one-line explanation, and ✕ / [Cancel] that goes back to the New run form with the objective filled in. The page behind is locked, the main choice has focus, Esc = ✕. The progress bar shows the step as "waiting for you".
 
 ### 4.6 Clarification state
-When status = `needs_clarification`, a warning banner reads "The agent needs more detail before spending on searches." Below it, in the Controls zone: the agent's question, an answer textarea, and [Continue with this answer]. This creates a linked new run.
+When status = `needs_clarification`, a **full-screen dialog** (D-67) shows the agent's question, an answer box (focused) and [Continue with this answer]. This creates a linked new run, and the old run becomes "Replaced" with a link to the follow-up run (D-73).
 
 ---
 
@@ -153,7 +153,7 @@ When status = `needs_clarification`, a warning banner reads "The agent needs mor
 
 | Situation | Show |
 | --- | --- |
-| No runs yet | "No runs yet. Start one above." |
+| No runs yet | "No runs yet. Start your first run" (links to New run) |
 | Tab data not yet produced | a muted placeholder: "Leads appear here once discovery finishes." |
 | Initial page load | pages are server-rendered, so the full layout arrives with the first response (no blank screen, no skeletons needed) |
 | Server unreachable (e.g. Render waking up, Wi-Fi drop) | error banner "Can't reach the server. Retrying automatically…" + [Retry now]; live polling keeps retrying and the banner clears on the next success (`app.js`) |
@@ -191,4 +191,4 @@ Plain words. Say "companies", "sites scraped", "qualified". Don't say "MCP", "to
 - [ ] "Approved by <name> · <time>" is shown on reviewed leads
 - [ ] Repeat gate: the stage-1 hint sits beside the form (not in results); the stage-2 pause shows 4 clearly labelled buttons, one primary ("Open it")
 - [ ] Cold-start friendly: the first page load shows the layout immediately (server-rendered). No blank screen while Render wakes up
-- [ ] Spend is visible: the Run page shows Claude $ used / cap; Home shows project spend / $6.00 budget
+- [ ] Spend is visible **to admins only** (D-66): the Run page and Summary tab show Claude $ used / cap and model names to admins; the Spend page shows project spend / $6.00. Members never see AI costs
