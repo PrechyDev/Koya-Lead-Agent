@@ -17,7 +17,7 @@ headers are served; idle memory is **122 MB** (Render free allows 512 MB); a DEV
 | --- | --- | --- |
 | 0.1 | Swap `APIFY_TOKEN` in `.env` (and later Render) for the **team** account's token | PRD: runs are billed to the account they start from. The current token is a personal FREE-plan account (errors log #12) |
 | 0.2 | Confirm the Anthropic Console monthly spend limit is **$7** | Backstop outside the app's $6 ledger (D-07) |
-| 0.3 | Decide on the Week 4 trigger guard (`docs/week4_trigger_guard.sql`, not applied) | Without it, anyone invited to Week 5 also gets a Week 4 account (D-26) |
+| 0.3 | ~~Week 4 trigger guard~~ **done 2026-09-24** (Week 4 migration `0012`; commit it in the Week 4 repo) | New Week 5 invitees no longer get Week 4 access (D-26) |
 | 0.4 | Create a **private** GitHub repo and push `main` | Render deploys from GitHub. Run `scripts/secret_scan.py --all` first (it passes today) |
 
 ## 1. Create the Render service ($0)
@@ -37,14 +37,11 @@ headers are served; idle memory is **122 MB** (Render free allows 512 MB); a DEV
 
 ## 2. Supabase Auth settings ($0)
 
-1. Authentication → URL configuration: **Site URL** = the Render URL; add `https://<service>.onrender.com/accept-invite`
-   and `https://<service>.onrender.com/reset-password` (for local Docker tests also `http://localhost:8001/accept-invite` and
-   `http://localhost:8001/reset-password`)
-   to **Redirect URLs**.
+1. Authentication → URL configuration: **leave the Site URL as it is** (it's shared by every tool in the project and
+   is only a fallback, D-65). Add the Lead Agent's addresses to **Redirect URLs**: `https://<service>.onrender.com/**`
+   (and `http://localhost:8001/**` for local Docker tests). `**` covers `/accept-invite` and `/reset-password`.
 2. Authentication → Sign-ups: keep **invite-only** (no public sign-up).
-3. **Leave the Site URL as it is** (it's shared by every tool in the project and is only a fallback). Put every Lead
-   Agent address in **Redirect URLs** instead, e.g. `https://<service>.onrender.com/**` and `http://localhost:8001/**`.
-4. Authentication → Emails → Templates: paste `docs/email-templates/invite.html` into **Invite user** (subject: copy the
+3. Authentication → Emails → Templates: paste `docs/email-templates/invite.html` into **Invite user** (subject: copy the
    one-line subject template from the top of that file) and `docs/email-templates/reset_password.html` into **Reset Password** (subject
    "Reset your Koya password"). They're shared with the other tools, so the invite is filled in from the details each tool
    sends with it (app name, description, inviter, role); anything missing falls back to neutral Koya wording. Both were checked with Go's html/template (Supabase's engine).
@@ -77,7 +74,7 @@ Then set **`DEV_LIMITS=false`** (full limits: 10 leads, 20 companies, $1.25 per 
 
 ## 6. Model A/B, then the final run
 
-1. On the laptop: `evals/ab.py export … → estimate → reference --yes → run --yes → report` (cap $0.90). Set the
+1. On the laptop: `evals/ab.py export … → estimate → reference --yes → run --yes → report` (cap $1.20, incl. Opus 5.5, D-59). Set the
    winning models in Render (`MODEL_*`) and redeploy.
 2. **Final run on Render** with the PRD objective, full limits (cap $1.25 Claude + $0.25 Apify). Approve drafts in the
    lead drawer, then download the CSV and the sample pack (JSON contains approved drafts only, D-19).
