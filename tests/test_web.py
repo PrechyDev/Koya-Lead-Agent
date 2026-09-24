@@ -31,7 +31,7 @@ def client_as(monkeypatch, app_dsn):
 
 @pytest.fixture
 def a_run():
-    runs = [r for r in db.list_runs(20) if r["run_kind"] in ("dev", "app")]
+    runs = [r for r in db.search_runs(limit=20)[0] if r["run_kind"] in ("dev", "app")]
     if not runs:
         pytest.skip("no runs in the database yet")
     return runs[0]
@@ -198,13 +198,13 @@ def test_run_refused_with_the_real_fix_when_the_agent_cannot_start(client_as, mo
     monkeypatch.setattr(routes, "agent_can_start", lambda: False)
     monkeypatch.setattr(routes.health, "preflight", lambda limits: [])
     monkeypatch.setattr(routes.alerts, "raise_alert", lambda *a, **k: None)
-    before = len(db.list_runs(100))
+    before = db.search_runs()[1]
     r = client_as(ADMIN).post("/runs", data={"objective": "Find US B2B SaaS companies with 10 to 100 staff",
                                              "idempotency_key": str(uuid.uuid4()),
                                              "csrf_token": auth.csrf_token_for(ADMIN.user_id)},
                               headers={"HX-Request": "true"})
     assert r.status_code == 503 and "without --reload" in r.text.replace("WITHOUT", "without")
-    assert len(db.list_runs(100)) == before  # nothing created, nothing spent
+    assert db.search_runs()[1] == before  # nothing created, nothing spent
     r = client_as(MEMBER).post("/runs", data={"objective": "Find US B2B SaaS companies with 10 to 100 staff",
                                               "idempotency_key": str(uuid.uuid4()),
                                               "csrf_token": auth.csrf_token_for(MEMBER.user_id)},

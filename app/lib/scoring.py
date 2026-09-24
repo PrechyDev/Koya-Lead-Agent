@@ -29,8 +29,6 @@ class Score:
     band: str  # qualified | needs_review | not_qualified
     breakdown: list[dict]  # [{"points": +0.05, "reason": "..."}]
 
-    def as_json(self) -> dict:
-        return {"score": self.value, "band": self.band, "breakdown": self.breakdown}
 
 
 def _evidenced(check, source_field: str = "source_url") -> bool:
@@ -61,8 +59,9 @@ def compute_fit_score(*, hard_checks: list, disqualifier_checks: list, soft_chec
         breakdown.append({"points": round(points, 2), "reason": reason})
 
     by_filter = {c.filter.strip().lower(): c for c in hard_checks}
+    filter_names = list(required_filters or [c.filter for c in hard_checks])
     results = []
-    for f in required_filters or [c.filter for c in hard_checks]:
+    for f in filter_names:
         c = by_filter.get(f.strip().lower())
         if c is None:
             results.append("unknown")
@@ -74,8 +73,9 @@ def compute_fit_score(*, hard_checks: list, disqualifier_checks: list, soft_chec
     share = passing / len(results) if results else 0.0
 
     by_disq = {d.disqualifier.strip().lower(): d for d in disqualifier_checks}
+    disq_names = list(required_disqualifiers or [d.disqualifier for d in disqualifier_checks])
     disq_results = []
-    for d in required_disqualifiers or [d.disqualifier for d in disqualifier_checks]:
+    for d in disq_names:
         chk = by_disq.get(d.strip().lower())
         if chk is None:
             disq_results.append("unknown")
@@ -96,8 +96,8 @@ def compute_fit_score(*, hard_checks: list, disqualifier_checks: list, soft_chec
 
     if "fail" in results or "yes" in disq_results:
         value = round(NOT_QUALIFIED_SPAN * share, 2)
-        failed = [f for f, r in zip(required_filters or [], results) if r == "fail"]
-        applied = [d for d, r in zip(required_disqualifiers or [], disq_results) if r == "yes"]
+        failed = [f for f, r in zip(filter_names, results, strict=True) if r == "fail"]
+        applied = [d for d, r in zip(disq_names, disq_results, strict=True) if r == "yes"]
         add(value, f"{passing} of {len(results)} hard filters pass (0.30 x share)")
         if failed:
             add(0.0, "fails: " + "; ".join(failed))
@@ -109,8 +109,8 @@ def compute_fit_score(*, hard_checks: list, disqualifier_checks: list, soft_chec
         value = REVIEW_FLOOR + REVIEW_SPAN * share
         add(REVIEW_FLOOR, "base for 'needs review' (some evidence missing, nothing fails)")
         add(round(REVIEW_SPAN * share, 2), f"{passing} of {len(results)} hard filters pass with evidence")
-        unknown = [f for f, r in zip(required_filters or [], results) if r == "unknown"]
-        unknown_d = [d for d, r in zip(required_disqualifiers or [], disq_results) if r == "unknown"]
+        unknown = [f for f, r in zip(filter_names, results, strict=True) if r == "unknown"]
+        unknown_d = [d for d, r in zip(disq_names, disq_results, strict=True) if r == "unknown"]
         if unknown or unknown_d:
             add(0.0, "unconfirmed: " + "; ".join(unknown + [f"exclusion '{d}'" for d in unknown_d]))
         for points, reason in penalties:

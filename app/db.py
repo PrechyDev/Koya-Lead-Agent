@@ -212,13 +212,6 @@ def search_runs(*, group: str = "", created_by: str | None = None, q: str = "", 
     return rows, total, counts
 
 
-def list_runs(limit: int = 50) -> list[dict]:
-    return fetch_all(
-        f"""select r.*, m.full_name as created_by_name
-            from {t('runs')} r left join {t('members')} m on m.user_id = r.created_by
-            order by r.created_at desc limit %s""",
-        (limit,),
-    )
 
 
 def update_run(run_id: str, **fields: Any) -> dict | None:

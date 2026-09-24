@@ -160,6 +160,3 @@ def classify_apify(status: int | None, text: str | None = "") -> str:
         return "apify_auth"
     return "apify_unavailable"
 
-
-def looks_like_credit_problem(text: str) -> bool:
-    return bool(re.search(r"credit balance|insufficient credit|out of credit", text or "", re.I))

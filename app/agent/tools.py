@@ -33,7 +33,7 @@ from app.lib.qualification_rules import (
     invalid_sources,
     prescreen,
 )
-from app.lib.sanitize import EMAIL_RE, redact, redact_obj, wrap_untrusted
+from app.lib.sanitize import contains_contact_details, redact, redact_obj, wrap_untrusted
 from app.lib.scoring import cap_for_status, compute_fit_score
 from app.services import apify as apify_svc
 from app.services import firecrawl as fc
@@ -697,10 +697,10 @@ def build_handlers(ctx: RunContext) -> dict:
         return success({
             "target_qualified": limits.get("target_qualified"),
             "qualified": usage.get("qualified", 0),
-            "pending_research": [l["company_domain"] for l in leads if l["qualification_status"] == "pending"],
-            "qualified_without_drafts": [l["company_domain"] for l in leads if l["qualification_status"] == "qualified"
-                                         and l["outreach_status"] == "not_drafted"],
-            "failed_grounding": [l["company_domain"] for l in leads if l["outreach_status"] == "failed_grounding"],
+            "pending_research": [lead["company_domain"] for lead in leads if lead["qualification_status"] == "pending"],
+            "qualified_without_drafts": [lead["company_domain"] for lead in leads if lead["qualification_status"] == "qualified"
+                                         and lead["outreach_status"] == "not_drafted"],
+            "failed_grounding": [lead["company_domain"] for lead in leads if lead["outreach_status"] == "failed_grounding"],
             "unused_queries": [q for q in plan if q not in used],
             "next_search_can_fetch": next_discovery_batch(limits, usage),
             "scrapes_left": int(limits.get("max_scrapes", 0)) - int(usage.get("scrapes", 0)),
@@ -759,21 +759,21 @@ def build_scorecard(run_id: str) -> tuple[dict, int, int]:
     run = db.get_run(run_id)
     leads = db.list_leads(run_id)
     target = int(run["limits"]["target_qualified"])
-    qualified = [l for l in leads if l["qualification_status"] == "qualified"]
-    domains = [l["company_domain"] for l in leads]
-    all_text = " ".join(db.dumps({k: l.get(k) for k in ("source_summary", "fit_reasons", "concerns",
-                                                         "email_sequence", "linkedin_message")}) for l in leads)
-    incomplete = [l["company_domain"] for l in qualified
-                  if not (l["company_name"] and l["fit_reasons"] and l["source_summary"] and l["source_urls"])]
-    no_drafts = [l["company_domain"] for l in qualified if l["outreach_status"] != "drafted"]
-    weak_evidence = [l["company_domain"] for l in qualified
-                     if any(c.get("result") != "pass" or not c.get("source_url") for c in l["hard_filter_checks"])
-                     or any(d.get("applies") != "no" for d in l.get("disqualifier_checks") or [])]
+    qualified = [lead for lead in leads if lead["qualification_status"] == "qualified"]
+    domains = [lead["company_domain"] for lead in leads]
+    all_text = " ".join(db.dumps({k: lead.get(k) for k in ("source_summary", "fit_reasons", "concerns",
+                                                         "email_sequence", "linkedin_message")}) for lead in leads)
+    incomplete = [lead["company_domain"] for lead in qualified
+                  if not (lead["company_name"] and lead["fit_reasons"] and lead["source_summary"] and lead["source_urls"])]
+    no_drafts = [lead["company_domain"] for lead in qualified if lead["outreach_status"] != "drafted"]
+    weak_evidence = [lead["company_domain"] for lead in qualified
+                     if any(c.get("result") != "pass" or not c.get("source_url") for c in lead["hard_filter_checks"])
+                     or any(d.get("applies") != "no" for d in lead.get("disqualifier_checks") or [])]
     scorecard = {
         "icp_fit": {"pass": not weak_evidence and len(qualified) > 0,
                     "note": f"{len(qualified)} qualified, all hard filters pass" if not weak_evidence
                     else "hard-filter evidence missing for: " + ", ".join(weak_evidence)},
-        "evidence_quality": {"pass": all(l["source_urls"] for l in qualified) and len(qualified) > 0,
+        "evidence_quality": {"pass": all(lead["source_urls"] for lead in qualified) and len(qualified) > 0,
                              "note": "every qualified lead cites fetched sources"},
         "duplicate_rate": {"pass": len(domains) == len(set(domains)), "note": f"{len(domains)} companies, no duplicates"
                            if len(domains) == len(set(domains)) else "duplicates found"},
@@ -782,9 +782,10 @@ def build_scorecard(run_id: str) -> tuple[dict, int, int]:
                                else "missing/failed drafts for: " + ", ".join(no_drafts)},
         "data_completeness": {"pass": not incomplete, "note": "required fields present" if not incomplete
                               else "incomplete: " + ", ".join(incomplete)},
-        "safety_compliance": {"pass": not EMAIL_RE.search(all_text),
-                              "note": "no email addresses stored; no email/send tools exist"
-                              if not EMAIL_RE.search(all_text) else "an email-like string was found in stored text"},
+        "safety_compliance": {"pass": not contains_contact_details(all_text),
+                              "note": "no email addresses or phone numbers stored; no email/send tools exist"
+                              if not contains_contact_details(all_text)
+                              else "an email address or phone number was found in stored text"},
     }
     return scorecard, len(qualified), target
 

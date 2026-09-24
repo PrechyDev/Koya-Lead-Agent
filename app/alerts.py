@@ -8,7 +8,7 @@
 
 import logging
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 
@@ -42,7 +42,7 @@ def _payload(code: str, message: str, run_id: str | None, severity: str, service
         "message": message, "occurrences": occurrences,
         "run_url": f"{base}/runs/{run_id}" if run_id else None,
         "issues_url": f"{base}/system",
-        "at": datetime.now(timezone.utc).isoformat(),
+        "at": datetime.now(UTC).isoformat(),
     }
 
 

@@ -26,7 +26,6 @@ from app.services import health
 from app.web.templating import ACTIVE, stepper, templates
 
 router = APIRouter()
-FINISHED = {"completed", "completed_partial", "failed", "cancelled", "superseded", "needs_clarification"}
 
 
 # ---------------------------------------------------------------------------
@@ -58,7 +57,7 @@ def _get_run_or_404(run_id: str) -> dict:
     try:
         uuid.UUID(run_id)
     except ValueError:
-        raise HTTPException(status_code=404, detail="Run not found.")
+        raise HTTPException(status_code=404, detail="Run not found.") from None
     run = db.get_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found.")
@@ -439,7 +438,7 @@ async def lead_detail(request: Request, lead_id: str, member: Member = Depends(c
     try:
         uuid.UUID(lead_id)
     except ValueError:
-        raise HTTPException(status_code=404, detail="Lead not found.")
+        raise HTTPException(status_code=404, detail="Lead not found.") from None
     lead = await db.run(db.get_lead, lead_id)
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found.")
@@ -475,16 +474,16 @@ async def review_lead(request: Request, lead_id: str, review_status: str = Form(
 @router.get("/runs/{run_id}/export.csv")
 async def export_csv(request: Request, run_id: str, member: Member = Depends(current_member)):
     run = await db.run(_get_run_or_404, run_id)
-    leads = [l for l in await db.run(db.list_leads, run_id) if l["qualification_status"] == "qualified"]
+    leads = [lead for lead in await db.run(db.list_leads, run_id) if lead["qualification_status"] == "qualified"]
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow(["company_name", "company_domain", "confidence", "fit_reasons", "concerns", "source_urls",
                      "source_summary", "outreach_status", "review_status", "reviewed_by"])
-    for l in leads:
+    for lead in leads:
         writer.writerow([csv_cell(v) for v in (
-            l["company_name"], l["company_domain"], l["confidence"], " | ".join(l["fit_reasons"] or []),
-            " | ".join(l["concerns"] or []), " ".join(l["source_urls"] or []), l["source_summary"],
-            l["outreach_status"], l["review_status"], l.get("reviewed_by_name") or "")])
+            lead["company_name"], lead["company_domain"], lead["confidence"], " | ".join(lead["fit_reasons"] or []),
+            " | ".join(lead["concerns"] or []), " ".join(lead["source_urls"] or []), lead["source_summary"],
+            lead["outreach_status"], lead["review_status"], lead.get("reviewed_by_name") or "")])
     name = f"qualified-leads-{str(run['id'])[:8]}.csv"
     return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv",
                              headers={"Content-Disposition": f'attachment; filename="{name}"'})
@@ -493,20 +492,20 @@ async def export_csv(request: Request, run_id: str, member: Member = Depends(cur
 @router.get("/runs/{run_id}/export.json")
 async def export_json(request: Request, run_id: str, member: Member = Depends(current_member)):
     run = await db.run(_get_run_or_404, run_id)
-    leads = [l for l in await db.run(db.list_leads, run_id) if l["qualification_status"] == "qualified"]
+    leads = [lead for lead in await db.run(db.list_leads, run_id) if lead["qualification_status"] == "qualified"]
     pack = {
         "run_id": str(run["id"]), "objective": run["objective"], "icp": run["icp"], "status": run["status"],
         "exported_at": datetime.now().astimezone().isoformat(),
         "note": "Drafts are included only for leads a human approved. Nothing here has been sent.",
         "leads": [{
-            "company_name": l["company_name"], "company_domain": l["company_domain"], "confidence": l["confidence"],
-            "qualification": {"hard_filter_checks": l["hard_filter_checks"], "fit_reasons": l["fit_reasons"],
-                              "concerns": l["concerns"]},
-            "source_context": {"source_urls": l["source_urls"], "source_summary": l["source_summary"]},
-            "review_status": l["review_status"], "reviewed_by": l.get("reviewed_by_name"),
-            "email_sequence": l["email_sequence"] if l["review_status"] == "approved" else "not approved",
-            "linkedin_message": l["linkedin_message"] if l["review_status"] == "approved" else "not approved",
-        } for l in leads],
+            "company_name": lead["company_name"], "company_domain": lead["company_domain"], "confidence": lead["confidence"],
+            "qualification": {"hard_filter_checks": lead["hard_filter_checks"], "fit_reasons": lead["fit_reasons"],
+                              "concerns": lead["concerns"]},
+            "source_context": {"source_urls": lead["source_urls"], "source_summary": lead["source_summary"]},
+            "review_status": lead["review_status"], "reviewed_by": lead.get("reviewed_by_name"),
+            "email_sequence": lead["email_sequence"] if lead["review_status"] == "approved" else "not approved",
+            "linkedin_message": lead["linkedin_message"] if lead["review_status"] == "approved" else "not approved",
+        } for lead in leads],
     }
     return JSONResponse(db.to_jsonable(pack), headers={
         "Content-Disposition": f'attachment; filename="sample-pack-{str(run["id"])[:8]}.json"'})
@@ -628,7 +627,7 @@ async def resolve_event(request: Request, event_id: str, csrf_token: str = Form(
     try:
         uuid.UUID(event_id)
     except ValueError:
-        raise HTTPException(status_code=404, detail="Issue not found.")
+        raise HTTPException(status_code=404, detail="Issue not found.") from None
     await db.run(alerts.resolve, event_id, member.user_id)
     health.clear_cache()  # re-check services on the next run after a fix
     return Response(status_code=204, headers={"HX-Redirect": "/system"})

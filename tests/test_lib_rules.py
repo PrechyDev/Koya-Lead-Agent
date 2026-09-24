@@ -4,7 +4,7 @@ import pytest
 
 from app.config import DEV_LIMITS, FULL_LIMITS, limits_for_run
 from app.lib.budget import BudgetExceeded, assert_can_spend, cost_from_usage
-from app.lib.limits import next_discovery_batch, qualified_slots_left
+from app.lib.limits import next_discovery_batch
 from app.lib.objective import (
     country_code,
     icp_signature,
@@ -34,7 +34,6 @@ def test_target_is_clamped_to_preset():
     assert limits_for_run(25, dev=False).target_qualified == 10
     assert limits_for_run(0, dev=False).target_qualified == 1
     assert limits_for_run(10, dev=True).target_qualified == DEV_LIMITS.target_qualified
-    assert qualified_slots_left({"target_qualified": 10}, {"qualified": 7}) == 3
 
 
 # --- objective fingerprints (E-36, E-37) ----------------------------------------

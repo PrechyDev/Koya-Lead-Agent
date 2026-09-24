@@ -45,3 +45,7 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
 ignore = ["E501"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI declares parameters with Depends()/Form()/Query() defaults; that is the framework's design.
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Form", "fastapi.Query"]

@@ -10,6 +10,3 @@ def next_discovery_batch(limits: dict, usage: dict) -> int:
     size = int(limits["first_pool"]) if calls == 0 else int(limits["topup_size"])
     return max(0, min(size, remaining))
 
-
-def qualified_slots_left(limits: dict, usage: dict) -> int:
-    return max(0, int(limits["target_qualified"]) - int(usage.get("qualified", 0)))

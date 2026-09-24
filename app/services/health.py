@@ -10,7 +10,6 @@ Successful results are cached for 10 minutes; failures for 1 minute (so a fix is
 """
 
 import time
-from decimal import Decimal
 
 import anthropic
 import httpx
@@ -120,6 +119,3 @@ def preflight(limits: dict) -> list[ServiceFailure]:
             failures.append(result)
     return failures
 
-
-def remaining_budget_ok(spent: Decimal, cap: float) -> bool:
-    return spent + Decimal(str(cap)) <= get_settings().claude_budget_total_usd
