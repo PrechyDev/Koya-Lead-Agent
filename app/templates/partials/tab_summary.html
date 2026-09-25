@@ -18,7 +18,7 @@
     <h3>Cost & usage</h3>
     <dl class="kv">
       {% if member and member.is_admin %}{# D-66: AI cost and model names are for admins only #}
-      <dt>Claude cost</dt><dd class="nums">{{ run.cost_usd | money }} (cap {{ (run.limits or {}).get('max_budget_usd') | money }})</dd>
+      <dt>Claude cost (estimated)</dt><dd class="nums">{{ run.cost_usd | money }} (cap {{ (run.limits or {}).get('max_budget_usd') | money }})</dd>
       {% endif %}
       <dt>Agent turns</dt><dd class="nums">{{ run.num_turns }}</dd>
       <dt>Companies fetched</dt><dd class="nums">{{ usage.get('candidates_found', 0) }} in {{ usage.get('discovery_calls', 0) }} search(es)</dd>
