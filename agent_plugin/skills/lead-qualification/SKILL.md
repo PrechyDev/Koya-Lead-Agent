@@ -5,8 +5,6 @@ description: Use when judging whether ONE discovered company fits the refined IC
 
 # Lead Qualification
 
-Source: `assets/lead-qualification-guide.md` (rules kept verbatim), plus project specifics.
-
 ## Qualification Inputs
 
 The agent should use:

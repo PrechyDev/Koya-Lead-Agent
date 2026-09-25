@@ -5,8 +5,6 @@ description: Always-on scope and safety rules for every role in the lead agent -
 
 # Outreach Safety
 
-Source: `assets/outreach-safety-guide.md` (rules kept verbatim), plus project specifics.
-
 ## Scope Boundaries
 
 The agent may:

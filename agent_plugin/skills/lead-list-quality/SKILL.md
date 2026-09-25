@@ -5,8 +5,6 @@ description: Use before calling finish_run to check the final lead list against 
 
 # Lead-List Quality
 
-Source: `assets/lead-list-quality-guide.md` (rules kept verbatim), plus project specifics.
-
 ## Required Checks
 
 - The list contains 10 qualified companies.

@@ -5,8 +5,6 @@ description: Use when writing the 3-step cold email sequence and LinkedIn messag
 
 # Outbound Copywriting
 
-Source: `assets/outbound-copywriting-guide.md` (rules kept verbatim), plus project specifics.
-
 ## Required Output
 
 For each qualified lead, generate a 3-step cold email sequence.

@@ -5,8 +5,6 @@ description: Use FIRST, before any company discovery, to turn the user's qualifi
 
 # ICP Refinement
 
-Source: `assets/icp-refinement-guide.md` (rules kept verbatim), plus project specifics for Koya Talent.
-
 ## Goal
 
 The agent should understand who counts as a good-fit company before it spends tool calls on discovery and scraping.
