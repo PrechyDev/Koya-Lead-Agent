@@ -326,3 +326,15 @@ async def test_a_budget_stop_does_not_use_up_a_draft_attempt(run_ctx, fake_apify
     assert err and "budget" in data["error"]
     assert db.get_lead(str(lead["id"]))["outreach_attempts"] == 0
     assert run_ctx.fatal and run_ctx.fatal.code == "budget_exhausted"
+
+
+async def test_a_refresh_run_rereads_the_site_instead_of_the_cache(run_ctx, fake_apify, fake_scrape):
+    """Errors log #105: 'Refresh the same companies' promised up-to-date information but served cached pages."""
+    await _one_lead(run_ctx)
+    db.put_cached_page(url="https://alpha-tooltest.com/", domain="alpha-tooltest.com", final_url=None, title="Old",
+                       content="Old page text from last week. " * 5, truncated=False, status_code=200,
+                       injection_flags=[], links=["/team"], parked=False)
+    run_ctx.cross_run_dedupe = False  # what the refresh choice sets
+    data, _ = await call(run_ctx, "scrape_website", {"purpose": "home", "domain": "alpha-tooltest.com", "path": "/"})
+    assert not data["from_cache"] and fake_scrape == ["https://alpha-tooltest.com/"]
+    assert "Alpha sells B2B SaaS" in db.get_cached_page("https://alpha-tooltest.com/", 7)["content"]  # cache updated

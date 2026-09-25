@@ -453,7 +453,10 @@ def build_handlers(ctx: RunContext) -> dict:
         if "researching" not in ctx.status_seen:
             await db.run(ctx.move_to, "researching", "Researching company websites")
 
-        cached = await db.run(db.get_cached_page, url, settings.scrape_cache_days)
+        # "Refresh the same companies" promises up-to-date information: a refresh run (cross_run_dedupe off)
+        # re-reads the site instead of reusing the page cache, then updates the cache (errors log #105).
+        cached = (await db.run(db.get_cached_page, url, settings.scrape_cache_days)
+                  if ctx.cross_run_dedupe else None)
         from_cache = cached is not None
         if cached:
             await db.run(db.add_usage, ctx.run_id, "cache_hits")
