@@ -287,13 +287,14 @@ def append_usage_item(run_id: str, key: str, value: str) -> None:
     )
 
 
-def set_target_qualified(run_id: str, target: int) -> dict:
-    """The one limit that may change after a run is created: the lead target, set from the objective by
-    save_icp (D-57). Everything else in `limits` is fixed when the run is created."""
+def set_target_qualified(run_id: str, target: int, max_budget_usd: float) -> dict:
+    """The limits that may change after a run is created: the lead target, set from the objective by save_icp
+    (D-57), and the Claude cap sized for it (D-97). Everything else in `limits` is fixed when the run is created."""
     row = fetch_one(
-        f"""update {t('runs')} set limits = jsonb_set(limits, '{{target_qualified}}', to_jsonb(%s::int))
+        f"""update {t('runs')} set limits = jsonb_set(jsonb_set(limits, '{{target_qualified}}', to_jsonb(%s::int)),
+                                                     '{{max_budget_usd}}', to_jsonb(%s::numeric))
             where id = %s returning limits""",
-        (int(target), run_id),
+        (int(target), max_budget_usd, run_id),
     )
     return row["limits"] if row else {}
 

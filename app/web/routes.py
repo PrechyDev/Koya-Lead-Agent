@@ -334,8 +334,9 @@ async def create_run(request: Request, objective: str = Form(""),
         return _banner(request, "warning", f"You've reached your daily limit of {_daily_cap(member)} runs.", 429)
     # The lead target comes from the objective once the ICP step reads it (D-57); until then, the preset maximum.
     limits = limits_for_run(MAX_LEAD_COUNT, dev=settings.dev_limits)
-    try:
-        assert_run_fits(await db.run(db.total_spend), limits.max_budget_usd, await db.run(db.claude_budget))
+    try:  # can at least a 1-lead run fit? The ICP step sizes the real run to the balance (D-97)
+        assert_run_fits(await db.run(db.total_spend), limits_for_run(1, dev=settings.dev_limits).max_budget_usd,
+                        await db.run(db.claude_budget))
     except BudgetExceeded as exc:
         failure = ServiceFailure("budget_exhausted", str(exc))
         await db.run(alerts.raise_alert, failure.code, failure.detail)
@@ -686,9 +687,11 @@ async def spend_page(request: Request, tab: str = "runs", page: int = 1, member:
         return RedirectResponse(f"/spend?tab={tab}&page={pages}", status_code=303)
     spent, budget = await db.run(db.total_spend), await db.run(db.claude_budget)
     spent_by_month, _ = await db.run(db.monthly_money)
-    run_cap = limits_for_run(MAX_LEAD_COUNT, dev=get_settings().dev_limits).max_budget_usd
+    size = limits_for_run(MAX_LEAD_COUNT, dev=get_settings().dev_limits)
+    run_cap, run_leads = size.max_budget_usd, size.target_qualified
     return templates.TemplateResponse(request, "spend.html", _ctx(
         request, spent=spent, budget=budget, runs_left=runs_left(spent, budget, run_cap), run_cap=run_cap,
+        run_leads=run_leads,
         this_month=_utc_month(), spent_this_month=spent_by_month.get(_utc_month(), Decimal(0)),
         request_pending=await db.run(db.open_budget_request), max_budget=MAX_BUDGET_USD, tabs=tabs,
         tab=tab, items=items, models=models, page=page, pages=pages, total=total,

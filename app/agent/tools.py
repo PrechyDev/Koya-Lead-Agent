@@ -9,6 +9,7 @@ Tool names seen by Claude are  mcp__leadtools__<name>.
 """
 
 import re
+from decimal import Decimal
 from typing import Literal
 
 from claude_agent_sdk import SdkMcpTool, create_sdk_mcp_server, tool
@@ -17,9 +18,9 @@ from pydantic import BaseModel, Field, ValidationError
 from app import db
 from app.agent.context import RunContext
 from app.agent.logging import Outcome, blocked, failure, logged_call, success
-from app.config import GROUNDING_RUN_CAP_USD, get_settings
+from app.config import GROUNDING_RUN_CAP_USD, ICP_PHASE_MAX_BUDGET_USD, get_settings, run_cap_usd
 from app.failures import ServiceFailure
-from app.lib.budget import BudgetExceeded, assert_can_spend
+from app.lib.budget import BudgetExceeded, affordable_target, assert_can_spend
 from app.lib.domain import normalize_domain
 from app.lib.icp_defaults import apply_competitor_rule, apply_defaults, decide_lead_count, has_company_type
 from app.lib.limits import next_discovery_batch
@@ -291,6 +292,16 @@ def build_handlers(ctx: RunContext) -> dict:
             target, lead_note = decide_lead_count(icp.get("requested_lead_count"), int(ctx.limits["target_qualified"]))
             if lead_note:
                 icp["assumptions"] = list(icp["assumptions"]) + [lead_note]
+            # Size the run's cap for this many leads (D-97); if the balance can't cover it, run fewer leads now
+            # rather than spend on the ICP and be refused. Unrecorded ICP spend is counted at its ceiling.
+            available = (await db.run(db.claude_budget) - await db.run(db.total_spend) - GROUNDING_RUN_CAP_USD
+                         - Decimal(str(ICP_PHASE_MAX_BUDGET_USD)))
+            fits = affordable_target(target, int(ctx.limits["max_candidates"]), available)
+            if 0 < fits < target:
+                icp["assumptions"] = list(icp["assumptions"]) + [
+                    f"The AI budget left allows {fits} lead{'s' if fits != 1 else ''} in this run instead of {target}. "
+                    "Your developer can add budget."]
+                target = fits
         if parsed.is_searchable and (not icp["hard_filters"] or not icp["discovery_query_plan"]):
             return failure("A searchable ICP needs at least one hard filter and one discovery query.")
         negative = [d for d in icp["disqualifiers"] if NEGATIVE_DISQUALIFIER_RE.match(d)]
@@ -307,7 +318,8 @@ def build_handlers(ctx: RunContext) -> dict:
             fields["clarification_question"] = redact(parsed.clarification_question.strip())[0][:500]
         await db.run(db.update_run, ctx.run_id, **fields)
         if parsed.is_searchable:
-            ctx.limits = await db.run(db.set_target_qualified, ctx.run_id, target)  # from the objective (D-57)
+            ctx.limits = await db.run(db.set_target_qualified, ctx.run_id, target,  # from the objective (D-57)
+                                      run_cap_usd(target, int(ctx.limits["max_candidates"])))  # sized for it (D-97)
         ctx.icp = icp
         what = "searchable ICP" if parsed.is_searchable else "clarification needed"
         return success({"saved": True, "is_searchable": parsed.is_searchable},

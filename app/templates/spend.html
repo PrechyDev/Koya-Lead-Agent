@@ -6,8 +6,8 @@
 <section class="card stack">
   <h1>Spend</h1>
   {# D-94: admins see how many runs are left, not dollars; developers see the dollars and change the budget #}
-  <p class="big nums"><b>{% if runs_left == 0 %}No runs left{% else %}About {{ runs_left }} run{{ 's' if runs_left != 1 }} left{% endif %}</b>
-    <span class="muted small">at this run size, before the AI budget is used up</span></p>
+  <p class="big nums"><b>{% if runs_left == 0 %}No {{ run_leads }}-lead runs left{% else %}About {{ runs_left }} {{ run_leads }}-lead run{{ 's' if runs_left != 1 }} left{% endif %}</b>
+    <span class="muted small">before the AI budget is used up (smaller runs cost less)</span></p>
   {% if member.is_developer %}
   <div class="bar {% if pct >= 90 %}full{% elif pct >= 70 %}warn{% endif %}" role="progressbar" aria-valuenow="{{ pct }}" aria-valuemin="0" aria-valuemax="100"><span style="width: {{ [pct, 100] | min }}%"></span></div>
   <div class="stat-row">

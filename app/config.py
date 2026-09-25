@@ -7,7 +7,7 @@ here so every module reads the same numbers.
 
 import re
 from dataclasses import asdict, dataclass
-from decimal import Decimal
+from decimal import ROUND_UP, Decimal
 from functools import lru_cache
 
 from pydantic import Field, field_validator
@@ -122,6 +122,27 @@ class RunLimits:
         return asdict(self)
 
 
+# Per-run Claude cap, sized from the run (owner, 2026-09-25, D-97) instead of two fixed numbers. Unit costs are
+# measured from the 2026-09-25 live runs; adjust them here if prices or models change.
+RESEARCH_COST_PER_COMPANY_USD = Decimal("0.13")  # Opus researcher ~$0.11 + orchestrator ~$0.02 per company
+DRAFT_COST_PER_LEAD_USD = Decimal("0.05")  # Opus copywriter, per qualified lead
+RUN_OVERHEAD_USD = Decimal("0.05")  # ICP step, run start and finish
+RUN_CAP_MARGIN = Decimal("1.15")  # room for a harder-than-usual company
+
+
+def companies_budgeted(target: int, max_candidates: int) -> int:
+    """How many companies a run is budgeted to research: about 2 per lead wanted (half of discovery results
+    usually aren't fits), plus 2, never more than the run's candidate limit."""
+    return min(int(max_candidates), 2 * int(target) + 2)
+
+
+def run_cap_usd(target: int, max_candidates: int) -> float:
+    """The run's Claude cap: e.g. 1 lead -> $0.72, 3 -> $1.43, 10 -> $3.63. A ceiling, not a charge."""
+    raw = (companies_budgeted(target, max_candidates) * RESEARCH_COST_PER_COMPANY_USD
+           + int(target) * DRAFT_COST_PER_LEAD_USD + RUN_OVERHEAD_USD) * RUN_CAP_MARGIN
+    return float(raw.quantize(Decimal("0.01"), rounding=ROUND_UP))
+
+
 FULL_LIMITS = RunLimits(
     target_qualified=10,
     first_pool=12,
@@ -132,14 +153,14 @@ FULL_LIMITS = RunLimits(
     max_scrapes=20,
     max_pages_per_domain=2,
     max_turns=60,
-    max_budget_usd=3.00,  # owner, 2026-09-25 (D-83): Opus researches at ~$0.11/company; $1.25 couldn't reach 10 leads
+    max_budget_usd=run_cap_usd(10, 20),  # sized from the run (D-97); was a fixed $3.00 (D-83)
     max_outreach_rewrites=2,
     max_tool_calls=120,
     phase_timeout_s=1800,
 )
 
 DEV_LIMITS = RunLimits(
-    target_qualified=1,  # D-91: with Opus research (~$0.11/company) one lead + its drafts fits the $0.30 cap
+    target_qualified=1,  # D-91: test runs aim for one lead
     first_pool=3,
     topup_size=2,
     max_candidates=5,
@@ -148,7 +169,7 @@ DEV_LIMITS = RunLimits(
     max_scrapes=4,
     max_pages_per_domain=1,
     max_turns=30,
-    max_budget_usd=0.30,
+    max_budget_usd=run_cap_usd(1, 5),  # sized from the run (D-97); was a fixed $0.30
     max_outreach_rewrites=1,
     max_tool_calls=40,
     phase_timeout_s=900,
@@ -169,7 +190,8 @@ ICP_PHASE_TIMEOUT_S = 240
 def limits_for_run(target_qualified: int, dev: bool) -> RunLimits:
     base = DEV_LIMITS if dev else FULL_LIMITS
     target = max(1, min(int(target_qualified), base.target_qualified))
-    return RunLimits(**{**base.to_dict(), "target_qualified": target})
+    return RunLimits(**{**base.to_dict(), "target_qualified": target,
+                        "max_budget_usd": run_cap_usd(target, base.max_candidates)})
 
 
 # ---------------------------------------------------------------------------

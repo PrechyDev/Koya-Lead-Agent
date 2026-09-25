@@ -394,3 +394,33 @@ def test_the_include_flag_alone_includes_competitors():
     assert out["disqualifiers"] == [] and "included" in note
     out, _ = apply_competitor_rule({"target_company_type": "Marketing agencies", "disqualifiers": []})
     assert out["disqualifiers"] == [COMPETITOR_EXCLUSION]  # agencies are Koya's audience, not competitors
+
+
+# --- the run's Claude cap is sized from the run, and fitted to the balance (D-97) -------------------------------
+def test_run_cap_grows_with_the_leads_wanted():
+    from decimal import Decimal
+
+    from app.config import DEV_LIMITS, FULL_LIMITS, limits_for_run, run_cap_usd
+    from app.lib.budget import affordable_target
+    assert [run_cap_usd(t, 20) for t in (1, 3, 5, 10)] == [0.72, 1.43, 2.14, 3.63]
+    assert DEV_LIMITS.max_budget_usd == 0.72 and FULL_LIMITS.max_budget_usd == 3.63
+    assert limits_for_run(3, dev=False).max_budget_usd == 1.43  # a small run doesn't reserve for 20 companies
+    assert affordable_target(10, 20, Decimal("2.00")) == 4 and affordable_target(10, 20, Decimal("0.50")) == 0
+    assert affordable_target(3, 20, Decimal("100")) == 3  # never more than wanted
+
+
+async def test_save_icp_sizes_the_cap_and_shrinks_the_run_to_the_balance(run_ctx, monkeypatch):
+    from decimal import Decimal
+
+    from app.config import run_cap_usd
+    await call(run_ctx, "save_icp", ICP_ARGS)  # target 1 in this test run
+    assert db.get_run(run_ctx.run_id)["limits"]["max_budget_usd"] == run_cap_usd(1, 6)
+    run_ctx.limits = {**run_ctx.limits, "target_qualified": 10, "max_candidates": 20}  # a full-size run
+    spent = db.total_spend()
+    monkeypatch.setattr(db, "claude_budget", lambda: spent + Decimal("0.15") + Decimal("1.43"))  # room for 3 leads
+    icp = {**ICP_ARGS["icp"], "requested_lead_count": 5}
+    data, err = await call(run_ctx, "save_icp", {**ICP_ARGS, "icp": icp})
+    run = db.get_run(run_ctx.run_id)
+    assert not err, data
+    assert run["limits"]["target_qualified"] == 3 and run["limits"]["max_budget_usd"] == 1.43
+    assert any("allows 3 leads in this run instead of 5" in a for a in run["icp"]["assumptions"])

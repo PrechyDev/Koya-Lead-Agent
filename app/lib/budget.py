@@ -2,7 +2,13 @@
 
 from decimal import ROUND_HALF_UP, Decimal
 
-from app.config import BATCH_DISCOUNT, CACHE_WRITE_MULTIPLIER, GROUNDING_RUN_CAP_USD, MODEL_PRICES
+from app.config import (
+    BATCH_DISCOUNT,
+    CACHE_WRITE_MULTIPLIER,
+    GROUNDING_RUN_CAP_USD,
+    MODEL_PRICES,
+    run_cap_usd,
+)
 
 
 class BudgetExceeded(Exception):
@@ -29,6 +35,14 @@ def runs_left(spent: Decimal, total: Decimal, run_cap: Decimal | float) -> int:
     """How many more runs of this size the budget allows: exactly what assert_run_fits would let start."""
     per_run = Decimal(str(run_cap)) + GROUNDING_RUN_CAP_USD
     return max(0, int((total - spent) // per_run)) if per_run > 0 else 0
+
+
+def affordable_target(wanted: int, max_candidates: int, available: Decimal) -> int:
+    """The most leads (<= wanted) whose run cap fits in `available`; 0 if not even one does (D-97)."""
+    for target in range(int(wanted), 0, -1):
+        if Decimal(str(run_cap_usd(target, max_candidates))) <= available:
+            return target
+    return 0
 
 
 def monthly_statement(start: Decimal, spent: dict[str, Decimal], added: dict[str, Decimal],

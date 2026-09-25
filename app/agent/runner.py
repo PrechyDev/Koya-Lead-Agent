@@ -37,7 +37,13 @@ from app.agent.tools import (
     mcp_name,
 )
 from app.agent.transcripts import session_cost
-from app.config import ICP_PHASE_MAX_BUDGET_USD, ICP_PHASE_MAX_TURNS, ICP_PHASE_TIMEOUT_S, get_settings
+from app.config import (
+    ICP_PHASE_MAX_BUDGET_USD,
+    ICP_PHASE_MAX_TURNS,
+    ICP_PHASE_TIMEOUT_S,
+    get_settings,
+    run_cap_usd,
+)
 from app.failures import ServiceFailure, classify_claude_error
 from app.lib.budget import BudgetExceeded, assert_run_fits
 from app.lib.objective import objective_problem
@@ -296,7 +302,9 @@ async def run_icp_phase(run_id: str) -> str:
         await db.run(db.set_status, run_id, "needs_clarification", "The objective needs rewording before searching.")
         return "needs_clarification"
     try:
-        assert_run_fits(await db.run(db.total_spend), ctx.limits["max_budget_usd"], await db.run(db.claude_budget))
+        # Before the ICP step the lead count is unknown: can at least a 1-lead run fit? (save_icp sizes it, D-97)
+        assert_run_fits(await db.run(db.total_spend), run_cap_usd(1, int(ctx.limits["max_candidates"])),
+                        await db.run(db.claude_budget))
     except BudgetExceeded as exc:
         await db.run(fail_run, run_id, ServiceFailure("budget_exhausted", str(exc)))
         return "failed"
