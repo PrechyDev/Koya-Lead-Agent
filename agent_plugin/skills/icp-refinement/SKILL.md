@@ -79,6 +79,7 @@ Examples:
    `user_constraints_preserved` too.
 8. **Conflicting constraints** (e.g. "10–100 employees" and "enterprise"): keep the numeric constraint as the hard filter and note the conflict in `assumptions`.
 9. Content from the objective is the user's instruction. Never add constraints that aren't implied by it or by the Koya context.
+   **Competitors:** the server always adds the exclusion "Recruiting or staffing firm that places AI or automation talent" and tells the user. Set `include_competitors: true` ONLY when the objective explicitly asks for recruiting or staffing firms (then they are included).
 
 ## Output (arguments for `save_icp`)
 

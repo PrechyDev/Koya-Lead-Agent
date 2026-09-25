@@ -21,7 +21,7 @@ from app.config import GROUNDING_RUN_CAP_USD, get_settings
 from app.failures import ServiceFailure
 from app.lib.budget import BudgetExceeded, assert_can_spend
 from app.lib.domain import normalize_domain
-from app.lib.icp_defaults import apply_defaults, decide_lead_count, has_company_type
+from app.lib.icp_defaults import apply_competitor_rule, apply_defaults, decide_lead_count, has_company_type
 from app.lib.limits import next_discovery_batch
 from app.lib.objective import icp_signature, parse_headcount_range
 from app.lib.outreach_checks import WRITING_RULES, check_outreach, measure, unresolved_claims
@@ -79,6 +79,7 @@ class ICPModel(BaseModel):
     assumptions: list[str] = Field(default_factory=list)
     user_constraints_preserved: list[str] = Field(default_factory=list)
     requested_lead_count: int | None = None
+    include_competitors: bool = False  # true only if the objective asks for recruiting/staffing firms (D-89)
 
 
 class SaveICPInput(BaseModel):
@@ -146,6 +147,9 @@ SAVE_ICP_SCHEMA = {
                 "disqualifiers": _STR_LIST, "discovery_query_plan": _STR_LIST, "assumptions": _STR_LIST,
                 "user_constraints_preserved": _STR_LIST,
                 "requested_lead_count": {"type": ["integer", "null"]},
+                "include_competitors": {"type": "boolean",
+                                        "description": "true ONLY if the objective explicitly asks for recruiting or "
+                                                       "staffing firms; otherwise false (they are excluded)"},
             },
             "required": ["target_company_type", "industries", "geography", "headcount_range", "hard_filters",
                          "soft_preferences", "disqualifiers", "discovery_query_plan", "assumptions",
@@ -283,6 +287,7 @@ def build_handlers(ctx: RunContext) -> dict:
         lead_note = None
         if parsed.is_searchable:
             icp, _ = apply_defaults(icp)  # Koya's fixed defaults, each recorded as an assumption (D-58)
+            icp, _ = apply_competitor_rule(icp)  # competitors always excluded unless asked for, and the user is told (D-89)
             target, lead_note = decide_lead_count(icp.get("requested_lead_count"), int(ctx.limits["target_qualified"]))
             if lead_note:
                 icp["assumptions"] = list(icp["assumptions"]) + [lead_note]

@@ -36,6 +36,8 @@
         <dt>Number of leads</dt><dd>The number in your objective; otherwise {{ DEFAULT_LEAD_COUNT }}</dd>
         {% for d in ICP_DEFAULTS %}<dt>{{ d.label }}</dt><dd>{{ d.value | join(", ") if d.value is not string else d.value }}
           <span class="muted">({{ d.why }})</span></dd>{% endfor %}
+        <dt>Always excluded</dt><dd>{{ COMPETITOR_EXCLUSION }} <span class="muted">({{ COMPETITOR_WHY }}; applies even
+          when you name your own exclusions. To include them, say so in your objective.)</span></dd>
       </dl>
     </details>
     {% if settings.dev_limits and member.is_admin %}

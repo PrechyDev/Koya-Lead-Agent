@@ -7,7 +7,7 @@ from fastapi.templating import Jinja2Templates
 
 from app.config import get_settings
 from app.db import ACTIVE_STATUSES
-from app.lib.icp_defaults import DEFAULT_LEAD_COUNT, DEFAULTS
+from app.lib.icp_defaults import COMPETITOR_EXCLUSION, COMPETITOR_WHY, DEFAULT_LEAD_COUNT, DEFAULTS
 from app.lib.validation import EMAIL_PATTERN, MIN_PASSWORD_LENGTH, safe_url
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
@@ -124,6 +124,7 @@ def stepper(status: str, last_active_step: int = 0, usage: dict | None = None) -
 
 templates.env.globals.update(badge=badge, ago=ago, money=money, ACTIVE=ACTIVE, EMAIL_PATTERN=EMAIL_PATTERN, shortfall_sentence=shortfall_sentence,
                             ICP_DEFAULTS=DEFAULTS, DEFAULT_LEAD_COUNT=DEFAULT_LEAD_COUNT,
+                            COMPETITOR_EXCLUSION=COMPETITOR_EXCLUSION, COMPETITOR_WHY=COMPETITOR_WHY,
                             MIN_PASSWORD_LENGTH=MIN_PASSWORD_LENGTH,
                             REUSE_DAYS=get_settings().research_reuse_days)
 templates.env.filters["money"] = money

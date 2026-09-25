@@ -227,7 +227,7 @@ def test_defaults_fill_only_what_is_missing_and_say_so():
     assert icp["geography"] == ["United Kingdom"]                      # the user's value is kept
     assert icp["headcount_range"] == "10-100" and "10-100 employees" in icp["hard_filters"]
     assert "Headquartered in the United States" not in icp["hard_filters"]
-    assert len(added) == 5 and all("Koya default" in a for a in added) and icp["assumptions"] == added
+    assert len(added) == 4 and all("Koya default" in a for a in added) and icp["assumptions"] == added
 
 
 def test_same_vague_objective_gets_the_same_defaults_every_time():

@@ -12,6 +12,7 @@ from app.agent import tools as T
 from app.agent.context import RunContext
 from app.agent.logging import logged_call
 from app.config import DEV_LIMITS
+from app.lib.icp_defaults import COMPETITOR_EXCLUSION, apply_competitor_rule
 from app.services import apify as apify_svc
 from app.services import firecrawl as fc
 from app.services.grounding import GroundingResult
@@ -134,7 +135,9 @@ async def test_full_tool_flow(run_ctx, fake_apify, fake_scrape, monkeypatch):
     db.update_lead(str(db.get_lead_by_domain(ctx.run_id, "alpha-tooltest.com")["id"]), qualification_status="pending")
     db.add_usage(ctx.run_id, "needs_review", -1)
     no_agency = [{"disqualifier": "agencies", "applies": "no", "evidence": "sells its own SaaS",
-                  "source_url": "https://alpha-tooltest.com/"}]
+                  "source_url": "https://alpha-tooltest.com/"},
+                 {"disqualifier": COMPETITOR_EXCLUSION, "applies": "no", "evidence": "sells software, not talent",
+                  "source_url": "https://alpha-tooltest.com/"}]  # the server always adds this one (D-89)
     soft = [{"preference": "hiring ops roles", "result": "unknown", "evidence": "no careers page", "source_url": None}]
     data, _ = await call(ctx, "save_qualification", {**base, "hard_filter_checks": checks, "disqualifier_checks":
                                                      no_agency, "soft_preference_checks": soft,
@@ -365,3 +368,29 @@ async def test_a_flagged_claim_left_in_the_draft_is_sent_back_for_free(run_ctx, 
         s["body"] = "Hi {{first_name}}, Alpha sells software to clinics. Is onboarding still manual? {{sender_name}}"
     data, err = await call(run_ctx, "save_outreach", {**args, "emails": steps})
     assert not err and data["drafted"] and checked == [1]
+
+
+# --- competitors: always excluded unless the objective asks for them, and the user is told (D-89) ---------------
+async def test_competitor_exclusion_is_added_to_the_users_own_exclusions(run_ctx):
+    data, err = await call(run_ctx, "save_icp", ICP_ARGS)  # the objective already excludes "agencies"
+    icp = db.get_run(run_ctx.run_id)["icp"]
+    assert not err, data
+    assert icp["disqualifiers"] == ["agencies", COMPETITOR_EXCLUSION]
+    assert any(a.startswith("Always excluded:") for a in icp["assumptions"])
+
+
+async def test_competitors_are_included_when_the_objective_asks(run_ctx):
+    recruiters = {**ICP_ARGS["icp"], "target_company_type": "Recruiting agencies", "industries": ["Staffing"],
+                  "disqualifiers": [COMPETITOR_EXCLUSION]}
+    data, err = await call(run_ctx, "save_icp", {**ICP_ARGS, "icp": recruiters})
+    icp = db.get_run(run_ctx.run_id)["icp"]
+    assert not err, data
+    assert COMPETITOR_EXCLUSION not in icp["disqualifiers"]
+    assert any("included because the objective asks" in a for a in icp["assumptions"])
+
+
+def test_the_include_flag_alone_includes_competitors():
+    out, note = apply_competitor_rule({"target_company_type": "B2B SaaS", "include_competitors": True})
+    assert out["disqualifiers"] == [] and "included" in note
+    out, _ = apply_competitor_rule({"target_company_type": "Marketing agencies", "disqualifiers": []})
+    assert out["disqualifiers"] == [COMPETITOR_EXCLUSION]  # agencies are Koya's audience, not competitors
