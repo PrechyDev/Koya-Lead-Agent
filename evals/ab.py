@@ -50,6 +50,7 @@ REFERENCE_MODEL = "claude-opus-5-5"
 OPUS_STAGES = {"copy"}
 COPY_SET_SIZE = 3  # qualified companies first, then the needs-review ones with the most passed hard filters
 REPEATS = 2
+QUAL_MAX_TOKENS = 8000
 
 ICP_CASES = [
     # No kind of company named: since D-58 the right answer is to ASK (save_icp enforces it). This case expected
@@ -208,7 +209,9 @@ def qual_request(model: str, c: dict, icp: dict, effort: str | None = None) -> d
             f"Disqualifiers: {json.dumps(icp.get('disqualifiers'))}\n"
             f"Soft preferences: {json.dumps(icp.get('soft_preferences'))}\n\n{_company_block(c)}\n\n"
             "Return your qualification decision. Allowed source URLs: the LinkedIn URL and the page URLs above.")
-    return _params(model, system, user, QualOut, effort=effort)
+    # 8000, not 3000: Sonnet's thinking counts as output and two answers were cut off at 3000 (errors log #72);
+    # the production agent has no such limit, so a cut-off answer measured the rig, not the model.
+    return _params(model, system, user, QualOut, max_tokens=QUAL_MAX_TOKENS, effort=effort)
 
 
 def icp_request(model: str, case: dict) -> dict:
@@ -381,7 +384,7 @@ def build_reference_requests(name: str) -> list[tuple[str, dict]]:
     return [(f"ref::{c['domain']}", qual_request(REFERENCE_MODEL, c, fx["icp"], effort="medium")) for c in fx["companies"]]
 
 
-def build_ab_requests(name: str) -> list[tuple[str, dict]]:
+def build_ab_requests(name: str, repeats: int = REPEATS) -> list[tuple[str, dict]]:
     fx, ref = load(name), load_reference(name)
     reqs: list[tuple[str, dict]] = []
     # Owner, 2026-09-25: the answer key had 1 qualified company, so the writing test also uses needs-review
@@ -394,7 +397,7 @@ def build_ab_requests(name: str) -> list[tuple[str, dict]]:
     for model in CANDIDATES + [REFERENCE_MODEL]:
         def runs(stage: str, cases: list, m: str = model) -> list:
             return cases if m != REFERENCE_MODEL or stage in OPUS_STAGES else []  # Opus only in OPUS_STAGES
-        for rep in range(1, REPEATS + 1):
+        for rep in range(1, repeats + 1):
             for case in runs("icp", ICP_CASES):
                 reqs.append((f"icp::{model}::{rep}::{case['id']}", icp_request(model, case)))
             for c in runs("qual", fx["companies"][:8]):
@@ -485,6 +488,8 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=["export", "estimate", "reference", "run", "collect", "rescore", "report"])
     parser.add_argument("--batch-id", help="for `collect`: a batch submitted earlier whose answers weren't fetched")
+    parser.add_argument("--repeats", type=int, default=REPEATS, help="for `run`/`estimate`: repeats per case")
+    parser.add_argument("--ids", help="for `run`: only these request ids (comma list), e.g. to redo cut-off answers")
     parser.add_argument("run_ids", nargs="*")
     parser.add_argument("--name", default="prd_example")
     parser.add_argument("--yes", action="store_true")
@@ -492,6 +497,7 @@ def main() -> int:
                         help="comma list for `run`/`estimate`: run stage by stage so spend is re-checked in between")
     args = parser.parse_args()
     stages = {x.strip() for x in args.stages.split(",") if x.strip()}
+    only_ids = {x.strip() for x in (args.ids or "").split(",") if x.strip()}
 
     if args.command == "export":
         export(args.run_ids, args.name)
@@ -500,7 +506,7 @@ def main() -> int:
         log.info(f"reference (Opus 5.5, {len(ref)} companies): est ${estimate_cost(ref)}")
         if load_reference(args.name):
             for st in sorted(stages):
-                part = [r for r in build_ab_requests(args.name) if r[0].startswith(st + "::")]
+                part = [r for r in build_ab_requests(args.name, args.repeats) if r[0].startswith(st + "::")]
                 log.info(f"A/B {st:<6} ({len(part):>3} requests): est ${estimate_cost(part)}, "
                          f"worst ${worst_case_cost(part)}")
         else:
@@ -514,7 +520,8 @@ def main() -> int:
         (FIXTURES / f"{args.name}.reference.json").write_text(json.dumps(labels, indent=1), encoding="utf-8")
         log.info(f"reference labels saved for {len(labels)} companies")
     elif args.command == "run":
-        reqs = [r for r in build_ab_requests(args.name) if r[0].split("::", 1)[0] in stages]
+        reqs = [r for r in build_ab_requests(args.name, args.repeats) if r[0].split("::", 1)[0] in stages
+                and (not only_ids or r[0] in only_ids)]
         guard(reqs, args.yes)
         results = run_batch(reqs, "ab-" + "-".join(sorted(stages)))
         score(args.name, results)
