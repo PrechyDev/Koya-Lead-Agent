@@ -32,6 +32,7 @@ from app.agent import prompts
 from app.agent.context import RunContext
 from app.agent.logging import log_event
 from app.agent.tools import (
+    OFF_TARGET_QUESTION,
     OUT_OF_SCOPE_QUESTION,
     build_scorecard,
     build_server,
@@ -361,8 +362,13 @@ async def run_icp_phase(run_id: str) -> str:
         return "failed"
     if scope.verdict and scope.verdict.request_type != "lead_search":
         kind = scope.verdict.request_type
-        question = (scope.verdict.clarification_question if kind == "too_vague" and scope.verdict.clarification_question
-                    else OUT_OF_SCOPE_QUESTION.get(kind) or OUT_OF_SCOPE_QUESTION["unrelated"])
+        if kind == "off_target":  # a search, but not for Koya buyers (D-105): ask, before anything is spent
+            question = scope.verdict.clarification_question or OFF_TARGET_QUESTION
+            kind = "too_vague"  # stored as a clarification; the question says why
+        else:
+            question = (scope.verdict.clarification_question if kind == "too_vague"
+                        and scope.verdict.clarification_question
+                        else OUT_OF_SCOPE_QUESTION.get(kind) or OUT_OF_SCOPE_QUESTION["unrelated"])
         await db.run(db.update_run, run_id, request_type=kind, clarification_question=question[:500])
         return await _ask_for_clarification(run_id, kind)
 

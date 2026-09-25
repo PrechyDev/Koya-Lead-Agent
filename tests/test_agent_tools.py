@@ -484,3 +484,26 @@ async def test_save_icp_refuses_bare_category_search_terms(run_ctx):
     vague = {**ICP_ARGS["icp"], "discovery_query_plan": ["B2B SaaS", "SaaS operations"]}
     data, err = await call(run_ctx, "save_icp", {**ICP_ARGS, "icp": vague})
     assert err and "must name what the companies sell" in data["error"] and "B2B SaaS" in data["error"]
+
+
+# --- an objective must fit Koya and give at least 3 requirements before it searches (D-105) ---------------------
+async def test_fewer_than_three_requirements_asks_for_clarification(run_ctx):
+    thin = {**ICP_ARGS["icp"], "hard_filters": ["Sells software"], "geography": ["Canada"], "headcount_range": "5-50"}
+    data, err = await call(run_ctx, "save_icp", {**ICP_ARGS, "icp": thin})
+    run = db.get_run(run_ctx.run_id)
+    assert not err and data["is_searchable"] is False and "what do they sell or do" in run["clarification_question"]
+
+
+async def test_off_target_objective_is_a_clarification_not_a_search():
+    from app.services import scope as scope_svc
+
+    class Client:
+        class messages:  # noqa: N801
+            @staticmethod
+            async def parse(**kw):
+                from types import SimpleNamespace
+                v = scope_svc.ScopeVerdict(request_type="off_target", reason="local shops",
+                                           clarification_question="Which businesses? e.g. US B2B SaaS")
+                return SimpleNamespace(parsed_output=v, usage=SimpleNamespace(input_tokens=100, output_tokens=20))
+    res = await scope_svc.check_scope("find ice cream stores in ife", client=Client())
+    assert res.verdict.request_type == "off_target"

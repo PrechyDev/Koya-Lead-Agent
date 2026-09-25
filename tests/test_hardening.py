@@ -183,7 +183,8 @@ async def call(ctx, name, args):
 
 
 ICP = {"target_company_type": "B2B SaaS", "industries": ["B2B SaaS"], "geography": ["United States"],
-       "headcount_range": "10-100", "hard_filters": ["US"], "soft_preferences": [], "disqualifiers": [],
+       "headcount_range": "10-100", "hard_filters": ["US", "B2B SaaS", "10-100 employees"], "soft_preferences": [],
+       "disqualifiers": [],
        "discovery_query_plan": ["clinic scheduling software"], "assumptions": [], "user_constraints_preserved": []}
 
 

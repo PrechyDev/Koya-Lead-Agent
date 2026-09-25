@@ -60,6 +60,13 @@ OUT_OF_SCOPE_QUESTION = {
                  "agent find (industry, location, size)? For example: \"UK marketing agencies with 20 to 50 staff\".",
     "too_vague": "",
 }
+OFF_TARGET_QUESTION = ("Koya's buyers are small, growing businesses with repetitive operations work, so these companies "
+                       "are unlikely to need an AI automation assistant. Which businesses should the agent find? For "
+                       "example: \"US B2B SaaS companies with 10 to 100 employees\" or \"UK marketing agencies\".")
+FEW_FILTERS_QUESTION = ("To find the right companies I need a bit more: what do they sell or do, where are they, and "
+                        "roughly how big are they? For example: \"US B2B SaaS companies with 10 to 100 employees that "
+                        "sell to clinics\".")
+MIN_HARD_FILTERS = 3  # owner, 2026-09-26 (D-105): an objective must give at least 3 checkable requirements
 MISSING_TYPE_QUESTION = ("Which kind of companies should the agent look for? For example: \"B2B SaaS companies\", "
                          "\"marketing agencies\" or \"dental clinics\". Location, size and the rest have sensible "
                          "defaults if you leave them out.")
@@ -315,6 +322,10 @@ def build_handlers(ctx: RunContext) -> dict:
                     f"The AI budget left allows {fits} lead{'s' if fits != 1 else ''} in this run instead of {target}. "
                     "Your developer can add budget."]
                 target = fits
+        if parsed.is_searchable and len([f for f in icp["hard_filters"] if str(f).strip()]) < MIN_HARD_FILTERS:
+            # D-105: fewer than 3 checkable requirements (after Koya's defaults) is too loose to research well.
+            parsed.is_searchable, parsed.request_type = False, "too_vague"
+            parsed.clarification_question = FEW_FILTERS_QUESTION
         if parsed.is_searchable and (not icp["hard_filters"] or not icp["discovery_query_plan"]):
             return failure("A searchable ICP needs at least one hard filter and one discovery query.")
         vague_terms = generic_queries(list(icp.get("discovery_query_plan") or []))
