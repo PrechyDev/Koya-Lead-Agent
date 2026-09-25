@@ -56,6 +56,7 @@ git config core.hooksPath .githooks        # secret scan before every commit
 | Script | What it does | Cost |
 | --- | --- | --- |
 | `scripts/dev_run.py "<objective>" --yes` | Runs a research run from the terminal with DEV limits (`--full` for 10 leads, `--refresh` to re-research; refuses without `--yes`) | ≤ $0.30 Claude + ≤ $0.05 Apify (DEV) |
+| `scripts/claude_credit.py` | Checks the Anthropic key can spend (1-token test call) and prints the project's recorded Claude spend by source and model. The account's remaining balance is only visible in the Anthropic Console | ~$0.00001 (`--no-probe`: free) |
 | `scripts/resume_run.py <run_id> find_new\|refresh_same` | Continues a run paused at the repeat gate | as a run |
 | `scripts/transcript_cost.py <session_id> [--record <run_id>]` | Recovers a killed session's true cost from Claude Code transcripts | free |
 | `evals/ab.py export\|estimate\|reference\|run\|report` | One-off model A/B (docs/specs.md §9; Haiku 4.5, Sonnet 5, and Opus 5.5 on qualification + copywriting); refuses without `--yes` and above $1.20 | ≤ $1.20 total |

@@ -104,7 +104,8 @@ Models are set per role via `MODEL_ORCHESTRATOR`, `MODEL_ICP`, `MODEL_RESEARCHER
   templates/            pages, partials/ (HTMX fragments), fixtures/ (test pages)
   static/               app.css, app.js, htmx.min.js
 /db/migrations          0000_app_role.sql … 0007_scrape_cache_links_parked.sql
-/scripts                migrate, create_app_role, bootstrap_owner, dev_run, resume_run, transcript_cost, secret_scan
+/scripts                migrate, create_app_role, bootstrap_owner, dev_run, resume_run, transcript_cost, secret_scan,
+                        claude_credit
 /evals                  ab.py (model A/B), record.py (records A/B fixtures), fixtures/
 /spikes                 sdk_spike.py + spike_plugin/
 /n8n                    alert-email-workflow.json
@@ -123,6 +124,7 @@ py -3.12 -m venv .venv && .venv/Scripts/python -m pip install -r requirements.tx
 .venv/Scripts/python scripts/dev_run.py "<objective>" --yes         # a DEV-limits run from the terminal (spends!)
 .venv/Scripts/python evals/ab.py estimate --name <fixtures>         # A/B pre-flight (free); run/reference need --yes
 .venv/Scripts/python scripts/secret_scan.py --all                   # scan everything tracked
+.venv/Scripts/python scripts/claude_credit.py                       # is the Anthropic key working? + project spend (1-token probe; --no-probe = free)
 ```
 
 Agent SDK gotchas learned the hard way (see ../docs/progress.md §4):
