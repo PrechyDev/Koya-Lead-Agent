@@ -29,7 +29,7 @@ This is the single source of truth for **what the system does, why, and how it b
 | Duplicate companies in a run | 0 |
 | Tool calls logged | 100% (success, error and blocked) |
 | Apify cost per full run | ≤ $0.25 (hard cap) |
-| Claude cost per full run | ≤ $1.25 (hard cap) |
+| Claude cost per full run | ≤ $3.00 (hard cap; $1.25 until D-83) |
 | Total Claude spend for the project | ≤ $6.00 (app-enforced) · $7.00 Console spend limit (backstop) |
 | Time per full run | < 30 min (the watchdog). Measured: ~35 s per researched company, one at a time |
 
@@ -296,7 +296,7 @@ Alerts for admins (D-38): `severity (info|warning|critical), service, code, mess
 | `max_scrapes` | 20 (≈ 1 page per surviving candidate + a few second pages) | 4 | `scrape_website` (cache hits don't count) |
 | `max_pages_per_domain` | 2 (home, then about or careers **only if the homepage lacks evidence for a hard filter**) | 1 | `scrape_website` |
 | `max_turns` | 60 | 30 | SDK option (ICP phase: 6 turns, $0.05, 4 min) |
-| `max_budget_usd` (Claude, per run) | **1.25** | 0.30 | SDK option + our ledger check |
+| `max_budget_usd` (Claude, per run) | **3.00** (was 1.25, D-83) | 0.30 | SDK option + our ledger check |
 | `max_outreach_rewrites` per lead | 2 | 1 | `save_outreach` |
 | `max_tool_calls` (all tools, all roles, per run) | 120 | 40 | the `logged_call` wrapper refuses → `blocked`. Covers the outreach-safety guide's "API/tool calls" limit |
 | `phase_timeout_s` (watchdog) | 1800 | 900 | the runner stops a phase that runs too long and finalizes from the records (D-30) |
@@ -326,8 +326,8 @@ A refused call returns a normal result such as `{ "ok": false, "reason": "scrape
 | Dev runs (~4 × DEV_LIMITS; one records the A/B fixtures; they alternate orchestrator models) | $0.80 |
 | Model A/B (§9, lean; Opus 5.5 competes on 2 stages) | $1.20 (est. ~$1.00) |
 | Test matrix (§13) | $1.00 |
-| Final 10-lead run | $1.25 |
-| Second final run (if the first fails or is weak) | $1.25 |
+| Final 10-lead run | $3.00 (D-83) |
+| Second final run | **no longer fits** the $6 total after D-83 (raise the total first) |
 | Reserve | $0.60 |
 | **Total** | **$6.00** |
 
@@ -425,7 +425,7 @@ Chosen by the A/B test (§9) and the owner, 2026-09-25 (D-77). Each value is an 
 | Orchestrator (`MODEL_ORCHESTRATOR`) | Finds companies, delegates one at a time, finishes the run | `claude-sonnet-5` | Not replayed; follows the delegation protocol in live dev runs | — |
 | Small checks (`MODEL_CHECKS`) | Scope check before a run + pre-run credit probe | `claude-haiku-4-5` | Cheap yes/no tasks | — |
 
-**Risk to measure before the final run:** Opus in two roles may reach the $1.25 per-run Claude cap before 10 leads; the run then ends `completed_partial` with what it has. Measure with one DEV run (cap $0.30). Full per-stage numbers: progress.md §8.
+**Measured (DEV run dc8b74f9):** Opus researches at ~$0.107 per company (Sonnet ~$0.05 in earlier runs), so a 10-lead run costs ~$2.50–3.50 and the per-run cap was raised to $3.00 (D-83). Full per-stage numbers: progress.md §8.
 
 ---
 
@@ -749,6 +749,7 @@ Numbers are stable (other docs refer to them); rows are grouped by topic. Status
 | D-18 | Least-privilege `lead_agent_app` role (no DELETE/DROP, no other schemas); RLS on with an app-only policy | Default, Verified | "No destructive DB actions"; protects Week 3/4 data | Deploying the `postgres` DSN |
 | D-11 | Supabase Auth logins (server-side HttpOnly cookies, JWKS verification), admin/member, invite-only, nothing public | Confirmed | Internal client tool with confidential prospect data; proven approval attribution | Shared passcode; public viewing |
 | D-26 | No `auth.users` trigger in Week 5; Week 4's trigger skips Lead Agent invitees | Confirmed (owner, 2026-09-24), **Applied + Verified** | *Problem:* Week 4's trigger gave every new login Week 4 access, so a new Week 5 invitee would get it too. *Fix:* Week 4 migration `0012_skip_lead_agent_invitees.sql` (§10.2). Verified in a rolled-back transaction | Manual clean-up per user |
+| **D-83** | **Per-run Claude cap for full runs raised from $1.25 to $3.00**; Opus 5.5 stays the researcher and copywriter; DEV stays $0.30 | Confirmed (owner, 2026-09-25) | *Measured:* the Opus DEV run dc8b74f9 spent $0.215 researching 2 companies (~$0.107 each; Sonnet was ~$0.05 in 58876eae) and hit its $0.30 cap before drafting. A 10-lead run researches ~12–20 companies, so ~$2.50–3.50: $1.25 could never reach 10 leads. *Consequence:* with $2.58 spent, the $6 total fits ONE more full run ($3.00 + $0.10 reserve); after it, new full runs (incl. graders') are refused by the budget guard until the total is raised | Sonnet research + $2.50 cap; keeping $1.25 and accepting fewer leads |
 | **D-82** | Dev-only code that has done its job is **archived outside the repo** (`Week 5/archive/`, never committed): the A/B harness + recorder + saved answers (`evals/`), the day-1 SDK spike (`spikes/`), `resume_run.py` (duplicated the UI's repeat-gate buttons) and `transcript_cost.py` (the runner recovers every phase's cost automatically, D-79). Kept: tests (not deployed; the evidence for every rule and bug), setup scripts (migrate, create_app_role, bootstrap_owner), secret scan, dev_run, claude_credit, the injection fixture pages, the n8n workflow and the email templates | Confirmed (owner, 2026-09-25) | The repo holds only what runs, sets up or verifies the system (CLAUDE.md); results that matter are in specs §8.7 and progress.md §8. Git history still has the files, which is harmless | Deleting outright (would lose the raw answers behind D-77) |
 | **D-81** | **One subagent at a time is a fixed rule in code** (`runner.MAX_PARALLEL_SUBAGENTS = 1`), no longer an env setting; **the one-time refund of an empty search (D-54) is removed** | Confirmed (owner, 2026-09-25) | The setting could only switch back on the parallel mode that failed live (D-49); the refund is redundant now that the service retries an empty search twice with the identical input (D-76), so a search that is still empty is a real result. Fewer knobs, fewer code paths to explain | Keeping both "just in case" |
 | **D-80** | **The qualification status and the fit score come from ONE classifier**: `compute_fit_score` sorts every ICP hard filter and exclusion into pass/fail/unknown (a pass needs evidence + a source) and gives the evidence band plus notes; `decide(requested, score)` stores the safer of the band and the researcher's request and caps the score to it. `decide_status`, `cap_for_status` and the dead "confidence < 0.70" branch are gone | Confirmed (owner, 2026-09-25), Verified (tests) | *Problem:* two functions classified the same checks with slightly different rules (one counted extra checks outside the ICP), and `tools.py` reconciled them: three functions to explain one decision, and a risk of drift. Behaviour kept: fail → not_qualified; unknown/unevidenced/missing → needs_review; the researcher's safer choice wins | Keeping both |
