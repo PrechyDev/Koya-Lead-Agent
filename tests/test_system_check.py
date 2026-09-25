@@ -223,3 +223,29 @@ def test_only_the_protected_admin_trigger_becomes_not_allowed(monkeypatch):
     monkeypatch.setattr("app.alerts.raise_alert", lambda *a, **k: None)
     r = c.post(target, data=body, headers={"HX-Request": "true"})
     assert r.status_code == 500 and "isn't allowed" not in r.text
+
+
+# --- Opus DEV run (2026-09-25): a phase stopping on OUR budget cap is a normal end, not an outage ---------------
+@pytest.mark.parametrize("subtype,should_raise", [("error_max_budget_usd", False), ("error_max_turns", False),
+                                                  ("error_during_execution", True)])
+async def test_a_phase_that_hits_its_own_cap_ends_normally(monkeypatch, subtype, should_raise):
+    """Errors log #104: the CLI raised ResultError('Reached maximum budget') and the run was told
+    "The AI service is temporarily unavailable"."""
+    from claude_agent_sdk import ResultError, ResultMessage
+
+    from app.agent import runner
+    final = ResultMessage(subtype=subtype, duration_ms=1, duration_api_ms=1, is_error=True, num_turns=7,
+                          session_id="s1", total_cost_usd=0.26)
+
+    async def fake_query(prompt, options):
+        yield final
+        raise ResultError("Claude Code returned an error result", {"subtype": subtype}, 1)
+    monkeypatch.setattr(runner, "query", fake_query)
+    session = runner._Session()
+    ctx = SimpleNamespace(fatal=None)
+    if should_raise:
+        with pytest.raises(ResultError):
+            await runner._consume("p", None, session, timeout_s=5, ctx=ctx)
+    else:
+        assert await runner._consume("p", None, session, timeout_s=5, ctx=ctx) is final
+        assert runner._result_failure(final) is None  # -> _force_finish: "it reached this run's AI budget"

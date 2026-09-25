@@ -21,6 +21,7 @@ from claude_agent_sdk import (
     AgentDefinition,
     ClaudeAgentOptions,
     HookMatcher,
+    ResultError,
     ResultMessage,
     query,
 )
@@ -184,6 +185,9 @@ class _Session:
         self.result: ResultMessage | None = None
 
 
+LIMIT_SUBTYPES = ("error_max_budget_usd", "error_max_turns")  # the phase hit OUR cap: a normal, safe stop
+
+
 async def _consume(prompt: str, options: ClaudeAgentOptions, session: _Session, timeout_s: int,
                    ctx: RunContext) -> ResultMessage | None:
     async def read() -> None:
@@ -203,6 +207,11 @@ async def _consume(prompt: str, options: ClaudeAgentOptions, session: _Session, 
         await asyncio.wait_for(read(), timeout=timeout_s)
     except TimeoutError as exc:
         raise PhaseTimeout(f"the agent did not finish within {timeout_s // 60} minutes") from exc
+    except ResultError as exc:
+        # The CLI can report "reached this run's budget / step limit" by exiting with an error after its final
+        # message. That's our own cap working, not an outage: return the result like a normal end (errors log #104).
+        if exc.subtype not in LIMIT_SUBTYPES:
+            raise
     return session.result
 
 
@@ -342,8 +351,10 @@ async def run_icp_phase(run_id: str) -> str:
     if run["clarification_question"] and not run["icp_signature"]:
         return await _ask_for_clarification(run_id, run.get("request_type"))
     if not run["icp"]:
+        subtype = result.subtype if result else "no result"
         failure = _result_failure(result) or ServiceFailure(
-            "anthropic_unavailable", f"ICP step ended without saving an ICP ({result.subtype if result else 'no result'})")
+            "run_limit_reached" if subtype in LIMIT_SUBTYPES else "anthropic_unavailable",
+            f"ICP step ended without saving an ICP ({subtype})")
         await db.run(fail_run, run_id, failure)
         return "failed"
 

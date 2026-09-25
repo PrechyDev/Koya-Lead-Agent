@@ -82,6 +82,11 @@ CATALOGUE: dict[str, FailureKind] = {k.code: k for k in [
     FailureKind("not_configured", "app", "critical",
                 "The app isn't fully set up yet, so research can't start. Your admin has been told.",
                 "Required settings are missing (see detail). Set them in Render → Environment and redeploy."),
+    FailureKind("run_limit_reached", "app", "warning",
+                "The research reached this run's AI spending limit and stopped safely. Everything found so far is "
+                "saved below.",
+                "The run hit its per-run Claude cap (max_budget_usd) or its step limit (see detail). It's a safe "
+                "stop, not an outage. Raise the run limits in app/config.py only on purpose (rule 4)."),
     FailureKind("run_timeout", "app", "warning",
                 "The research took too long and was stopped safely. Everything found so far is saved below.",
                 "A run phase hit its watchdog timeout (see detail). Check the run's tool calls for where it stalled."),
