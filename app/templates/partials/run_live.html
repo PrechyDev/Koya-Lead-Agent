@@ -60,7 +60,7 @@
 {% if can_control and run.status not in ACTIVE and run.status not in ("awaiting_confirmation", "needs_clarification", "superseded") %}
 {% set q = usage.get('qualified', 0) %}
 {% if plan or q < (limits.get('target_qualified') or 0) %}
-<div class="row" style="margin-top: 10px;">
+<div class="row run-actions">
   {% if plan %}
   <form hx-post="/runs/{{ run.id }}/continue" hx-target="#system-message">
     <input type="hidden" name="csrf_token" value="{{ csrf }}">

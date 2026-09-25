@@ -26,9 +26,10 @@ def test_discovery_batches_first_pool_then_topups_then_stop():
     limits = FULL_LIMITS.to_dict()
     assert next_discovery_batch(limits, {}) == 12
     assert next_discovery_batch(limits, {"discovery_calls": 1, "candidates_found": 12}) == 5
-    assert next_discovery_batch(limits, {"discovery_calls": 2, "candidates_found": 17}) == 3
-    assert next_discovery_batch(limits, {"discovery_calls": 3, "candidates_found": 20}) == 0
-    assert next_discovery_batch(limits, {"discovery_calls": 1, "candidates_found": 20}) == 0
+    assert next_discovery_batch(limits, {"discovery_calls": 2, "candidates_found": 17}) == 5
+    assert next_discovery_batch(limits, {"discovery_calls": 5, "candidates_found": 27}) == 3  # 30 companies (D-104)
+    assert next_discovery_batch(limits, {"discovery_calls": 6, "candidates_found": 30}) == 0
+    assert next_discovery_batch(limits, {"discovery_calls": 30, "candidates_found": 10}) == 0  # 30 searches
 
 
 def test_first_search_scales_with_the_target():

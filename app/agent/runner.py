@@ -13,6 +13,7 @@ import asyncio
 import logging
 import sys
 import tempfile
+import time
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -190,13 +191,32 @@ class _Session:
     def __init__(self) -> None:
         self.session_id: str | None = None
         self.result: ResultMessage | None = None
+        self.provisional: dict[str, str] = {}  # model -> ledger row holding the cost so far (D-104)
+        self.last_checkpoint = time.monotonic()
 
 
 LIMIT_SUBTYPES = ("error_max_budget_usd", "error_max_turns")  # the phase hit OUR cap: a normal, safe stop
 
 
+CHECKPOINT_SECONDS = 60
+
+
+def _checkpoint_cost(run_id: str, source: str, session: _Session) -> None:
+    """Save the phase's cost so far, read from the SDK's transcript files (D-104): a server restart can kill the
+    phase before its final message, and then this is the only record of what it spent. Updated in place, one row
+    per model; replaced by the exact figure when the phase ends (_phase_cost)."""
+    if not session.session_id:
+        return
+    for model, cost in session_cost(session.session_id).items():
+        if cost > 0:
+            session.provisional[model] = db.record_provisional_spend(
+                source, cost, ref_id=run_id, model=model, row_id=session.provisional.get(model),
+                note=f"{source} phase so far (from transcript {session.session_id}; replaced when the phase ends)")
+    _refresh_run_cost(run_id)
+
+
 async def _consume(prompt: str, options: ClaudeAgentOptions, session: _Session, timeout_s: int,
-                   ctx: RunContext) -> ResultMessage | None:
+                   ctx: RunContext, source: str = "run") -> ResultMessage | None:
     async def read() -> None:
         async for message in query(prompt=prompt, options=options):
             data = getattr(message, "data", None)
@@ -205,6 +225,12 @@ async def _consume(prompt: str, options: ClaudeAgentOptions, session: _Session, 
                 session.session_id = sid
             if isinstance(message, ResultMessage):
                 session.result = message  # the last one carries the cumulative cost
+            elif time.monotonic() - session.last_checkpoint >= CHECKPOINT_SECONDS:
+                session.last_checkpoint = time.monotonic()
+                try:
+                    await db.run(_checkpoint_cost, ctx.run_id, source, session)
+                except Exception:  # noqa: BLE001 — a missed checkpoint is harmless; the final cost still comes
+                    log.warning("cost checkpoint failed for run %s", ctx.run_id)
             if ctx.fatal is not None:
                 # A service can't work (out of credit, bad key, wrong actor...): stop now, don't let the
                 # agent keep trying and spending (E-50). Leaving the loop closes the CLI process.
@@ -225,7 +251,12 @@ async def _consume(prompt: str, options: ClaudeAgentOptions, session: _Session, 
 def _phase_cost(run_id: str, source: str, session: _Session, model: str, why: str = "") -> Decimal:
     """Record what a phase cost, however it ended (finished, timed out, cancelled, stopped on a fatal error).
     The SDK's final message carries the exact cost; if it never arrived, recover the cost from the transcript.
-    One place, so no ending can skip the ledger (rule 5; errors log #86, #99)."""
+    One place, so no ending can skip the ledger (rule 5; errors log #86, #99). The running estimate saved by
+    _checkpoint_cost is set to 0 first, so it is replaced, never added twice (D-104)."""
+    for row_id in session.provisional.values():
+        db.record_provisional_spend(source, Decimal("0"), ref_id=run_id, model="", row_id=row_id,
+                                    note=f"{source} phase so far: replaced by the final cost")
+    session.provisional.clear()
     if session.result is not None:
         return _record_cost(run_id, source, session.result, model)
     if not session.session_id:
@@ -394,11 +425,16 @@ async def run_research_phase(run_id: str) -> None:
     if failures:
         await db.run(fail_run, run_id, failures[0])
         return
-    await db.run(db.set_status, run_id, "discovering", "Searching for companies",
-                 models={"orchestrator": settings.model_orchestrator, "icp": settings.model_icp,
-                         "researcher": settings.model_researcher, "copywriter": settings.model_copywriter,
-                         "grounding": settings.model_grounding})
-    ctx.status_seen.add("discovering")
+    models = {"orchestrator": settings.model_orchestrator, "icp": settings.model_icp,
+              "researcher": settings.model_researcher, "copywriter": settings.model_copywriter,
+              "grounding": settings.model_grounding}
+    leads = await db.run(db.list_leads, run_id)
+    if leads:  # a continued run (D-100): keep the step the Continue button set, don't claim a new search (D-104)
+        await db.run(db.update_run, run_id, models=models)
+        ctx.status_seen.update({"discovering", run["status"]})
+    else:
+        await db.run(db.set_status, run_id, "discovering", "Searching for companies", models=models)
+        ctx.status_seen.add("discovering")
 
     agents = {
         "researcher": AgentDefinition(
@@ -430,10 +466,12 @@ async def run_research_phase(run_id: str) -> None:
     session = _Session()
     timeout_s = int(ctx.limits.get("phase_timeout_s", 1800))
     try:
-        leads = await db.run(db.list_leads, run_id)  # a continued run (D-100) finishes what's left
-        prompt = (prompts.orchestrator_continue_prompt(run, work_left(run, leads)) if leads
+        left = work_left(run, leads)
+        if run["status"] == "drafting":  # continued for drafts only: no research, no new searches (D-104)
+            left = {**left, "pending": [], "still_needed": 0, "can_search": False}
+        prompt = (prompts.orchestrator_continue_prompt(run, left) if leads  # finish what's left
                   else prompts.orchestrator_user_prompt(run))
-        result = await _consume(prompt, options, session, timeout_s=timeout_s, ctx=ctx)
+        result = await _consume(prompt, options, session, timeout_s=timeout_s, ctx=ctx, source="run")
     except PhaseTimeout as exc:
         await db.run(_phase_cost, run_id, "run", session, settings.model_orchestrator, "watchdog timeout")
         await db.run(_refresh_run_cost, run_id)

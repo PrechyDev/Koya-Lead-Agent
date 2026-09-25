@@ -42,7 +42,7 @@ STEPS = [("refine", "Refine ICP"), ("discover", "Discover"), ("research", "Resea
 STEP_OF_STATUS = {
     "queued": 0, "refining_icp": 0, "needs_clarification": 0, "awaiting_confirmation": 0,
     "discovering": 1, "researching": 2, "drafting": 3, "finalizing": 4,
-    "completed": 5, "completed_partial": 5, "failed": -1, "cancelled": -1, "superseded": 5,
+    "completed": 5, "completed_partial": 5, "paused": -2, "failed": -1, "cancelled": -1, "superseded": 5,
 }
 ACTIVE = set(ACTIVE_STATUSES)  # the one list lives in db.py
 
@@ -116,6 +116,8 @@ def stepper(status: str, last_active_step: int = 0, usage: dict | None = None) -
             state = "done" if i == 0 else ("waiting" if i == 1 else "pending")
         elif status == "needs_clarification":  # paused at the ICP step until the person answers
             state = "waiting" if i == 0 else "pending"
+        elif idx == -2:  # paused (D-104): done up to where it stopped, that step waiting for Continue
+            state = "done" if i < last_active_step else ("waiting" if i == last_active_step else "pending")
         elif idx == -1:
             state = "done" if i < last_active_step else ("failed" if i == last_active_step else "pending")
         elif status == "superseded":

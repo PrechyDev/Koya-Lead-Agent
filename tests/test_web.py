@@ -208,6 +208,7 @@ def test_agent_can_start_depends_on_the_event_loop():
 def test_run_refused_with_the_real_fix_when_the_agent_cannot_start(client_as, monkeypatch):
     from app.web import routes
     monkeypatch.setattr(routes, "agent_can_start", lambda: False)
+    monkeypatch.setattr(routes.db, "active_run", lambda: None)  # a live run in the shared DB must not change this
     monkeypatch.setattr(routes.health, "preflight", lambda limits: [])
     monkeypatch.setattr(routes.alerts, "raise_alert", lambda *a, **k: None)
     before = db.search_runs()[1]
@@ -820,7 +821,7 @@ def test_continue_route_restarts_the_run_and_hides_the_money(client_as, monkeypa
         return client_as(who).post(f"/runs/{run['id']}/continue", headers={"HX-Request": "true"},
                                    data={"csrf_token": auth.csrf_token_for(who.user_id)})
     r = post(MEMBER)
-    assert r.status_code == 204 and started == [True] and saved[-1] == "queued"
+    assert r.status_code == 204 and started == [True] and saved[-1] == "researching"  # the real step (D-104)
     monkeypatch.setattr(db, "claude_budget", lambda: Decimal("0"))  # no money left
     r = post(MEMBER)
     assert r.status_code == 402 and "Ask an admin" in r.text and "$" not in r.text  # plain words, no numbers

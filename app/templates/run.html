@@ -2,20 +2,21 @@
 {% set active_nav = "runs" %}
 {% block title %}Run · Koya Lead Research Agent{% endblock %}
 {% block content %}
-<section class="card stack">
+<section class="card stack run-head">
   <div class="row between">
-    <h1>Research run</h1>
+    <h1 style="margin: 0;">Research run</h1>
     <a class="btn small" href="/">← All runs</a>
   </div>
   <div class="objective">{{ run.objective }}</div>
+  <p class="small muted" style="margin: 0;">Started {{ run.created_at | ago }}{% if run.created_by_name %} by {{ run.created_by_name }}{% endif %}</p>
   {% if run.parent_run_id %}<p class="small muted">Follows a clarification on <a href="/runs/{{ run.parent_run_id }}">an earlier run</a>.</p>{% endif %}
   <span hidden data-mark-seen="notice:{{ run.id }}"></span>
-  <div id="run-live" hx-get="/runs/{{ run.id }}/live" hx-trigger="load, every 3s" hx-swap="innerHTML">
+  <div id="run-live" class="run-live" hx-get="/runs/{{ run.id }}/live" hx-trigger="load, every 3s" hx-swap="innerHTML">
     <p class="muted small">Loading run status…</p>
   </div>
 </section>
 
-<section class="card">
+<section class="card run-details">
   <div class="tabs" role="tablist" aria-label="Run details">
     {% for key, label in tabs.items() %}
     <button class="tab" role="tab" type="button" aria-selected="{{ 'true' if tab == key else 'false' }}"

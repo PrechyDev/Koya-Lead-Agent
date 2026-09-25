@@ -476,9 +476,19 @@ async def confirm_repeat(request: Request, run_id: str, choice: str = Form(...),
     return Response(status_code=204, headers={"HX-Redirect": f"/runs/{run_id}"})
 
 
+def _continue_status(plan: dict) -> tuple[str, str]:
+    if plan["pending"]:
+        n = len(plan["pending"])
+        return "researching", f"Continuing: researching {n} remaining compan{'y' if n == 1 else 'ies'}"
+    if plan["undrafted"]:
+        n = len(plan["undrafted"])
+        return "drafting", f"Continuing: writing drafts for {n} lead{'' if n == 1 else 's'}"
+    return "discovering", "Continuing: searching for more companies"
+
+
 @router.post("/runs/{run_id}/continue")
 @limiter.limit("10/minute")
-async def continue_run(request: Request, run_id: str, csrf_token: str = Form(""),
+async def continue_run(request: Request, run_id: str, csrf_token: str = Form(""), mode: str = Form(""),
                        member: Member = Depends(current_member)):
     """Carry a stopped run on from where it stopped (D-100). The budget is handled here; the person only sees
     Continue, or "not enough AI budget" with who to ask."""
@@ -487,6 +497,8 @@ async def continue_run(request: Request, run_id: str, csrf_token: str = Form("")
     if not _can_control(member, run):
         raise HTTPException(status_code=403, detail="Only the person who started this run, or an admin, can continue it.")
     plan = continue_plan(run, await db.run(db.list_leads, run_id))
+    if plan and mode == "drafts" and plan["undrafted"]:  # "Write drafts for this lead": drafts only (D-104)
+        plan = {**plan, "pending": [], "still_needed": 0, "can_search": False}
     if not plan:
         return _banner(request, "info", "There's nothing left to continue in this run. Refine the objective to "
                                         "search again.")
@@ -502,7 +514,8 @@ async def continue_run(request: Request, run_id: str, csrf_token: str = Form("")
                "Ask an admin to request more budget.")
         return _banner(request, "warning", f"There isn't enough AI budget left to continue this run. {who}", 402)
     await db.run(db.set_target_qualified, run_id, int(run["limits"]["target_qualified"]), cap)
-    await db.run(db.update_run, run_id, status="queued", status_detail="Continuing from where it stopped",
+    status, detail = _continue_status(plan)  # the step it's really on, from the first click (D-104)
+    await db.run(db.update_run, run_id, status=status, status_detail=detail,
                  finished_at=None, error_message=None, error_detail=None, shortfall_reason=None, summary=None,
                  quality_scorecard=None)
     manager.start(run_id, skip_icp=True)

@@ -171,7 +171,8 @@ def get_run_by_idempotency_key(idempotency_key: str) -> dict | None:
 
 
 def get_run(run_id: str) -> dict | None:
-    return fetch_one(f"select * from {t('runs')} where id = %s", (run_id,))
+    return fetch_one(f"""select r.*, m.full_name as created_by_name from {t('runs')} r
+                         left join {t('members')} m on m.user_id = r.created_by where r.id = %s""", (run_id,))
 
 
 # Run history filters (the Runs page). eval_record runs are internal and never listed.
@@ -535,6 +536,18 @@ def put_cached_page(*, url: str, domain: str, final_url: str | None, title: str 
 # ---------------------------------------------------------------------------
 # Spend ledger
 # ---------------------------------------------------------------------------
+def record_provisional_spend(source: str, cost_usd: Decimal, *, ref_id: str, model: str, note: str,
+                             row_id: str | None = None) -> str:
+    """A running phase's cost so far, one row per model updated in place (D-104). Returns the row id."""
+    if row_id:
+        execute(f"update {t('spend_ledger')} set cost_usd = %s, note = %s where id = %s",
+                (Decimal(str(cost_usd)), note, row_id))
+        return row_id
+    row = fetch_one(f"""insert into {t('spend_ledger')} (source, ref_id, model, cost_usd, note)
+                        values (%s, %s, %s, %s, %s) returning id""", (source, ref_id, model, Decimal(str(cost_usd)), note))
+    return str(row["id"])
+
+
 def record_spend(source: str, cost_usd: Decimal | float, *, ref_id: str | None = None, model: str | None = None,
                  input_tokens: int | None = None, output_tokens: int | None = None, note: str | None = None) -> None:
     execute(

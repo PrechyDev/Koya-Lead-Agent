@@ -42,6 +42,7 @@
     {% elif lead.human_decision == 'qualified' and lead.outreach_status != 'drafted' %}
     <form hx-post="/runs/{{ lead.run_id }}/continue" hx-target="#system-message" class="row">
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <input type="hidden" name="mode" value="drafts">
       <button class="btn primary" type="submit"><span class="when-idle">Write drafts for this lead</span><span class="when-loading"><span class="spinner"></span> Starting…</span></button>
       <span class="help">Writes the 3 emails and the LinkedIn message, for your review.</span>
     </form>
