@@ -168,9 +168,9 @@ Accidental double submits are handled separately and earlier, by the idempotency
 | POST | `/leads/{id}/review` | member | `{review_status, reviewer_note}` (a note is required to reject); `reviewed_by` = the logged-in user |
 | GET | `/runs/{id}/export.csv` | member | Qualified lead list (no drafts) |
 | GET | `/runs/{id}/export.json` | member | Sample pack. **Drafts are included only for `approved` leads** (outreach-safety approval rule) |
-| GET | `/team`, `/team/table`; POST `/team/invite`, `/team/{id}/update` (make admin/member, deactivate, reactivate, send reset link) | **admin** | member management (§10.2) |
+| GET | `/team`, `/team/table`; POST `/team/invite`, `/team/{id}/update` (make admin/member, deactivate, reactivate, send reset link; make/remove developer: **owner only**) | **admin** | member management (§10.2) |
 | GET | `/spend` | **admin** | project budget, spend by run, model and source; Apify cost |
-| GET | `/system`; POST `/system/{id}/resolve`, `/system/test-alert` | **admin** | System issues: alerts with the cause and fix (D-38) |
+| GET | `/system`; POST `/system/{id}/resolve`, `/system/test-alert` | **developer** (D-90) | System issues: alerts with the cause and fix (D-38) |
 | GET | `/fixtures/{name}` | public | test pages (prompt injection, parked domain) served only when `FIXTURE_MODE=true` |
 
 Errors: in pages they show in the System Message banner (design.md): HTMX requests get the banner with `HX-Retarget: #system-message`, and `app.js` swaps it in even for 4xx/5xx (D-68). On JSON routes they come back as `{error:{code, message}}`. IDs in URLs must be UUIDs (anything else is a 404, not a 500). A missing or expired session → redirect to `/login?next=…`; not a member or deactivated → 403 page.
@@ -196,6 +196,7 @@ Errors: in pages they show in the System Message banner (design.md): HTMX reques
 | role | text | `admin` \| `member` (check constraint) |
 | is_active | bool | checked on **every** request, so deactivation takes effect immediately (Week 4 pattern) |
 | is_owner | bool | the builder's account; can't be deactivated or demoted |
+| is_developer | bool | the technical view (D-90); only the owner grants it; check `members_developer_is_admin`: a developer is always an admin |
 | invited_by | uuid null | |
 | created_at / updated_at | timestamptz | |
 
@@ -492,17 +493,20 @@ Framing: this is an **internal tool delivered to a client** (Koya). The grader u
 
 **Roles:**
 
-| Capability | member | admin |
-| --- | --- | --- |
-| View all team runs, leads, drafts, tool-call logs | ✅ | ✅ |
-| Start runs (per-user daily cap), cancel/confirm **own** runs | ✅ | ✅ |
-| Review / approve / reject drafts (`reviewed_by` recorded) | ✅ | ✅ |
-| Export CSV / JSON (approved drafts only) | ✅ | ✅ |
-| Cancel/confirm **anyone's** run | ❌ | ✅ |
-| Team page: invite, deactivate/reactivate, change role | ❌ | ✅ |
-| Spend page (project budget, per-model/run/Apify cost) | ❌ (no AI costs or model names anywhere, D-66) | ✅ |
+| Capability | member | admin | developer (D-90) |
+| --- | --- | --- | --- |
+| Runs: Leads, ICP and Summary tabs, drafts | ✅ | ✅ | ✅ |
+| Start runs (per-user daily cap), cancel/confirm **own** runs | ✅ | ✅ | ✅ |
+| Review / approve / reject drafts (`reviewed_by` recorded) | ✅ | ✅ | ✅ |
+| Export CSV / JSON (approved drafts only) | ✅ | ✅ | ✅ |
+| Cancel/confirm **anyone's** run | ❌ | ✅ | ✅ |
+| Team page: invite, deactivate/reactivate, change role | ❌ | ✅ (developers are **not listed** and can't be changed) | ✅ (sees everyone; the **owner** grants/removes developer) |
+| Spend page: total budget, per run, Apify; AI cost on a run | ❌ (no AI costs anywhere, D-66) | ✅ | ✅ + spend by source and model |
+| Tool calls tab, agent turns, model names, raw error detail, test-mode notice | ❌ | ❌ | ✅ |
+| System issues page, open-issue banner, test alert | ❌ | ❌ | ✅ |
+| Failure messages | plain | plain | cause + fix + detail |
 
-Admin-only UI is hidden for members **and** refused server-side. Hiding is not security. Accounts: the owner (builder; `is_owner`, can't be removed) + the grader/client (admin). Everyone else is a member.
+A **developer** is an admin with the `is_developer` flag (migration 0008): the technical view of the system. Only the owner grants it (the owner is always a developer), a DB check makes "developer but not admin" impossible, and admins without the flag never see developers on the Team page (a hidden person's id returns 404). Every restricted page and action is hidden **and** refused server-side (`require_admin`, `require_developer`); hiding is not security. Accounts: the owner (builder; `is_owner` + developer, can't be removed) + the grader/client (admin). Everyone else is a member.
 
 **How access is decided (single sign-on across Koya's internal tools, D-63).** Every request passes three checks, in order:
 
@@ -749,6 +753,7 @@ Numbers are stable (other docs refer to them); rows are grouped by topic. Status
 | D-18 | Least-privilege `lead_agent_app` role (no DELETE/DROP, no other schemas); RLS on with an app-only policy | Default, Verified | "No destructive DB actions"; protects Week 3/4 data | Deploying the `postgres` DSN |
 | D-11 | Supabase Auth logins (server-side HttpOnly cookies, JWKS verification), admin/member, invite-only, nothing public | Confirmed | Internal client tool with confidential prospect data; proven approval attribution | Shared passcode; public viewing |
 | D-26 | No `auth.users` trigger in Week 5; Week 4's trigger skips Lead Agent invitees | Confirmed (owner, 2026-09-24), **Applied + Verified** | *Problem:* Week 4's trigger gave every new login Week 4 access, so a new Week 5 invitee would get it too. *Fix:* Week 4 migration `0012_skip_lead_agent_invitees.sql` (§10.2). Verified in a rolled-back transaction | Manual clean-up per user |
+| **D-90** | **Admins and developers see different things.** Admin = the business view: Runs, Team, Spend (total, per run, Apify), AI cost on a run, and plain-language failure messages. Developer = an owner-granted flag on an admin: everything an admin sees plus the technical view (System issues + banner + test alert, Tool calls tab, agent turns, model names, raw error detail, test-mode notice, spend by source and model, cause-and-fix failure messages). Admins never see developers on the Team page and can't grant developer access. Members see runs with Leads, ICP and Summary only (no Tool calls). "Your admin has been told" became "Our support team has been told" (alerts go to the developer, and admins read the message too) | Confirmed (owner, 2026-09-25: "we don't want the client to see the technical details… take away the system issues from the admin view… the developer is the only one who can see the developer role"; owner-only granting) | The client's admins run the business side and shouldn't face raw errors, env vars or tool logs; the builder still needs them. A flag, not a third role, leaves the owner/last-admin trigger unchanged and lets one person be admin + developer | A third role `developer` above admin (changes the role check and the protect_admins trigger); any admin granting developer access; keeping System issues for admins |
 | **D-89** | **Koya's competitors are always excluded, and the user is told; included only when the objective asks for them.** After the fill-if-empty defaults, `save_icp` runs `apply_competitor_rule`: it appends "Recruiting or staffing firm that places AI or automation talent" to the exclusions (even when the objective names its own) and records "Always excluded: … To include them, say so in the objective." as an assumption (ICP tab). If the refiner sets `include_competitors` or the target itself names recruiting/staffing/headhunting (a code backstop), the exclusion is removed and the note says they are included because the objective asks. The home page lists it under "Always excluded" | Confirmed (owner, 2026-09-25: "Always add, but make sure the users knows, and if the user's objective ask for that to be included, include it") | *Problem:* the exclusion was a fill-if-empty default, so any objective naming its own exclusions ("not agencies") silently dropped it. The researcher must now answer this exclusion for every lead (a missing check means `needs_review`, as for any exclusion) | Leaving it fill-if-empty; hard-excluding with no way to include |
 | **D-88** | **The first Apify search scales with the target:** `ceil(1.5 × target)` candidates, never above the preset pool (12 full, 3 DEV); top-ups (≤ 5) and the 20-candidate total are unchanged | Confirmed (owner, 2026-09-25: "1.5, not ×3") | Asking for 3 leads used to fetch 12 companies up front (~$0.03 of Apify for nothing); now 5. If fewer qualify than needed, the top-ups fetch more, within the same caps | ×3 (the first proposal); always 12 |
 | **D-87** | **Free re-check before a paid fact-check:** `save_outreach` first checks in code that every claim the fact-checker flagged last time is gone from the new draft (exact text, or ≥ 85% of its words in one sentence). If one is still there, the draft goes back with that sentence and **no attempt or fact-check is used** | Confirmed (owner, 2026-09-25) | Writing-rule problems already had a free pre-check (`check_drafts`); invented-claim problems went straight back to the paid checker, so a copywriter that left a flagged sentence in wasted a rewrite. Best-effort: it can't catch a paraphrase that keeps the same false fact, which the paid fact-check still does | Relying on the model to remember the flagged claims |

@@ -47,7 +47,7 @@ LEAD_COLUMNS = {
     "grounding_report", "review_status", "reviewer_note", "reviewed_by", "reviewed_at", "fetched_urls",
     "disqualifier_checks", "soft_preference_checks", "tools_detected", "confidence_breakdown",
 }
-MEMBER_COLUMNS = {"full_name", "role", "is_active"}
+MEMBER_COLUMNS = {"full_name", "role", "is_active", "is_developer"}
 JSON_COLUMNS = {
     "icp", "icp_assumptions", "usage", "models", "quality_scorecard", "discovery_data", "hard_filter_checks",
     "fit_reasons", "concerns", "email_sequence", "grounding_report", "injection_flags", "expected", "actual",
@@ -575,10 +575,11 @@ def list_members() -> list[dict]:
 
 def add_member(user_id: str, email: str, full_name: str, role: str, invited_by: str | None) -> dict | None:
     return fetch_one(
-        f"""insert into {t('members')} (user_id, email, full_name, role, invited_by)
+        f"""insert into {t('members')} as m (user_id, email, full_name, role, invited_by)
             values (%s, %s, %s, %s, %s)
             on conflict (user_id) do update  -- re-inviting someone: back in, with the role/name chosen now
-              set is_active = true, role = excluded.role, full_name = excluded.full_name
+              set is_active = true, role = excluded.role, full_name = excluded.full_name,
+                  is_developer = m.is_developer and excluded.role = 'admin'  -- a developer is always an admin
             returning *""",
         (user_id, email.lower(), full_name, role, invited_by),
     )

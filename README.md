@@ -70,7 +70,7 @@ git config core.hooksPath .githooks        # secret scan before every commit
 
 ## Owner alerts (n8n → email)
 
-Problems like "out of credit", "wrong key" or "a run failed" show up in the app under **System issues** (admins), with a
+Problems like "out of credit", "wrong key" or "a run failed" show up in the app under **System issues** (developers, D-90), with a
 banner on every page. To also get an email:
 1. In n8n: Import → `n8n/alert-email-workflow.json`. Set the Gmail credential, replace `REPLACE_WITH_YOUR_EMAIL`, and
    replace `REPLACE_WITH_ALERT_WEBHOOK_SECRET` with a random string. Activate the workflow.

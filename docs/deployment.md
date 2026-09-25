@@ -55,7 +55,7 @@ headers are served; idle memory is **122 MB** (Render free allows 512 MB); a DEV
    (uses the admin DSN locally only; `--invite` sends the Supabase invite if you have no account yet).
 2. Sign in on Render, open **Team**, invite the grader as **admin** (they act as the client admin, D-11), plus a
    **member** account for the role test.
-3. **Check:** a member can't see Team / Spend / System issues; an admin can; the owner can't be demoted.
+3. **Check:** a member can't see Team / Spend / System issues / Tool calls; an admin sees Team + Spend but not System issues, Tool calls or developers on the Team page; the owner (developer) sees everything and can't be demoted.
 
 ## 4. Alerts (optional, $0)
 

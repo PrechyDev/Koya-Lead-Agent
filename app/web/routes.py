@@ -14,7 +14,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 
 from app import alerts, auth, db
 from app.agent.runner import AGENT_CANNOT_START, agent_can_start
-from app.auth import Member, current_member, require_admin
+from app.auth import Member, current_member, require_admin, require_developer
 from app.config import get_settings, limits_for_run
 from app.failures import CATALOGUE, ServiceFailure, admin_message_from_detail, message_for
 from app.lib.budget import BudgetExceeded, assert_run_fits
@@ -35,7 +35,7 @@ router = APIRouter()
 def _ctx(request: Request, **extra) -> dict:
     member = getattr(request.state, "member", None)
     csrf = auth.csrf_token_for(member.user_id) if member else ""
-    open_issues = alerts.open_issue_count() if member and member.is_admin else 0
+    open_issues = alerts.open_issue_count() if member and member.is_developer else 0  # System issues: developers
     return {"member": member, "csrf": csrf, "settings": get_settings(), "open_issues": open_issues, **extra}
 
 
@@ -332,15 +332,15 @@ async def create_run(request: Request, objective: str = Form(""),
     except BudgetExceeded as exc:
         failure = ServiceFailure("budget_exhausted", str(exc))
         await db.run(alerts.raise_alert, failure.code, failure.detail)
-        return _banner(request, "error", message_for(failure, member.is_admin), 402)
+        return _banner(request, "error", message_for(failure, member.is_developer), 402)
     failures = await db.run(health.preflight, limits.to_dict())  # free checks; cached for 10 minutes
     if not agent_can_start():  # e.g. Windows + uvicorn --reload: the agent could never start
         failures = [ServiceFailure("agent_cannot_start", AGENT_CANNOT_START), *failures]
     if failures:
         for f in failures:
             await db.run(alerts.raise_alert, f.code, f.detail)
-        return _banner(request, "error", " ".join(message_for(f, member.is_admin) for f in failures)
-                       if member.is_admin else failures[0].client, 503)
+        return _banner(request, "error", " ".join(message_for(f, member.is_developer) for f in failures)
+                       if member.is_developer else failures[0].client, 503)
 
     parent = None
     if parent_run_id:
@@ -367,7 +367,13 @@ async def create_run(request: Request, objective: str = Form(""),
 async def run_page(request: Request, run_id: str, tab: str = "leads", member: Member = Depends(current_member)):
     run = await db.run(_get_run_or_404, run_id)
     return templates.TemplateResponse(request, "run.html", _ctx(
-        request, run=run, tab=tab if tab in {"icp", "leads", "calls", "summary"} else "leads"))
+        request, run=run, tab=tab if tab in _tabs_for(member) else "leads", tabs=_tabs_for(member)))
+
+
+def _tabs_for(member: Member) -> dict[str, str]:
+    """The run tabs a person may open (D-90): Tool calls is the technical view, for developers only."""
+    tabs = {"leads": "Leads", "icp": "ICP", "calls": "Tool calls", "summary": "Summary"}
+    return tabs if member.is_developer else {k: v for k, v in tabs.items() if k != "calls"}
 
 
 @router.get("/runs/{run_id}/live", response_class=HTMLResponse)
@@ -379,7 +385,7 @@ async def run_live(request: Request, run_id: str, member: Member = Depends(curre
     response = templates.TemplateResponse(request, "partials/run_live.html", _ctx(
         request, run=run, steps=stepper(run["status"], _last_active_step(run), run.get("usage")),
         can_control=_can_control(member, run), duplicate=duplicate, follow_up=follow_up,
-        admin_message=admin_message_from_detail(run.get("error_detail")) if member.is_admin else None))
+        tech_message=admin_message_from_detail(run.get("error_detail")) if member.is_developer else None))
     if run["status"] not in ACTIVE:
         response.status_code = 286  # HTMX: stop polling
     return response
@@ -396,6 +402,8 @@ async def run_tab(request: Request, run_id: str, name: str, status: str = "", me
         ctx["filter"] = status if status in {"qualified", "needs_review", "not_qualified", "pending"} else ""
         template = "partials/tab_leads.html"
     elif name == "calls":
+        if not member.is_developer:  # checked on the server, not just hidden (D-90)
+            raise HTTPException(status_code=403, detail="Developers only.")
         ctx["calls"] = await db.run(db.list_tool_calls, run_id)
         ctx["filter"] = status if status in {"success", "error", "blocked"} else ""
         template = "partials/tab_calls.html"
@@ -537,9 +545,15 @@ async def export_json(request: Request, run_id: str, member: Member = Depends(cu
 # ---------------------------------------------------------------------------
 @router.get("/team", response_class=HTMLResponse)
 async def team_page(request: Request, member: Member = Depends(require_admin)):
+    return templates.TemplateResponse(request, "team.html", _ctx(request, **await _team(member)))
+
+
+async def _team(viewer: Member) -> dict:
+    """The team as this person may see it: admins who aren't developers never see developers (D-90)."""
     members = await db.run(db.list_members)
-    admins = sum(1 for m in members if m["role"] == "admin" and m["is_active"])
-    return templates.TemplateResponse(request, "team.html", _ctx(request, members=members, active_admins=admins))
+    admins = sum(1 for m in members if m["role"] == "admin" and m["is_active"])  # all of them: the DB rule counts all
+    visible = members if viewer.is_developer else [m for m in members if not m.get("is_developer")]
+    return {"members": visible, "active_admins": admins}
 
 
 @router.post("/team/invite")
@@ -578,10 +592,14 @@ async def team_update(request: Request, user_id: str, action: str = Form(...), c
                       member: Member = Depends(require_admin)):
     _check_csrf(request, member, csrf_token)
     _require_uuid(user_id, "Member")
+    if user_id == member.user_id and action in ("deactivate", "make_member"):
+        return _banner(request, "warning", "You can't remove your own admin access. Ask another admin to do it.", 400)
+    target = await db.run(db.get_member, user_id)
+    if not target or (target.get("is_developer") and not member.is_developer):  # hidden from admins (D-90)
+        raise HTTPException(status_code=404, detail="Member not found.")
+    if action in ("make_developer", "remove_developer"):
+        return await _set_developer(request, member, target, action == "make_developer")
     if action == "send_reset":  # admin-triggered password reset (D-64)
-        target = await db.run(db.get_member, user_id)
-        if not target:
-            raise HTTPException(status_code=404, detail="Member not found.")
         if not target["is_active"]:
             return _banner(request, "warning", "Reactivate them first; deactivated people can't reset a password here.", 400)
         try:
@@ -594,8 +612,8 @@ async def team_update(request: Request, user_id: str, action: str = Form(...), c
               "make_admin": {"role": "admin"}, "make_member": {"role": "member"}}.get(action)
     if fields is None:
         raise HTTPException(status_code=400, detail="Unknown action.")
-    if user_id == member.user_id and action in ("deactivate", "make_member"):
-        return _banner(request, "warning", "You can't remove your own admin access. Ask another admin to do it.", 400)
+    if action == "make_member" and target.get("is_developer"):
+        return _banner(request, "warning", "Remove their developer access first: a developer is always an admin.", 400)
     try:
         updated = await db.run(db.update_member, user_id, **fields)
     except psycopg.errors.CheckViolation as exc:  # the DB trigger protects the owner and the last admin (E-41)
@@ -610,12 +628,25 @@ async def team_update(request: Request, user_id: str, action: str = Form(...), c
     return response
 
 
+async def _set_developer(request: Request, member: Member, target: dict, on: bool) -> Response:
+    """Only the owner grants or removes developer access (D-90); a developer is always an admin."""
+    if not member.is_owner:
+        raise HTTPException(status_code=403, detail="Only the owner can change developer access.")
+    if not on and str(target["user_id"]) == member.user_id:
+        return _banner(request, "warning", "The owner keeps developer access.", 400)
+    if on and not target["is_active"]:
+        return _banner(request, "warning", "Reactivate them first.", 400)
+    await db.run(db.update_member, str(target["user_id"]), **({"role": "admin", "is_developer": True} if on
+                                                              else {"is_developer": False}))
+    response = _banner(request, "success", f"{target.get('full_name') or 'They'} "
+                                           f"{'now has' if on else 'no longer has'} developer access.")
+    response.headers["HX-Trigger"] = "teamChanged"
+    return response
+
+
 @router.get("/team/table", response_class=HTMLResponse)
 async def team_table(request: Request, member: Member = Depends(require_admin)):
-    members = await db.run(db.list_members)
-    admins = sum(1 for m in members if m["role"] == "admin" and m["is_active"])
-    return templates.TemplateResponse(request, "partials/team_table.html", _ctx(request, members=members,
-                                                                                active_admins=admins))
+    return templates.TemplateResponse(request, "partials/team_table.html", _ctx(request, **await _team(member)))
 
 
 # ---------------------------------------------------------------------------
@@ -631,10 +662,10 @@ async def spend_page(request: Request, member: Member = Depends(require_admin)):
 
 
 # ---------------------------------------------------------------------------
-# System issues (admin): alerts about credit, keys, failures
+# System issues (developers, D-90): alerts about credit, keys, failures
 # ---------------------------------------------------------------------------
 @router.get("/system", response_class=HTMLResponse)
-async def system_page(request: Request, member: Member = Depends(require_admin)):
+async def system_page(request: Request, member: Member = Depends(require_developer)):
     events = await db.run(alerts.list_events, 100)
     return templates.TemplateResponse(request, "system.html", _ctx(
         request, events=events, webhook=bool(get_settings().alert_webhook_url)))
@@ -643,7 +674,7 @@ async def system_page(request: Request, member: Member = Depends(require_admin))
 @router.post("/system/{event_id}/resolve")
 @limiter.limit("30/minute")
 async def resolve_event(request: Request, event_id: str, csrf_token: str = Form(""),
-                        member: Member = Depends(require_admin)):
+                        member: Member = Depends(require_developer)):
     _check_csrf(request, member, csrf_token)
     _require_uuid(event_id, "Issue")
     await db.run(alerts.resolve, event_id, member.user_id)
@@ -653,7 +684,7 @@ async def resolve_event(request: Request, event_id: str, csrf_token: str = Form(
 
 @router.post("/system/test-alert")
 @limiter.limit("5/hour")
-async def test_alert(request: Request, csrf_token: str = Form(""), member: Member = Depends(require_admin)):
+async def test_alert(request: Request, csrf_token: str = Form(""), member: Member = Depends(require_developer)):
     _check_csrf(request, member, csrf_token)
     ok = await db.run(alerts.send_test_alert)
     return _banner(request, "success" if ok else "error",

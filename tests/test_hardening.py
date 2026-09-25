@@ -149,7 +149,9 @@ def test_alert_is_recorded_deduped_and_sent(app_dsn, admin_dsn, monkeypatch):
         alerts.raise_alert(code, "actor x/y missing")
         alerts.raise_alert(code, "actor x/y missing again")
         import time
-        time.sleep(1.5)  # the webhook is sent on a background thread
+        deadline = time.monotonic() + 10  # the webhook is sent on a background thread: wait for it, don't guess
+        while hook.call_count < 1 and time.monotonic() < deadline:
+            time.sleep(0.1)
         rows = db.fetch_all("select * from lead_agent.system_events where code = %s", (code,))
         assert len(rows) == 1 and rows[0]["occurrences"] == 2
         assert hook.call_count == 1
@@ -251,6 +253,8 @@ ADMIN = auth.Member(user_id=str(uuid.uuid4()), email="a@example.invalid", full_n
                     is_owner=False)
 MEMBER = auth.Member(user_id=str(uuid.uuid4()), email="m@example.invalid", full_name="Member", role="member",
                      is_owner=False)
+DEV = auth.Member(user_id=str(uuid.uuid4()), email="d@example.invalid", full_name="Dev", role="admin", is_owner=False,
+                  is_developer=True)
 
 
 @pytest.mark.db
@@ -279,8 +283,9 @@ def test_service_down_gives_plain_message_not_jargon(client_as, monkeypatch):
 
 
 @pytest.mark.db
-def test_system_issues_page_is_admin_only(client_as):
-    assert client_as(ADMIN).get("/system").status_code == 200
+def test_system_issues_page_is_developer_only(client_as):
+    assert client_as(DEV).get("/system").status_code == 200
+    assert client_as(ADMIN).get("/system").status_code == 403  # admins see plain language only (D-90)
     assert client_as(MEMBER).get("/system").status_code == 403
 
 
@@ -341,24 +346,28 @@ async def test_scope_precheck_is_cheap_and_classifies():
     assert res.verdict.request_type == "question" and float(res.cost_usd) == pytest.approx(0.0006)
 
 
-def test_admins_get_the_fix_members_get_the_plain_message():
+def test_developers_get_the_fix_everyone_else_the_plain_message():
     from app.failures import admin_message_from_detail, message_for
     f = ServiceFailure("apify_no_credit", "$4.99 of $5.00 used")
-    assert "Your admin has been told" in message_for(f, is_admin=False)
-    admin = message_for(f, is_admin=True)
-    assert "Your admin has been told" not in admin and "Apify Console" in admin and "$4.99" in admin
+    assert "Our support team has been told" in message_for(f, technical=False)
+    tech = message_for(f, technical=True)
+    assert "Our support team has been told" not in tech and "Apify Console" in tech and "$4.99" in tech
     assert "Apify Console" in admin_message_from_detail("[apify_no_credit] $4.99 of $5.00 used")
     assert admin_message_from_detail("no code here") is None
 
 
 @pytest.mark.db
-def test_admin_sees_fix_when_a_service_is_down(client_as, monkeypatch):
+def test_developer_sees_fix_when_a_service_is_down(client_as, monkeypatch):
     import app.web.routes as routes
     monkeypatch.setattr(routes.health, "preflight", lambda limits: [ServiceFailure("apify_no_credit", "HTTP 402")])
     monkeypatch.setattr(routes.alerts, "raise_alert", lambda *a, **k: None)
     monkeypatch.setattr(routes.db, "active_run", lambda: None)
-    r = client_as(ADMIN).post("/runs", data={"objective": "Find US B2B SaaS companies with 10 to 100 employees",
-                                             "idempotency_key": str(uuid.uuid4()),
-                                             "csrf_token": auth.csrf_token_for(ADMIN.user_id)},
-                              headers={"HX-Request": "true"})
-    assert r.status_code == 503 and "Apify Console" in r.text and "Your admin has been told" not in r.text
+    def post(who):
+        return client_as(who).post("/runs", data={"objective": "Find US B2B SaaS companies with 10 to 100 employees",
+                                                  "idempotency_key": str(uuid.uuid4()),
+                                                  "csrf_token": auth.csrf_token_for(who.user_id)},
+                                   headers={"HX-Request": "true"})
+    r = post(DEV)
+    assert r.status_code == 503 and "Apify Console" in r.text and "Our support team has been told" not in r.text
+    r = post(ADMIN)  # admins get plain language, like members (D-90)
+    assert r.status_code == 503 and "Apify Console" not in r.text and "Our support team has been told" in r.text

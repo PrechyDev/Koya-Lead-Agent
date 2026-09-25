@@ -40,8 +40,8 @@
           when you name your own exclusions. To include them, say so in your objective.)</span></dd>
       </dl>
     </details>
-    {% if settings.dev_limits and member.is_admin %}
-    {# Admins only: members don't need to know about cost limits; admins need to know test mode is on. #}
+    {% if settings.dev_limits and member.is_developer %}
+    {# Developers only (D-90): the fix is an environment variable, which only a developer can change. #}
     <p class="small"><span class="badge warning">Test mode</span> Runs stop at {{ limits.target_qualified }} leads and use small
       limits. To run full searches, set <span class="mono">DEV_LIMITS=false</span> where the app is hosted and restart it.</p>
     {% endif %}

@@ -19,19 +19,21 @@
         {% if member.is_admin %}
         <a href="/team" {% if active_nav == 'team' %}aria-current="page"{% endif %}>Team</a>
         <a href="/spend" {% if active_nav == 'spend' %}aria-current="page"{% endif %}>Spend</a>
+        {% endif %}
+        {% if member.is_developer %}
         <a href="/system" {% if active_nav == 'system' %}aria-current="page"{% endif %}>System issues{% if open_issues %} <span class="badge danger">{{ open_issues }}</span>{% endif %}</a>
         {% endif %}
       </nav>
       <div class="usermenu">
         <span class="small">{{ member.full_name }}</span>
-        <span class="badge {{ 'info' if member.is_admin else 'outline' }}">{{ member.role }}</span>
+        <span class="badge {{ 'info' if member.is_admin else 'outline' }}">{{ 'developer' if member.is_developer else member.role }}</span>
         <form method="post" action="/logout"><button class="btn small" type="submit">Sign out</button></form>
       </div>
       {% endif %}
     </div>
   </header>
   <main>
-    {% if member and member.is_admin and open_issues and active_nav != 'system' %}
+    {% if member and member.is_developer and open_issues and active_nav != 'system' %}
     <div class="banner warning" role="status"><span class="icon" aria-hidden="true">⚠</span>
       <div class="msg">{{ open_issues }} system issue{{ 's' if open_issues != 1 }} need{{ 's' if open_issues == 1 }} attention (e.g. a service out of credit). <a href="/system">View and fix</a></div></div>
     {% endif %}

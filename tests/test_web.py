@@ -15,6 +15,8 @@ ADMIN = Member(user_id=str(uuid.uuid4()), email="admin@example.invalid", full_na
                is_owner=False)
 MEMBER = Member(user_id=str(uuid.uuid4()), email="member@example.invalid", full_name="Test Member", role="member",
                 is_owner=False)
+DEVELOPER = Member(user_id=str(uuid.uuid4()), email="dev@example.invalid", full_name="Test Developer", role="admin",
+                   is_owner=True, is_developer=True)
 
 
 @pytest.fixture
@@ -102,7 +104,7 @@ def test_double_submit_goes_to_existing_run(client_as, a_run):
 
 
 def test_run_page_live_tabs_and_exports(client_as, a_run):
-    c = client_as(ADMIN)
+    c = client_as(DEVELOPER)
     rid = a_run["id"]
     assert c.get(f"/runs/{rid}").status_code == 200
     live = c.get(f"/runs/{rid}/live")
@@ -210,9 +212,9 @@ def test_run_refused_with_the_real_fix_when_the_agent_cannot_start(client_as, mo
     monkeypatch.setattr(routes.health, "preflight", lambda limits: [])
     monkeypatch.setattr(routes.alerts, "raise_alert", lambda *a, **k: None)
     before = db.search_runs()[1]
-    r = client_as(ADMIN).post("/runs", data={"objective": "Find US B2B SaaS companies with 10 to 100 staff",
-                                             "idempotency_key": str(uuid.uuid4()),
-                                             "csrf_token": auth.csrf_token_for(ADMIN.user_id)},
+    r = client_as(DEVELOPER).post("/runs", data={"objective": "Find US B2B SaaS companies with 10 to 100 staff",
+                                                 "idempotency_key": str(uuid.uuid4()),
+                                                 "csrf_token": auth.csrf_token_for(DEVELOPER.user_id)},
                               headers={"HX-Request": "true"})
     assert r.status_code == 503 and "without --reload" in r.text.replace("WITHOUT", "without")
     assert db.search_runs()[1] == before  # nothing created, nothing spent
@@ -459,3 +461,76 @@ def test_bad_ids_are_404_not_500(client_as):
 def test_sign_in_redirect_keeps_the_query_string(client_as):
     r = client_as(None).get("/runs/new?objective=US%20dental%20clinics", follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"] == "/login?next=/runs/new%3Fobjective%3DUS%2520dental%2520clinics"
+
+
+# --- admins vs developers (D-90) ---------------------------------------------------------------------------------
+def test_technical_views_are_developer_only(client_as, a_run):
+    rid = a_run["id"]
+    for who in (ADMIN, MEMBER):
+        c = client_as(who)
+        assert c.get(f"/runs/{rid}/tab/calls").status_code == 403  # refused on the server, not just hidden
+        page = c.get(f"/runs/{rid}?tab=calls").text
+        assert "Tool calls" not in page and "/tab/calls" not in page
+        assert "Agent turns" not in c.get(f"/runs/{rid}/tab/summary").text
+        assert c.post("/system/test-alert", data={"csrf_token": auth.csrf_token_for(who.user_id)}).status_code == 403
+    admin = client_as(ADMIN)
+    assert 'href="/system"' not in admin.get("/runs/new").text and 'href="/spend"' in admin.get("/runs/new").text
+    assert "By source and model" not in admin.get("/spend").text
+    assert "By source and model" in client_as(DEVELOPER).get("/spend").text
+    assert "Tool calls" in client_as(DEVELOPER).get(f"/runs/{rid}").text
+
+
+def _team_rows(monkeypatch, *rows):
+    monkeypatch.setattr(db, "list_members", lambda: list(rows))
+    monkeypatch.setattr(db, "get_member", lambda uid: next((r for r in rows if str(r["user_id"]) == uid), None))
+    updates = []
+    monkeypatch.setattr(db, "update_member", lambda uid, **f: updates.append((uid, f)) or {"user_id": uid, **f})
+    return updates
+
+
+def _row(email, role="admin", developer=False, owner=False):
+    return {"user_id": _uid(email), "email": email, "full_name": email.split("@")[0], "role": role,
+            "is_active": True, "is_owner": owner, "is_developer": developer}
+
+
+def test_admins_never_see_or_change_developers(client_as, monkeypatch):
+    dev, boss = _row("dev@acme.io", developer=True), _row("boss@acme.io")
+    updates = _team_rows(monkeypatch, dev, boss)
+    page = client_as(ADMIN).get("/team").text
+    assert "boss@acme.io" in page and "dev@acme.io" not in page and "Make developer" not in page
+    token = auth.csrf_token_for(ADMIN.user_id)
+    for action in ("deactivate", "make_member", "send_reset"):  # a hidden person can't be changed by guessing the id
+        r = client_as(ADMIN).post(f"/team/{dev['user_id']}/update", data={"action": action, "csrf_token": token})
+        assert r.status_code == 404, action
+    r = client_as(ADMIN).post(f"/team/{boss['user_id']}/update", data={"action": "make_developer", "csrf_token": token})
+    assert r.status_code == 403 and updates == []  # only the owner grants developer access
+
+
+def test_the_owner_grants_and_removes_developer_access(client_as, monkeypatch):
+    boss, dev = _row("boss@acme.io"), _row("dev@acme.io", developer=True)
+    updates = _team_rows(monkeypatch, boss, dev)
+    c, token = client_as(DEVELOPER), auth.csrf_token_for(DEVELOPER.user_id)
+    page = c.get("/team").text
+    assert "dev@acme.io" in page and "Developer" in page and "Make developer" in page
+    r = c.post(f"/team/{boss['user_id']}/update", headers={"HX-Request": "true"},
+               data={"action": "make_developer", "csrf_token": token})
+    assert "now has developer access" in r.text and updates[-1] == (boss["user_id"], {"role": "admin", "is_developer": True})
+    r = c.post(f"/team/{dev['user_id']}/update", headers={"HX-Request": "true"},
+               data={"action": "make_member", "csrf_token": token})
+    assert r.status_code == 400 and "developer access first" in r.text
+    r = c.post(f"/team/{dev['user_id']}/update", headers={"HX-Request": "true"},
+               data={"action": "remove_developer", "csrf_token": token})
+    assert "no longer has" in r.text and updates[-1] == (dev["user_id"], {"is_developer": False})
+
+
+def test_the_database_refuses_a_developer_who_is_not_an_admin(admin_dsn):
+    import psycopg
+    with psycopg.connect(admin_dsn, prepare_threshold=None) as conn:
+        uid = conn.execute("select user_id from lead_agent.members where is_owner").fetchone()[0]
+        with pytest.raises(psycopg.errors.CheckViolation):
+            conn.execute("update lead_agent.members set is_owner = false, role = 'member' where user_id = %s", (uid,))
+        conn.rollback()
+        conn.execute("alter table lead_agent.members disable trigger members_protect_admins")  # isolate the new check
+        with pytest.raises(psycopg.errors.CheckViolation):
+            conn.execute("update lead_agent.members set is_owner = false, role = 'member' where user_id = %s", (uid,))
+        conn.rollback()  # nothing is changed: the trigger stays enabled and the owner row is untouched

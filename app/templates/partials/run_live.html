@@ -19,8 +19,8 @@
   {% if follow_up %}<p><a class="btn small" href="/runs/{{ follow_up.id }}">Open the follow-up run →</a></p>{% endif %}
 {% endif %}
 
-{% if member and member.is_admin and (admin_message or run.error_detail) %}
-<div class="callout small"><b>For admins:</b> {{ admin_message or "See the technical detail." }}
+{% if member and member.is_developer and (tech_message or run.error_detail) %}
+<div class="callout small"><b>For developers:</b> {{ tech_message or "See the technical detail." }}
   <details><summary>Technical detail</summary><p class="mono">{{ run.error_detail }}</p>
     <p><a href="/system">Open System issues</a></p></details></div>
 {% endif %}

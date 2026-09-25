@@ -41,6 +41,7 @@ class Member:
     full_name: str
     role: str
     is_owner: bool
+    is_developer: bool = False  # the technical view (D-90): owner-granted, always an admin (DB check)
 
     @property
     def is_admin(self) -> bool:
@@ -200,7 +201,7 @@ def load_member(user_id: str) -> Member | None:
     if not row or not row["is_active"]:
         return None
     return Member(user_id=str(row["user_id"]), email=row["email"], full_name=row["full_name"], role=row["role"],
-                  is_owner=row["is_owner"])
+                  is_owner=row["is_owner"], is_developer=bool(row.get("is_developer")))
 
 
 def resolve_session(request: Request) -> tuple[dict | None, dict | None]:
@@ -251,4 +252,11 @@ def require_admin(request: Request) -> Member:
     member = current_member(request)
     if not member.is_admin:
         raise HTTPException(status_code=403, detail="Admins only.")
+    return member
+
+
+def require_developer(request: Request) -> Member:
+    member = current_member(request)
+    if not member.is_developer:
+        raise HTTPException(status_code=403, detail="Developers only.")
     return member

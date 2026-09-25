@@ -16,7 +16,7 @@
 
 <section class="card">
   <div class="tabs" role="tablist" aria-label="Run details">
-    {% for key, label in [("leads", "Leads"), ("icp", "ICP"), ("calls", "Tool calls"), ("summary", "Summary")] %}
+    {% for key, label in tabs.items() %}
     <button class="tab" role="tab" type="button" aria-selected="{{ 'true' if tab == key else 'false' }}"
       hx-get="/runs/{{ run.id }}/tab/{{ key }}" hx-target="#tab-panel" hx-swap="outerHTML">{{ label }}</button>
     {% endfor %}

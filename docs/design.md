@@ -135,10 +135,10 @@ Sections in order, each with a heading:
 - **Accept invite:** a name + password (with confirm) form. Rules are shown before typing, not only after an error.
 - **Password fields** (everywhere) have an eye button inside the box to show/hide what's typed.
 - **Forgot password:** "Forgot password?" under the Sign in button → email → [Send reset link] → the same neutral confirmation for everyone ("If this email has access, a reset link is on its way"). **Choose a new password:** opened from the email; new password + confirm; locked with an explanation if opened without the email link. Team page: [Send reset link] per active member (confirm first).
-- **Header:** app name · Runs · (admin) Team · (admin) Spend · (admin) System issues with an open-issue count · the user's name, role badge and Sign out. Admins also get a banner on every page while an issue is open.
+- **Header:** app name · Runs · (admin) Team · (admin) Spend · (developer) System issues with an open-issue count · the user's name, role badge and Sign out. Developers also get a banner on every page while an issue is open (D-90).
 - **Team (admin):** a table of name · email · role badge · status (Active/Deactivated) · actions. [Invite teammate] is the primary button. Deactivate needs a confirm and is disabled, with a tooltip, for the owner or the last admin. The result of inviting an existing account is shown as an info banner: "They already have an account. They can sign in with their existing password."
 - **Spend (admin):** budget bar ($ spent / $6.00), then tables by run, model and source (icp / run / grounding / preflight / eval), plus Apify cost.
-- **System issues (admin):** open and resolved alerts, each with what happened and how to fix it; [Mark fixed]; [Send a test alert] (disabled, with the reason, until the n8n webhook is set).
+- **System issues (developer, D-90):** open and resolved alerts, each with what happened and how to fix it; [Mark fixed]; [Send a test alert] (disabled, with the reason, until the n8n webhook is set).
 
 ### 4.5 Repeat-objective gate
 - **Stage 1 (form):** as you type (debounced), an info hint appears *under the objective field*: "You ran this on Sep 20: 10 qualified. [View results]". It's informational; Start stays enabled.

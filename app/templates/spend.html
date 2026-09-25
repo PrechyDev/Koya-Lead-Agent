@@ -9,6 +9,7 @@
   <p class="nums">{{ spent | money }} of {{ budget | money }} Claude budget used (estimated). New runs are refused before any spend if they could go over.</p>
   <p class="help">Claude cost is estimated from the token usage Anthropic reports for each call, priced with the published rates. The Anthropic Console (Usage page) shows the actual bill.</p>
 </section>
+{% if member.is_developer %}{# which part of the system spent it, per model: the technical view (D-90) #}
 <section class="card">
   <h2>By source and model</h2>
   <div class="table-wrap"><table>
@@ -17,6 +18,7 @@
     {% else %}<tr><td colspan="5" class="empty">No spend recorded yet.</td></tr>{% endfor %}</tbody>
   </table></div>
 </section>
+{% endif %}
 <section class="card">
   <h2>By run</h2>
   <div class="table-wrap"><table>

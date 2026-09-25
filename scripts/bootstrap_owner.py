@@ -60,7 +60,8 @@ def main() -> int:
             log.error("SUPABASE_ADMIN_DSN is empty in .env; it's needed (laptop only) to set the owner flag.")
             return 1
         with psycopg.connect(admin_dsn, prepare_threshold=None, autocommit=True) as conn:
-            conn.execute(f"update {db.SCHEMA}.members set is_owner = true, role = 'admin' where user_id = %s",
+            conn.execute(f"update {db.SCHEMA}.members set is_owner = true, role = 'admin', is_developer = true "
+                         "where user_id = %s",
                          (user_id,))
     log.info(f"Done: {args.full_name} is {'the owner and ' if args.owner else ''}{role}.")
     return 0

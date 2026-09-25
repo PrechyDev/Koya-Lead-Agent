@@ -7,13 +7,24 @@
       <tr>
         <td>{{ m.full_name }}{% if m.is_owner %} <span class="badge info">Owner</span>{% endif %}</td>
         <td class="small">{{ m.email }}</td>
-        <td><span class="badge {{ 'info' if m.role == 'admin' else 'outline' }}">{{ m.role }}</span></td>
+        <td><span class="badge {{ 'info' if m.role == 'admin' else 'outline' }}">{{ m.role }}</span>{% if m.is_developer %} <span class="badge warning">Developer</span>{% endif %}</td>
         <td><span class="badge {{ 'success' if m.is_active else 'neutral' }}">{{ 'Active' if m.is_active else 'Deactivated' }}</span></td>
         <td>
           <form class="row" hx-post="/team/{{ m.user_id }}/update" hx-target="#system-message">
             <input type="hidden" name="csrf_token" value="{{ csrf }}">
+            {% if member.is_owner and m.is_active and not m.is_owner %}{# only the owner grants developer access (D-90) #}
+            {% if m.is_developer %}
+            <button class="btn small" type="submit" name="action" value="remove_developer"
+              data-confirm="Remove developer access for {{ m.full_name }}? They stay an admin.">Remove developer</button>
+            {% else %}
+            <button class="btn small" type="submit" name="action" value="make_developer"
+              data-confirm="Give {{ m.full_name }} developer access? They will see System issues, tool calls and technical error detail, and become an admin.">Make developer</button>
+            {% endif %}
+            {% endif %}
             {% if m.role == 'member' %}
             <button class="btn small" type="submit" name="action" value="make_admin">Make admin</button>
+            {% elif m.is_developer %}
+            <button class="btn small" type="submit" name="action" value="make_member" disabled title="A developer is always an admin: remove developer access first">Make member</button>
             {% else %}
             <button class="btn small" type="submit" name="action" value="make_member" {% if protected %}disabled title="{{ 'The owner stays an admin' if m.is_owner else 'At least one active admin must remain' }}"{% endif %}>Make member</button>
             {% endif %}

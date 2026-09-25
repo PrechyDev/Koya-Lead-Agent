@@ -211,6 +211,8 @@ def test_only_the_protected_admin_trigger_becomes_not_allowed(monkeypatch):
     def protected(*a, **k):
         raise psycopg.errors.CheckViolation("At least one active admin must remain")
     monkeypatch.setattr(db, "update_member", protected)
+    monkeypatch.setattr(db, "get_member", lambda uid: {"user_id": uid, "role": "admin", "is_active": True,
+                                                       "is_developer": False})  # the route looks the target up first
     c = TestClient(app, raise_server_exceptions=False)
     body = {"action": "make_member", "csrf_token": auth.csrf_token_for(admin.user_id)}
     target = "/team/00000000-0000-0000-0000-000000000002/update"

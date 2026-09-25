@@ -148,7 +148,7 @@ async def unexpected_error(request: Request, exc: Exception):
     log.exception("unexpected error ref=%s path=%s", ref, request.url.path)
     await db.run(alerts.raise_alert, "unexpected", f"ref {ref} on {request.url.path}: {type(exc).__name__}: {exc}"[:500])
     return _friendly_error(request, "Something went wrong",
-                           f"Something went wrong on our side. Your admin has been told (reference {ref}).", 500)
+                           f"Something went wrong on our side. Our support team has been told (reference {ref}).", 500)
 
 
 def _friendly_error(request: Request, title: str, message: str, status: int, kind: str = "error"):

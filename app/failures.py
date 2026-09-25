@@ -21,12 +21,12 @@ class FailureKind:
 
 CATALOGUE: dict[str, FailureKind] = {k.code: k for k in [
     FailureKind("anthropic_no_credit", "anthropic", "critical",
-                "The AI service has run out of credit, so this research couldn't run. Your admin has been told. "
+                "The AI service has run out of credit, so this research couldn't run. Our support team has been told. "
                 "Nothing was spent on company searches.",
                 "Anthropic account is out of credit. Top up at console.anthropic.com → Billing (and check the "
                 "workspace spend limit), then start the run again."),
     FailureKind("anthropic_auth", "anthropic", "critical",
-                "The AI service isn't connected correctly, so this research couldn't run. Your admin has been told.",
+                "The AI service isn't connected correctly, so this research couldn't run. Our support team has been told.",
                 "Anthropic rejected ANTHROPIC_API_KEY (invalid or revoked). Create a new key and update it in "
                 "Render → Environment."),
     FailureKind("anthropic_rate_limited", "anthropic", "warning",
@@ -38,29 +38,29 @@ CATALOGUE: dict[str, FailureKind] = {k.code: k for k in [
                 "Anthropic API error/overload (5xx/529) or the agent process failed. Retry later; see the run's "
                 "technical detail."),
     FailureKind("agent_cannot_start", "app", "critical",
-                "The research engine couldn't start on this server, so nothing was spent. Your admin has been told.",
+                "The research engine couldn't start on this server, so nothing was spent. Our support team has been told.",
                 "The Claude Code CLI process couldn't be started. Most common cause on Windows: the web server was "
                 "started with `uvicorn --reload`, whose event loop can't start subprocesses. Restart it WITHOUT "
                 "--reload. (Linux, Docker and Render are not affected.) Otherwise check that the CLI bundled in "
                 "claude-agent-sdk is present."),
     FailureKind("apify_no_credit", "apify", "critical",
-                "Company search is unavailable: the search account has run out of credit. Your admin has been told.",
+                "Company search is unavailable: the search account has run out of credit. Our support team has been told.",
                 "Apify account has no usage left this month (or the run's charge cap was hit). Check Apify Console "
                 "→ Billing/Usage, or switch APIFY_TOKEN to the team account."),
     FailureKind("apify_auth", "apify", "critical",
-                "Company search isn't set up correctly, so this research couldn't run. Your admin has been told.",
+                "Company search isn't set up correctly, so this research couldn't run. Our support team has been told.",
                 "Apify rejected APIFY_TOKEN (invalid token). Copy the team account token from Apify Console → "
                 "Settings → API & Integrations."),
     FailureKind("apify_actor_not_found", "apify", "critical",
-                "Company search isn't set up correctly, so this research couldn't run. Your admin has been told.",
+                "Company search isn't set up correctly, so this research couldn't run. Our support team has been told.",
                 "APIFY_ACTOR_ID doesn't exist or isn't accessible. Expected: harvestapi/linkedin-company-search."),
     FailureKind("apify_run_failed", "apify", "warning",
                 "A company search didn't complete. To avoid being charged twice it was not retried automatically. "
-                "Your admin has been told. Anything found so far is saved.",
+                "Our support team has been told. Anything found so far is saved.",
                 "An Apify actor run ended FAILED/TIMED-OUT/ABORTED. Open it in the Apify console (run id in the "
                 "detail) before re-running — PRD rule: stop and ask."),
     FailureKind("apify_bad_input", "apify", "warning",
-                "Company search couldn't understand this search, so this research stopped. Your admin has been told.",
+                "Company search couldn't understand this search, so this research stopped. Our support team has been told.",
                 "Apify rejected the actor input (HTTP 400), e.g. an unknown location name or size band. See the "
                 "tool call's detail, fix the input mapping in app/services/apify.py, then run again."),
     FailureKind("apify_unavailable", "apify", "warning",
@@ -68,19 +68,19 @@ CATALOGUE: dict[str, FailureKind] = {k.code: k for k in [
                 "Apify API returned a server error or didn't answer in time. Retry later; check status.apify.com."),
     FailureKind("firecrawl_no_credit", "firecrawl", "critical",
                 "Website research is unavailable: the research account has run out of credit. Companies not yet "
-                "researched are marked for review. Your admin has been told.",
+                "researched are marked for review. Our support team has been told.",
                 "Firecrawl returned 402 (no credits left). Top up or upgrade at firecrawl.dev → Billing."),
     FailureKind("firecrawl_auth", "firecrawl", "critical",
-                "Website research isn't set up correctly. Your admin has been told.",
+                "Website research isn't set up correctly. Our support team has been told.",
                 "Firecrawl rejected FIRECRAWL_API_KEY. Create a new key at firecrawl.dev and update it in Render."),
     FailureKind("budget_exhausted", "budget", "critical",
-                "This workspace has used its AI budget, so new research is paused. Your admin has been told.",
+                "This workspace has used its AI budget, so new research is paused. Our support team has been told.",
                 "The app's Claude budget (CLAUDE_BUDGET_TOTAL_USD) would be exceeded. Raise it on purpose in "
                 "Render → Environment, or wait."),
     FailureKind("budget_warning", "budget", "warning",
                 "", "The app has used 80% or more of its Claude budget."),
     FailureKind("not_configured", "app", "critical",
-                "The app isn't fully set up yet, so research can't start. Your admin has been told.",
+                "The app isn't fully set up yet, so research can't start. Our support team has been told.",
                 "Required settings are missing (see detail). Set them in Render → Environment and redeploy."),
     FailureKind("run_limit_reached", "app", "warning",
                 "The research reached this run's AI spending limit and stopped safely. Everything found so far is "
@@ -100,7 +100,7 @@ CATALOGUE: dict[str, FailureKind] = {k.code: k for k in [
                 "sign-in). Usually this server's clock is off: on Docker Desktop, restart Docker (or run "
                 "`wsl --shutdown`) to resync it; on Render this shouldn't happen. The detail names the exact error."),
     FailureKind("unexpected", "app", "critical",
-                "Something went wrong on our side. Your admin has been told.",
+                "Something went wrong on our side. Our support team has been told.",
                 "Unhandled error (see detail and the server logs for the reference id)."),
 ]}
 
@@ -123,15 +123,16 @@ class ServiceFailure(Exception):
 
 
 
-def message_for(failure: "ServiceFailure", is_admin: bool) -> str:
-    """What a person sees: admins get the cause + the fix (they ARE the admin); members get the plain version."""
-    if is_admin:
+def message_for(failure: "ServiceFailure", technical: bool) -> str:
+    """What a person sees: developers get the cause + the fix + the detail; everyone else (members AND admins)
+    gets the plain version (D-90)."""
+    if technical:
         return f"{failure.kind.admin} (Detail: {failure.detail})" if failure.detail else failure.kind.admin
     return failure.client
 
 
 def admin_message_from_detail(error_detail: str | None) -> str | None:
-    """Runs store error_detail as "[code] detail"; rebuild the admin message for the run page."""
+    """Runs store error_detail as "[code] detail"; rebuild the technical message for the run page (developers)."""
     m = re.match(r"\[([a-z_]+)\]\s*(.*)", error_detail or "", re.S)
     if not m or m.group(1) not in CATALOGUE:
         return None

@@ -17,13 +17,13 @@
   <div class="stack">
     <h3>Cost & usage</h3>
     <dl class="kv">
-      {% if member and member.is_admin %}{# D-66: AI cost and model names are for admins only #}
+      {% if member and member.is_admin %}{# D-66: AI cost is for admins; turns and models are technical (D-90) #}
       <dt>Claude cost (estimated)</dt><dd class="nums">{{ run.cost_usd | money }} (cap {{ (run.limits or {}).get('max_budget_usd') | money }})</dd>
       {% endif %}
-      <dt>Agent turns</dt><dd class="nums">{{ run.num_turns }}</dd>
+      {% if member and member.is_developer %}<dt>Agent turns</dt><dd class="nums">{{ run.num_turns }}</dd>{% endif %}
       <dt>Companies fetched</dt><dd class="nums">{{ usage.get('candidates_found', 0) }} in {{ usage.get('discovery_calls', 0) }} search(es)</dd>
       <dt>Pages scraped</dt><dd class="nums">{{ usage.get('scrapes', 0) }} (+ {{ usage.get('cache_hits', 0) }} from cache)</dd>
-      {% if member and member.is_admin %}
+      {% if member and member.is_developer %}
       <dt>Models</dt><dd class="small">{% for role, m in (run.models or {}).items() %}{{ role }}: {{ m }}{% if not loop.last %} · {% endif %}{% else %}—{% endfor %}</dd>
       {% endif %}
       <dt>Started / finished</dt><dd class="small">{{ run.started_at.strftime('%b %d %H:%M') if run.started_at else '—' }} / {{ run.finished_at.strftime('%b %d %H:%M') if run.finished_at else '—' }}</dd>
