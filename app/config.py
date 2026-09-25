@@ -20,9 +20,9 @@ class Settings(BaseSettings):
     # --- Claude ---
     anthropic_api_key: str = ""
     model_orchestrator: str = "claude-sonnet-5"
-    model_icp: str = "claude-sonnet-5"
-    model_researcher: str = "claude-sonnet-5"
-    model_copywriter: str = "claude-sonnet-5"
+    model_icp: str = "claude-haiku-4-5"          # A/B (D-77): same score as Sonnet at ~1/3 the cost
+    model_researcher: str = "claude-opus-5-5"    # owner (D-77): most careful qualifier; Sonnet had 1 false "qualified"
+    model_copywriter: str = "claude-opus-5-5"    # A/B (D-77): 0 invented claims; cheaper than Sonnet here
     model_grounding: str = "claude-haiku-4-5"
     model_checks: str = "claude-haiku-4-5"  # the small checks: scope check before a run + the credit probe
     claude_budget_total_usd: Decimal = Decimal("6.00")

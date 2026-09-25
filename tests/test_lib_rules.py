@@ -198,7 +198,7 @@ def test_blank_env_values_fall_back_to_defaults(monkeypatch):
     s = Settings(_env_file=None)
     assert s.max_parallel_subagents is None
     assert s.apify_actor_id == "harvestapi/linkedin-company-search"
-    assert s.model_researcher == "claude-sonnet-5"
+    assert s.model_researcher == "claude-opus-5-5"  # a blank value falls back to the A/B default (D-77)
     assert "ANTHROPIC_API_KEY" in Settings(_env_file=None, anthropic_api_key="").missing_run_config()
 
 

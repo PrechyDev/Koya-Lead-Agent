@@ -78,7 +78,7 @@ The owner is a **Python developer** who knows some TypeScript, and wants to be *
 
 Python 3.12 · `claude-agent-sdk` 0.2.158 (orchestrator + subagents, in-process MCP tools, skills as a local plugin in `agent_plugin/`) · FastAPI + Jinja2 + HTMX + plain CSS · psycopg 3 + psycopg_pool (direct Postgres, `prepare_threshold=None`) · Pydantic v2 · httpx (Firecrawl) · apify-client · anthropic (scope check + fact-check) · tldextract · pycountry · slowapi · PyJWT · pytest + respx · Render free (Docker).
 
-Models are set per role via `MODEL_ORCHESTRATOR`, `MODEL_ICP`, `MODEL_RESEARCHER`, `MODEL_COPYWRITER`, `MODEL_GROUNDING`, plus `MODEL_CHECKS` for the small checks (scope check + pre-run credit probe; Haiku 4.5 by default). Nothing hard-codes a model name outside `app/config.py` (and the A/B candidate list in `evals/ab.py`). The final values come from the A/B test (`evals/ab.py`, not run yet; until then Sonnet 5 everywhere and Haiku 4.5 for the fact-check). Candidates: `claude-haiku-4-5`, `claude-sonnet-5`, plus `claude-opus-5-5` on qualification and copywriting (it is also the reference labeller; specs D-59).
+Models are set per role via `MODEL_ORCHESTRATOR`, `MODEL_ICP`, `MODEL_RESEARCHER`, `MODEL_COPYWRITER`, `MODEL_GROUNDING`, plus `MODEL_CHECKS` for the small checks (scope check + pre-run credit probe). Nothing hard-codes a model name outside `app/config.py` (and the A/B candidate list in `evals/ab.py`). **Chosen by the A/B test + owner (specs D-77): researcher and copywriter `claude-opus-5-5`, ICP, fact-check and checks `claude-haiku-4-5`, orchestrator `claude-sonnet-5`.** Opus in two roles may reach the $1.25 per-run cap before 10 leads; measure with a DEV run first.
 
 ## Project layout
 

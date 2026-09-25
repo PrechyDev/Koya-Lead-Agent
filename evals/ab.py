@@ -51,6 +51,7 @@ OPUS_STAGES = {"copy"}
 COPY_SET_SIZE = 3  # qualified companies first, then the needs-review ones with the most passed hard filters
 REPEATS = 2
 QUAL_MAX_TOKENS = 8000
+COPY_MAX_TOKENS = 6000  # 2 of Sonnet's 3 copy answers were cut off at 3,000 (errors log #96)
 
 ICP_CASES = [
     # No kind of company named: since D-58 the right answer is to ASK (save_icp enforces it). This case expected
@@ -225,7 +226,8 @@ def copy_request(model: str, c: dict, reference: dict) -> dict:
     facts = {"company": c["name"], "domain": c["domain"], "source_summary": ref.get("source_summary"),
              "fit_reasons": ref.get("fit_reasons"), "evidence": ref.get("hard_filter_checks"),
              "source_urls": [c["linkedin_url"]] + [p["url"] for p in c["pages"]]}
-    return _params(model, system, f"Lead facts (use only these):\n{json.dumps(facts)}", CopyOut)
+    return _params(model, system, f"Lead facts (use only these):\n{json.dumps(facts)}", CopyOut,
+                   max_tokens=COPY_MAX_TOKENS)
 
 
 def ground_request(model: str, c: dict, draft: dict) -> dict:
@@ -276,20 +278,20 @@ def _output_guess(model: str, observed: dict[str, float]) -> int:
     return DEFAULT_OUTPUT_TOKENS["opus" if "opus" in model else "other"]
 
 
-def estimate_cost(requests: list[tuple[str, dict]]) -> Decimal:
+def estimate_cost(requests: list[tuple[str, dict]], batch: bool = True) -> Decimal:
     observed = observed_output_tokens()
     total = Decimal("0")
     for _, p in requests:
         chars = len(json.dumps(p["system"])) + len(json.dumps(p["messages"]))
         out = min(p["max_tokens"], _output_guess(p["model"], observed))
-        total += cost_from_usage(p["model"], chars // 4, out, batch=True)
+        total += cost_from_usage(p["model"], chars // 4, out, batch=batch)
     return total.quantize(Decimal("0.0001"))
 
 
-def worst_case_cost(requests: list[tuple[str, dict]]) -> Decimal:
+def worst_case_cost(requests: list[tuple[str, dict]], batch: bool = True) -> Decimal:
     """If every answer used its full max_tokens: the most this batch can cost."""
     total = sum((cost_from_usage(p["model"], (len(json.dumps(p["system"])) + len(json.dumps(p["messages"]))) // 4,
-                                 p["max_tokens"], batch=True) for _, p in requests), Decimal("0"))
+                                 p["max_tokens"], batch=batch) for _, p in requests), Decimal("0"))
     return total.quantize(Decimal("0.0001"))
 
 
@@ -361,15 +363,43 @@ def collect(batch_id: str) -> dict[str, dict]:
     return results
 
 
-def guard(requests: list[tuple[str, dict]], yes: bool) -> None:
-    est = estimate_cost(requests)
+def run_direct(requests: list[tuple[str, dict]], label: str) -> dict[str, dict]:
+    """The same requests as normal API calls, one by one: answers in seconds instead of a queue, at full price.
+    Saved and costed exactly like a batch (spend recorded once per answer)."""
+    client = anthropic.Anthropic(api_key=get_settings().anthropic_api_key, max_retries=2)
+    results: dict[str, dict] = {}
+    for cid, params in requests:
+        params = {k: v for k, v in params.items() if k != "output_config"} | {"output_config": params["output_config"]}
+        msg = client.messages.create(**params)
+        u = msg.usage
+        cost = cost_from_usage(msg.model, u.input_tokens, u.output_tokens,
+                               getattr(u, "cache_read_input_tokens", 0) or 0,
+                               getattr(u, "cache_creation_input_tokens", 0) or 0, batch=False)
+        db.record_spend("eval", cost, model=msg.model, input_tokens=u.input_tokens, output_tokens=u.output_tokens,
+                        note=f"{label} {cid} (direct)")
+        text = next((b.text for b in msg.content if b.type == "text"), "{}")
+        try:
+            parsed = json.loads(text)
+        except ValueError:
+            parsed = {"error": "invalid json"}
+        results[cid] = {"output": parsed, "cost": float(cost), "stop": msg.stop_reason, "output_tokens": u.output_tokens}
+        log.info(f"{cid}: {msg.stop_reason}, {u.output_tokens} output tokens, ${cost:.4f}")
+    saved = FIXTURES / f"batch_{label}_direct{int(time.time())}.results.json"
+    saved.write_text(json.dumps(results, indent=1), encoding="utf-8")
+    log.info(f"direct results saved to {saved}")
+    return results
+
+
+def guard(requests: list[tuple[str, dict]], yes: bool, batch: bool = True) -> None:
+    est = estimate_cost(requests, batch)
     spent = eval_spent()
-    log.info(f"pre-flight: {len(requests)} requests, estimated ${est} (worst case ${worst_case_cost(requests)}), "
-             f"batch price; eval spent so far ${spent:.4f}; cap ${EVAL_CAP_USD}")
+    worst = worst_case_cost(requests, batch)
+    log.info(f"pre-flight: {len(requests)} requests, estimated ${est} (worst case ${worst}), "
+             f"{'batch' if batch else 'FULL'} price; eval spent so far ${spent:.4f}; cap ${EVAL_CAP_USD}")
     if spent + est > EVAL_CAP_USD:
         raise SystemExit("REFUSED: this would exceed the eval cap. Shrink the test set or raise the cap on purpose.")
     try:  # and the project's hard Claude budget: refused if even the WORST case could pass it (rule 5, E-29)
-        assert_can_spend(db.total_spend(), worst_case_cost(requests), get_settings().claude_budget_total_usd)
+        assert_can_spend(db.total_spend(), worst, get_settings().claude_budget_total_usd)
     except BudgetExceeded as exc:
         raise SystemExit(f"REFUSED: {exc}") from None
     if not yes:
@@ -462,9 +492,23 @@ def fact_check_copy(name: str) -> None:
     fx, ref = load(name), load_reference(name)
     by_domain = {c["domain"]: c for c in fx["companies"]}
     answers: dict[str, dict] = {}
-    for f in sorted(FIXTURES.glob("batch_ab-copy_*.results.json")):
+    for f in sorted(FIXTURES.glob("batch_ab-copy*.results.json"), key=lambda f: f.stat().st_mtime):
         answers.update(json.loads(f.read_text(encoding="utf-8")))
+    # Guarded like every other paid step (errors log #97: this step once pushed the eval $0.04 past its cap).
+    from app.services.grounding import grounding_call_cap
+    planned = []
+    for cid, res in sorted(answers.items()):
+        out = res.get("output") or {}
+        if out.get("emails"):
+            c = by_domain[cid.split("::")[3]]
+            planned.append(grounding_call_cap(_company_block(c), out["emails"], out.get("linkedin_message", "")))
+    worst = sum(planned, Decimal("0"))
+    spent = eval_spent()
+    log.info(f"fact-check pre-flight: {len(planned)} checks, worst case ${worst:.4f}; eval spent ${spent:.4f} of ${EVAL_CAP_USD}")
+    if spent + worst > EVAL_CAP_USD:
+        raise SystemExit("REFUSED: fact-checking these drafts could pass the eval cap.")
     rows = []
+    loop = asyncio.new_event_loop()
     for cid, res in sorted(answers.items()):
         _, model, rep, domain = cid.split("::")
         out = res.get("output") or {}
@@ -475,7 +519,7 @@ def fact_check_copy(name: str) -> None:
         facts = ref.get(domain, {})
         context = (f"Company: {c['name']} ({domain})\nSource summary: {facts.get('source_summary')}\n"
                    f"Fit reasons: {facts.get('fit_reasons')}\n" + _company_block(c))
-        g = asyncio.run(check_grounding(context, emails, out.get("linkedin_message", ""))) if emails else None
+        g = loop.run_until_complete(check_grounding(context, emails, out.get("linkedin_message", ""))) if emails else None
         if g and g.cost_usd:
             db.record_spend("eval", g.cost_usd, model=g.model, input_tokens=g.input_tokens,
                             output_tokens=g.output_tokens, note=f"copy fact-check {cid}")
@@ -502,7 +546,7 @@ def rescore(name: str, stages: set[str]) -> None:
     import psycopg
     from dotenv import dotenv_values
     results: dict[str, dict] = {}
-    for f in sorted(FIXTURES.glob("batch_ab-*.results.json")):
+    for f in sorted(FIXTURES.glob("batch_ab-*.results.json"), key=lambda f: f.stat().st_mtime):
         results.update({k: v for k, v in json.loads(f.read_text(encoding="utf-8")).items()
                         if k.split("::", 1)[0] in stages})
     admin = (dotenv_values(ROOT / ".env").get("SUPABASE_ADMIN_DSN") or "").strip()
@@ -534,6 +578,7 @@ def main() -> int:
                                             "fact-check-copy", "report"])
     parser.add_argument("--batch-id", help="for `collect`: a batch submitted earlier whose answers weren't fetched")
     parser.add_argument("--repeats", type=int, default=REPEATS, help="for `run`/`estimate`: repeats per case")
+    parser.add_argument("--direct", action="store_true", help="for `run`: normal API calls now (full price), no batch")
     parser.add_argument("--ids", help="for `run`: only these request ids (comma list), e.g. to redo cut-off answers")
     parser.add_argument("run_ids", nargs="*")
     parser.add_argument("--name", default="prd_example")
@@ -567,8 +612,9 @@ def main() -> int:
     elif args.command == "run":
         reqs = [r for r in build_ab_requests(args.name, args.repeats) if r[0].split("::", 1)[0] in stages
                 and (not only_ids or r[0] in only_ids)]
-        guard(reqs, args.yes)
-        results = run_batch(reqs, "ab-" + "-".join(sorted(stages)))
+        guard(reqs, args.yes, batch=not args.direct)
+        label = "ab-" + "-".join(sorted(stages))
+        results = run_direct(reqs, label) if args.direct else run_batch(reqs, label)
         score(args.name, results)
         report(args.name)
     elif args.command == "collect":

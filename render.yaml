@@ -37,11 +37,11 @@ services:
       - key: MODEL_ORCHESTRATOR
         value: claude-sonnet-5
       - key: MODEL_ICP
-        value: claude-sonnet-5
+        value: claude-haiku-4-5
       - key: MODEL_RESEARCHER
-        value: claude-sonnet-5
+        value: claude-opus-5-5
       - key: MODEL_COPYWRITER
-        value: claude-sonnet-5
+        value: claude-opus-5-5
       - key: MODEL_GROUNDING
         value: claude-haiku-4-5
       - key: MODEL_CHECKS             # scope check + pre-run credit probe
