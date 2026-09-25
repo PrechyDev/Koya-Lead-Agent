@@ -283,11 +283,10 @@ def _history_url(*, status: str = "", q: str = "", mine: bool = False, page: int
 
 @router.get("/runs/new", response_class=HTMLResponse)  # declared before /runs/{run_id}, or "new" would be an id
 async def new_run_page(request: Request, objective: str = "", member: Member = Depends(current_member)):
-    settings = get_settings()
-    active = await db.run(db.active_run)
+    settings = get_settings()  # a run already in progress is reported when Start is pressed (409 banner, D-93)
     mine_today = await db.run(db.count_full_runs_today, member.user_id)
     return templates.TemplateResponse(request, "new_run.html", _ctx(
-        request, active=active, prefill=objective.strip()[:1000],
+        request, prefill=objective.strip()[:1000],
         limits=limits_for_run(MAX_LEAD_COUNT, dev=settings.dev_limits), mine_today=mine_today, daily_cap=_daily_cap(member),
         idempotency_key=str(uuid.uuid4())))
 

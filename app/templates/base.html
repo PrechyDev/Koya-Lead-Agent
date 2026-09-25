@@ -25,6 +25,7 @@
         {% endif %}
       </nav>
       <div class="usermenu">
+        <a class="btn small primary" href="/runs/new" {% if active_nav == 'new' %}aria-current="page"{% endif %}>+ New run</a>
         <span class="small">{{ member.full_name }}</span>
         <span class="badge {{ 'info' if member.is_admin else 'outline' }}">{{ 'developer' if member.is_developer else member.role }}</span>
         <form method="post" action="/logout"><button class="btn small" type="submit">Sign out</button></form>

@@ -2,6 +2,7 @@
 roles, CSRF, validation and rendering are real. No paid calls: no run is actually started."""
 
 import uuid
+from datetime import UTC
 
 import pytest
 from fastapi.testclient import TestClient
@@ -578,13 +579,13 @@ def test_spend_tabs_paginate_20_a_page(client_as, monkeypatch):
 
 
 def test_spend_breakdown_names_steps_and_merges_model_variants():
-    from datetime import datetime, timezone
+    from datetime import datetime
     from decimal import Decimal
 
     from app.lib.spend_breakdown import breakdown, model_family
     assert model_family("claude-haiku-4-5-20251001") == model_family("claude-haiku-4-5") == "Haiku 4.5"
     assert model_family("claude-opus-5-5[1m]") == "Opus 5.5" and model_family("claude-sonnet-5") == "Sonnet 5"
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     rows = [{"source": "run", "model": "claude-opus-5-5[1m]", "entries": 1, "cost_usd": Decimal("0.30"), "last_at": now},
             {"source": "run", "model": "claude-opus-5-5", "entries": 1, "cost_usd": Decimal("0.10"), "last_at": now},
             {"source": "icp", "model": "claude-haiku-4-5-20251001", "entries": 4, "cost_usd": Decimal("0.10"),
@@ -594,3 +595,27 @@ def test_spend_breakdown_names_steps_and_merges_model_variants():
                                                                     ("Understanding the objective", 4, 20)]
     assert [m.name for m in models] == ["Opus 5.5", "Haiku 4.5"] and models[0].per_call == Decimal("0.20")
     assert models[1].detail == "Used for: Understanding the objective"
+
+
+
+# --- New run from anywhere; exports only when there is something to export (D-93) -------------------------------
+def test_new_run_is_in_the_nav_and_a_busy_system_answers_on_start(client_as, monkeypatch):
+    from app.web import routes
+    c = client_as(MEMBER)
+    assert 'href="/runs/new"' in c.get("/spend").text or 'href="/runs/new"' in c.get("/").text
+    monkeypatch.setattr(routes.db, "active_run", lambda: {"id": "00000000-0000-0000-0000-00000000abcd"})
+    page = c.get("/runs/new").text
+    assert "data-locked" not in page and "run is in progress" not in page  # the form stays usable
+    r = c.post("/runs", data={"objective": "Find US B2B SaaS companies with 10 to 100 employees",
+                              "idempotency_key": str(uuid.uuid4()), "csrf_token": auth.csrf_token_for(MEMBER.user_id)},
+               headers={"HX-Request": "true"})
+    assert r.status_code == 409 and "already in progress" in r.text and "/runs/00000000-0000-0000-0000-00000000abcd" in r.text
+
+
+def test_exports_are_disabled_for_a_run_with_no_leads(client_as, a_run, monkeypatch):
+    c = client_as(ADMIN)
+    monkeypatch.setattr(db, "lead_counts", lambda run_id: {})
+    monkeypatch.setattr(db, "list_leads", lambda run_id: [])
+    for tab in ("summary", "leads"):
+        html = c.get(f"/runs/{a_run['id']}/tab/{tab}").text
+        assert "export.csv" not in html and "Nothing to export" in html, tab

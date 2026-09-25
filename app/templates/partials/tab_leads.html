@@ -11,8 +11,7 @@
     {% endfor %}
   </div>
   <div class="row">
-    <a class="btn small" href="/runs/{{ run.id }}/export.csv">Download CSV</a>
-    <a class="btn small" href="/runs/{{ run.id }}/export.json">Download sample pack (JSON)</a>
+    {% set has_leads = leads | length > 0 %}{% set size = "small" %}{% include "partials/export_buttons.html" %}
   </div>
 </div>
 {% set shown = leads if not filter else leads | selectattr("qualification_status", "equalto", filter) | list %}

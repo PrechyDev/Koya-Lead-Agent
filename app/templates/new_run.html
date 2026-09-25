@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% set active_nav = "runs" %}
+{% set active_nav = "new" %}
 {% block title %}New research run · Koya Lead Research Agent{% endblock %}
 {% block content %}
 <p><a class="btn small" href="/">← All runs</a></p>
@@ -46,10 +46,7 @@
       limits. To run full searches, set <span class="mono">DEV_LIMITS=false</span> where the app is hosted and restart it.</p>
     {% endif %}
     <div class="row">
-      {% if active %}
-      <button id="start-run" class="btn primary" type="submit" disabled data-locked aria-describedby="start-run-reason">Start research run</button>
-      <span id="start-run-reason" class="disabled-reason">A run is in progress. <a href="/runs/{{ active.id }}">View it</a>. Only one runs at a time.</span>
-      {% elif mine_today >= daily_cap %}
+      {% if mine_today >= daily_cap %}
       <button id="start-run" class="btn primary" type="submit" disabled data-locked aria-describedby="start-run-reason">Start research run</button>
       <span id="start-run-reason" class="disabled-reason">You've used your {{ daily_cap }} runs for today.</span>
       {% else %}

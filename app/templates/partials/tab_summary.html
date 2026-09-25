@@ -46,7 +46,6 @@
 </div>
 {% endif %}
 <div class="row" style="margin-top: 12px;">
-  <a class="btn" href="/runs/{{ run.id }}/export.csv">Download CSV</a>
-  <a class="btn" href="/runs/{{ run.id }}/export.json">Download sample pack (JSON)</a>
+  {% set has_leads = counts.values() | sum > 0 %}{% set size = "" %}{% include "partials/export_buttons.html" %}
 </div>
 {% endblock %}

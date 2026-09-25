@@ -7,7 +7,9 @@
   <h1>Spend</h1>
   <div class="bar {% if pct >= 90 %}full{% elif pct >= 70 %}warn{% endif %}" role="progressbar" aria-valuenow="{{ pct }}" aria-valuemin="0" aria-valuemax="100"><span style="width: {{ [pct, 100] | min }}%"></span></div>
   <p class="nums">{{ spent | money }} of {{ budget | money }} Claude budget used (estimated). New runs are refused before any spend if they could go over.</p>
-  <p class="help">Claude cost is estimated from the token usage Anthropic reports for each call, priced with the published rates. The Anthropic Console (Usage page) shows the actual bill.</p>
+  <p class="help">Claude cost is estimated from the token usage Anthropic reports for each call, priced with the published rates. The Anthropic Console (Usage page) shows the actual bill.
+    {% if member.is_developer %}The budget is <span class="mono">CLAUDE_BUDGET_TOTAL_USD</span> where the app is hosted; "used" is the total of the spend ledger, including development and tests.
+    {% else %}The budget is set by your developer; ask them to change it.{% endif %}</p>
 </section>
 
 <section class="card">
