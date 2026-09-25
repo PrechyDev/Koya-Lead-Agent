@@ -43,6 +43,7 @@
       <div class="msg">{{ open_issues }} system issue{{ 's' if open_issues != 1 }} need{{ 's' if open_issues == 1 }} attention (e.g. a service out of credit). <a href="/system">View and fix</a></div></div>
     {% endif %}
     <div id="system-message" role="status" aria-live="polite">{% block banner %}{% endblock %}</div>
+    {% if member %}<div id="run-notice" hx-get="/me/run-notice?here={{ request.url.path | urlencode }}" hx-trigger="load, every 15s" hx-swap="innerHTML"></div>{% endif %}
     {% block content %}{% endblock %}
   </main>
   <div id="drawer"></div>

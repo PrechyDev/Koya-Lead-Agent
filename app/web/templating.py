@@ -32,7 +32,8 @@ STATUS_BADGES = {
     "needs_clarification": ("warning", "Needs clarification"), "awaiting_confirmation": ("warning", "Waiting for you"),
     "discovering": ("info", "Discovering"), "researching": ("info", "Researching"), "drafting": ("info", "Drafting"),
     "finalizing": ("info", "Finalizing"), "completed": ("success", "✓ Completed"),
-    "completed_partial": ("warning", "Partial"), "failed": ("danger", "✕ Failed"), "cancelled": ("neutral", "Cancelled"),
+    "completed_partial": ("warning", "Partial"), "paused": ("warning", "⏸ Paused"), "failed": ("danger", "✕ Failed"),
+    "cancelled": ("neutral", "Cancelled"),
     "superseded": ("neutral", "Replaced"),
 }
 

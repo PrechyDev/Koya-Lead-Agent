@@ -39,6 +39,7 @@ from app.lib.qualification_rules import (
     invalid_sources,
     prescreen,
 )
+from app.lib.resume import settle_headcount
 from app.lib.sanitize import contains_contact_details, redact, redact_obj, wrap_untrusted
 from app.lib.scoring import compute_fit_score, decide
 from app.lib.triage import (
@@ -622,6 +623,10 @@ def build_handlers(ctx: RunContext) -> dict:
         if not parsed.source_urls:
             return failure("source_urls must list at least one URL you used.", allowed_source_urls=allowed)
 
+        discovery = lead.get("discovery_data") or {}
+        settled = settle_headcount([c.model_dump() for c in parsed.hard_filter_checks], (ctx.icp or {}).get(
+            "headcount_range"), discovery.get("employee_count_range"), lead.get("linkedin_url"))
+        parsed.hard_filter_checks = [HardFilterCheck(**c) for c in settled]  # size band overlap = pass (D-100)
         required_disq = list((ctx.icp or {}).get("disqualifiers") or [])
         # The fit score is computed by code from the recorded evidence (D-48), never chosen by the model.
         score = compute_fit_score(

@@ -1,0 +1,15 @@
+{#- Your latest run, on every other page (D-101): running -> a quiet line; just finished -> a banner with a link.
+    Polled every 15 s only while it runs (the route answers 286 to stop). Hidden on the run's own page. -#}
+{% if notice_run %}
+{% set b = badge(notice_run.status) %}
+{% if notice_run.status in ACTIVE %}
+<p class="small run-notice"><span class="spinner" aria-hidden="true"></span> Your search is running: <b>{{ notice_run.objective[:70] }}{% if notice_run.objective | length > 70 %}…{% endif %}</b>.
+  <a href="/runs/{{ notice_run.id }}">View</a></p>
+{% else %}
+{% set q = (notice_run.usage or {}).get('qualified', 0) %}
+{% set kind = "success" if notice_run.status == "completed" else "info" %}
+{% set dismiss_key = "notice:" ~ notice_run.id %}
+{% set message_html = "Your search finished" ~ (": <b>" ~ q ~ " qualified lead" ~ ("" if q == 1 else "s") ~ "</b>" if notice_run.status in ("completed", "completed_partial") else " (" ~ b[1] ~ ")") ~ '. <a href="/runs/' ~ notice_run.id ~ '">View results</a>' %}
+{% include "partials/banner.html" %}
+{% endif %}
+{% endif %}

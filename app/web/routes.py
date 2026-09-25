@@ -11,7 +11,7 @@ from urllib.parse import urlencode
 import jwt
 import psycopg
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
 
 from app import alerts, auth, db
 from app.agent.runner import AGENT_CANNOT_START, agent_can_start
@@ -21,6 +21,7 @@ from app.failures import CATALOGUE, ServiceFailure, admin_message_from_detail, m
 from app.lib.budget import MAX_BUDGET_USD, BudgetExceeded, assert_run_fits, monthly_statement, runs_left
 from app.lib.icp_defaults import MAX_LEAD_COUNT
 from app.lib.objective import objective_hash, objective_problem
+from app.lib.resume import RESUMABLE, continue_cap, continue_plan
 from app.lib.spend_breakdown import breakdown
 from app.lib.validation import EMAIL_HINT, MIN_PASSWORD_LENGTH, csv_cell, is_valid_email, safe_next
 from app.main import limiter
@@ -287,6 +288,19 @@ def _history_url(*, status: str = "", q: str = "", mine: bool = False, page: int
     return "/" + ("?" + urlencode(params) if params else "")
 
 
+@router.get("/me/run-notice", response_class=HTMLResponse)
+async def run_notice(request: Request, here: str = "", member: Member = Depends(current_member)):
+    """Your latest run on every other page (D-101): a quiet line while it runs, a banner once it's done.
+    Answers 286 (HTMX: stop polling) when nothing of yours is running."""
+    run = await db.run(db.latest_run_of, member.user_id)
+    if run and here.rstrip("/") == f"/runs/{run['id']}":
+        run = None  # the run's own page already shows it live
+    response = templates.TemplateResponse(request, "partials/run_notice.html", _ctx(request, notice_run=run))
+    if not run or run["status"] not in ACTIVE:
+        response.status_code = 286
+    return response
+
+
 @router.get("/runs/new", response_class=HTMLResponse)  # declared before /runs/{run_id}, or "new" would be an id
 async def new_run_page(request: Request, objective: str = "", member: Member = Depends(current_member)):
     settings = get_settings()  # a run already in progress is reported when Start is pressed (409 banner, D-93)
@@ -395,7 +409,9 @@ async def run_live(request: Request, run_id: str, member: Member = Depends(curre
         request, run=run, steps=stepper(run["status"], _last_active_step(run), run.get("usage")),
         can_control=_can_control(member, run), duplicate=duplicate, follow_up=follow_up,
         drafted=await db.run(db.drafted_count, run_id) if run["status"] == "completed_partial" else 0,
-        tech_message=admin_message_from_detail(run.get("error_detail")) if member.is_developer else None))
+        tech_message=admin_message_from_detail(run.get("error_detail")) if member.is_developer else None,
+        plan=continue_plan(run, await db.run(db.list_leads, run_id)) if run["status"] in RESUMABLE else None,
+        refine_url="/runs/new?" + urlencode({"objective": run["objective"]})))
     if run["status"] not in ACTIVE:
         response.status_code = 286  # HTMX: stop polling
     return response
@@ -409,7 +425,11 @@ async def run_tab(request: Request, run_id: str, name: str, status: str = "", me
         template = "partials/tab_icp.html"
     elif name == "leads":
         ctx["leads"] = await db.run(db.list_leads, run_id)
-        ctx["filter"] = status if status in {"qualified", "needs_review", "not_qualified", "pending"} else ""
+        wanted = status if status in {"qualified", "needs_review", "not_qualified", "pending", "all"} else None
+        if wanted is None:  # first open: clients see the qualified leads, then the possible fits (D-100)
+            have = {lead["qualification_status"] for lead in ctx["leads"]}
+            wanted = "all" if member.is_developer else next((k for k in ("qualified", "needs_review") if k in have), "all")
+        ctx["filter"] = "" if wanted == "all" else wanted
         template = "partials/tab_leads.html"
     elif name == "calls":
         if not member.is_developer:  # checked on the server, not just hidden (D-90)
@@ -452,6 +472,39 @@ async def confirm_repeat(request: Request, run_id: str, choice: str = Form(...),
         return _banner(request, "warning", "Another run is in progress. Try again when it finishes.", 409)
     await db.run(db.update_run, run_id, repeat_choice=choice, cross_run_dedupe=(choice == "find_new"),
                  status="queued", status_detail="Continuing with research")
+    manager.start(run_id, skip_icp=True)
+    return Response(status_code=204, headers={"HX-Redirect": f"/runs/{run_id}"})
+
+
+@router.post("/runs/{run_id}/continue")
+@limiter.limit("10/minute")
+async def continue_run(request: Request, run_id: str, csrf_token: str = Form(""),
+                       member: Member = Depends(current_member)):
+    """Carry a stopped run on from where it stopped (D-100). The budget is handled here; the person only sees
+    Continue, or "not enough AI budget" with who to ask."""
+    _check_csrf(request, member, csrf_token)
+    run = await db.run(_get_run_or_404, run_id)
+    if not _can_control(member, run):
+        raise HTTPException(status_code=403, detail="Only the person who started this run, or an admin, can continue it.")
+    plan = continue_plan(run, await db.run(db.list_leads, run_id))
+    if not plan:
+        return _banner(request, "info", "There's nothing left to continue in this run. Refine the objective to "
+                                        "search again.")
+    await db.run(db.fail_orphaned_runs)
+    if await db.run(db.active_run) or manager.active_count():
+        return _banner(request, "warning", "Another run is in progress. Continue this one when it finishes.", 409)
+    cap = continue_cap(run, plan)
+    try:
+        assert_run_fits(await db.run(db.total_spend), cap - float(run["cost_usd"] or 0), await db.run(db.claude_budget))
+    except BudgetExceeded:
+        who = ("Add to the budget on the Spend page." if member.is_developer else
+               "Ask your developer for more budget on the Spend page." if member.is_admin else
+               "Ask an admin to request more budget.")
+        return _banner(request, "warning", f"There isn't enough AI budget left to continue this run. {who}", 402)
+    await db.run(db.set_target_qualified, run_id, int(run["limits"]["target_qualified"]), cap)
+    await db.run(db.update_run, run_id, status="queued", status_detail="Continuing from where it stopped",
+                 finished_at=None, error_message=None, error_detail=None, shortfall_reason=None, summary=None,
+                 quality_scorecard=None)
     manager.start(run_id, skip_icp=True)
     return Response(status_code=204, headers={"HX-Redirect": f"/runs/{run_id}"})
 
@@ -507,47 +560,76 @@ async def review_lead(request: Request, lead_id: str, review_status: str = Form(
     return response
 
 
+@router.post("/leads/{lead_id}/decide")
+@limiter.limit("30/minute")
+async def decide_lead(request: Request, lead_id: str, decision: str = Form(...), note: str = Form(""),
+                      csrf_token: str = Form(""), member: Member = Depends(current_member)):
+    """A person settles a lead the AI couldn't ("needs review", D-100). The AI's evidence stays; the decision,
+    who and when are recorded next to it. Qualifying it lets the run write its drafts (Continue)."""
+    _check_csrf(request, member, csrf_token)
+    _require_uuid(lead_id, "Lead")
+    if decision not in {"qualified", "not_qualified"}:
+        raise HTTPException(status_code=400, detail="Unknown decision.")
+    lead = await db.run(db.get_lead, lead_id)
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found.")
+    if lead["qualification_status"] != "needs_review":
+        return _banner(request, "info", "This lead has already been decided.", 400)
+    await db.run(db.update_lead, lead_id, qualification_status=decision, human_decision=decision,
+                 human_decision_by=member.user_id, human_decision_at=datetime.now().astimezone(),
+                 human_decision_note=note.strip()[:1000] or None)
+    run_id = str(lead["run_id"])
+    await db.run(db.add_usage, run_id, "needs_review", -1)
+    await db.run(db.add_usage, run_id, decision, 1)
+    lead = await db.run(db.get_lead, lead_id)
+    run = await db.run(db.get_run, run_id)
+    response = templates.TemplateResponse(request, "partials/lead_detail.html", _ctx(
+        request, lead=lead, run_status=run["status"],
+        flash=f"Saved: {'qualified' if decision == 'qualified' else 'not a fit'} by {member.full_name}."))
+    response.headers["HX-Trigger"] = "leadReviewed"
+    return response
+
+
 # ---------------------------------------------------------------------------
 # Exports
 # ---------------------------------------------------------------------------
 @router.get("/runs/{run_id}/export.csv")
 async def export_csv(request: Request, run_id: str, member: Member = Depends(current_member)):
+    """The outreach sample pack as one CSV (PRD, D-100): per qualified lead, the objective, the company, the
+    qualification reasoning with its sources, and the drafts. Drafts leave the app only once a person approved
+    them (rule 12); otherwise the row says so."""
     run = await db.run(_get_run_or_404, run_id)
     leads = [lead for lead in await db.run(db.list_leads, run_id) if lead["qualification_status"] == "qualified"]
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["company_name", "company_domain", "confidence", "fit_reasons", "concerns", "source_urls",
-                     "source_summary", "outreach_status", "review_status", "reviewed_by"])
+    writer.writerow(["objective", "company_name", "company_domain", "website", "linkedin_url", "fit_score",
+                     "qualification_reasoning", "exclusions_checked", "fit_reasons", "concerns", "source_summary",
+                     "source_urls", "decided_by", "review_status", "reviewed_by", "reviewed_at", "reviewer_note",
+                     "email_1_subject", "email_1_body", "email_2_subject", "email_2_body", "email_3_subject",
+                     "email_3_body", "linkedin_message"])
     for lead in leads:
+        approved = lead["review_status"] == "approved"
+        steps = sorted(lead["email_sequence"] or [], key=lambda st: st.get("step", 0)) if approved else []
+        emails = [x for st in steps[:3] for x in (st.get("subject", ""), st.get("body", ""))]
+        not_yet = "not approved yet" if lead["outreach_status"] == "drafted" else "no drafts yet"
+        emails = (emails + [""] * 6)[:6] if approved else [not_yet] * 6
+        reasoning = " | ".join(f"{'✓' if c.get('result') == 'pass' else '✕' if c.get('result') == 'fail' else '?'} "
+                               f"{c.get('filter')}: {c.get('evidence', '')}" for c in lead["hard_filter_checks"] or [])
+        exclusions = " | ".join(f"{c.get('disqualifier')}: {'applies' if c.get('applies') == 'yes' else 'no'}"
+                                for c in lead["disqualifier_checks"] or [])
         writer.writerow([csv_cell(v) for v in (
-            lead["company_name"], lead["company_domain"], lead["confidence"], " | ".join(lead["fit_reasons"] or []),
-            " | ".join(lead["concerns"] or []), " ".join(lead["source_urls"] or []), lead["source_summary"],
-            lead["outreach_status"], lead["review_status"], lead.get("reviewed_by_name") or "")])
-    name = f"qualified-leads-{str(run['id'])[:8]}.csv"
+            run["objective"], lead["company_name"], lead["company_domain"],
+            (lead.get("discovery_data") or {}).get("website") or f"https://{lead['company_domain']}",
+            lead.get("linkedin_url") or "", lead["confidence"], reasoning, exclusions,
+            " | ".join(lead["fit_reasons"] or []), " | ".join(lead["concerns"] or []), lead["source_summary"],
+            " ".join(lead["source_urls"] or []), "a person" if lead.get("human_decision") else "the AI (evidence-based)",
+            lead["review_status"], lead.get("reviewed_by_name") or "",
+            lead["reviewed_at"].strftime("%Y-%m-%d %H:%M UTC") if lead.get("reviewed_at") else "",
+            lead.get("reviewer_note") or "", *emails,
+            lead["linkedin_message"] if approved else not_yet)])
+    name = f"outreach-sample-pack-{str(run['id'])[:8]}.csv"
     return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv",
                              headers={"Content-Disposition": f'attachment; filename="{name}"'})
-
-
-@router.get("/runs/{run_id}/export.json")
-async def export_json(request: Request, run_id: str, member: Member = Depends(current_member)):
-    run = await db.run(_get_run_or_404, run_id)
-    leads = [lead for lead in await db.run(db.list_leads, run_id) if lead["qualification_status"] == "qualified"]
-    pack = {
-        "run_id": str(run["id"]), "objective": run["objective"], "icp": run["icp"], "status": run["status"],
-        "exported_at": datetime.now().astimezone().isoformat(),
-        "note": "Drafts are included only for leads a human approved. Nothing here has been sent.",
-        "leads": [{
-            "company_name": lead["company_name"], "company_domain": lead["company_domain"], "confidence": lead["confidence"],
-            "qualification": {"hard_filter_checks": lead["hard_filter_checks"], "fit_reasons": lead["fit_reasons"],
-                              "concerns": lead["concerns"]},
-            "source_context": {"source_urls": lead["source_urls"], "source_summary": lead["source_summary"]},
-            "review_status": lead["review_status"], "reviewed_by": lead.get("reviewed_by_name"),
-            "email_sequence": lead["email_sequence"] if lead["review_status"] == "approved" else "not approved",
-            "linkedin_message": lead["linkedin_message"] if lead["review_status"] == "approved" else "not approved",
-        } for lead in leads],
-    }
-    return JSONResponse(db.to_jsonable(pack), headers={
-        "Content-Disposition": f'attachment; filename="sample-pack-{str(run["id"])[:8]}.json"'})
 
 
 # ---------------------------------------------------------------------------

@@ -50,7 +50,7 @@ async def test_a_shutdown_marks_the_run_interrupted_not_cancelled_by_a_user(stat
     await asyncio.sleep(0)
     await m.shutdown()  # waits (up to SHUTDOWN_GRACE_S) for the status write
     args, _ = status_log[-1]
-    assert args[1] == "failed" and "Interrupted by server restart" in args[2]
+    assert args[1] == "paused" and "server restarted" in args[2]  # can be continued (D-100)
 
 
 # --- auth: a rejected refresh token is cleared; a network problem is not -------------------------------------

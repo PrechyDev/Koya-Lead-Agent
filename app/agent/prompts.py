@@ -79,6 +79,21 @@ COPYWRITER_PROMPT = f"""You write review-ready cold outreach for ONE qualified c
 {SAFETY_CORE}"""
 
 
+def orchestrator_continue_prompt(run: dict, left: dict) -> str:
+    """A run that stopped early is continued (D-100): finish what's left instead of starting over."""
+    limits = run.get("limits") or {}
+    brief = {
+        "objective": run.get("objective"), "target_qualified": limits.get("target_qualified"),
+        "research_these_pending_companies_first": left["pending"],
+        "then_write_drafts_for_these_qualified_leads": left["undrafted"],
+        "qualified_leads_still_needed": left["still_needed"], "may_search_for_more": left["can_search"],
+    }
+    return ("Continue this research run from where it stopped; everything saved so far is kept. Do NOT research "
+            "a company again. Work through the brief in order (one subagent at a time), search for more companies "
+            "only if qualified leads are still needed and searching is allowed, then call finish_run. Run brief:\n"
+            "```json\n" + json.dumps(brief, ensure_ascii=False, indent=1) + "\n```")
+
+
 def orchestrator_user_prompt(run: dict) -> str:
     icp = run.get("icp") or {}
     limits = run.get("limits") or {}

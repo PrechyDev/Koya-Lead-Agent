@@ -46,6 +46,6 @@
 </div>
 {% endif %}
 <div class="row" style="margin-top: 12px;">
-  {% set has_leads = counts.values() | sum > 0 %}{% set size = "" %}{% include "partials/export_buttons.html" %}
+  {% set has_leads = counts.get('qualified', 0) > 0 %}{% set size = "" %}{% include "partials/export_buttons.html" %}
 </div>
 {% endblock %}

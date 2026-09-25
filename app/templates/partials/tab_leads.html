@@ -4,17 +4,25 @@
 {% for l in leads %}{% set _ = counts.update({l.qualification_status: counts.get(l.qualification_status, 0) + 1}) %}{% endfor %}
 <div class="row between" style="margin-bottom: 10px;">
   <div class="chips" role="group" aria-label="Filter leads">
-    {% for key, label in [("", "All"), ("qualified", "Qualified"), ("needs_review", "Needs review"), ("not_qualified", "Not qualified"), ("pending", "Pending")] %}
+    {% set chips = [("qualified", "Qualified"), ("needs_review", "Needs review"), ("not_qualified", "Not qualified"), ("pending", "Pending"), ("", "All")]
+       if member and member.is_developer else [("qualified", "Qualified"), ("needs_review", "Possible fits to check"), ("", "All companies checked")] %}
+    {% for key, label in chips %}
     <button type="button" class="chip" aria-pressed="{{ 'true' if filter == key else 'false' }}"
-      hx-get="/runs/{{ run.id }}/tab/leads{% if key %}?status={{ key }}{% endif %}" hx-target="#tab-panel" hx-swap="outerHTML">
+      hx-get="/runs/{{ run.id }}/tab/leads?status={{ key or 'all' }}" hx-target="#tab-panel" hx-swap="outerHTML">
       {{ label }} ({{ leads | length if not key else counts.get(key, 0) }})</button>
     {% endfor %}
   </div>
   <div class="row">
-    {% set has_leads = leads | length > 0 %}{% set size = "small" %}{% include "partials/export_buttons.html" %}
+    {% set has_leads = counts.get('qualified', 0) > 0 %}{% set size = "small" %}{% include "partials/export_buttons.html" %}
   </div>
 </div>
 {% set shown = leads if not filter else leads | selectattr("qualification_status", "equalto", filter) | list %}
+{% if run.status not in ACTIVE and not counts.get('qualified') and leads %}
+<div class="callout info" style="margin-bottom: 10px;">
+  <b>No qualified leads in this search.</b> {% if counts.get('needs_review') %}{{ counts.get('needs_review') }} possible fit{{ 's' if counts.get('needs_review') != 1 }} can be checked by you: open one and choose Qualify or Not a fit. {% endif %}
+  Or <a href="/runs/new?objective={{ run.objective | urlencode }}">refine the objective and search again</a> (e.g. name the product or customer type).
+</div>
+{% endif %}
 {% if shown %}
 <div class="table-wrap">
   <table>

@@ -115,10 +115,8 @@ def test_run_page_live_tabs_and_exports(client_as, a_run):
         assert t.status_code in (200, 286), tab
         assert 'id="tab-panel"' in t.text
     csv = c.get(f"/runs/{rid}/export.csv")
-    assert csv.status_code == 200 and csv.text.startswith("company_name,company_domain")
-    pack = c.get(f"/runs/{rid}/export.json").json()
-    assert pack["run_id"] == str(rid)
-    assert all(lead["email_sequence"] == "not approved" or lead["review_status"] == "approved" for lead in pack["leads"])
+    assert csv.status_code == 200 and csv.text.startswith("objective,company_name,company_domain,website,linkedin_url")
+    assert c.get(f"/runs/{rid}/export.json").status_code == 404  # one export: the CSV sample pack (D-100)
 
 
 def test_lead_drawer_and_review_rules(client_as, admin_dsn):
@@ -763,3 +761,148 @@ def test_cancel_button_survives_the_status_refresh(client_as, monkeypatch):
     monkeypatch.setattr(routes, "_get_run_or_404", lambda run_id: run)
     html = client_as(DEVELOPER).get(f"/runs/{run['id']}/live").text
     assert 'id="cancel-run" hx-preserve' in html
+
+
+
+# --- continue a stopped run; a person decides "needs review"; the CSV is the sample pack (D-100) -----------------
+def _lead(**kw):
+    base = {"company_domain": "a.com", "qualification_status": "pending", "outreach_status": "not_drafted"}
+    return {**base, **kw}
+
+
+def test_continue_plan_says_what_is_left():
+    from app.lib.resume import continue_cap, continue_plan
+    run = {"status": "paused", "icp": {"x": 1}, "cost_usd": 0.50,
+           "usage": {"candidates_found": 5, "discovery_calls": 1},
+           "limits": {"target_qualified": 3, "max_candidates": 20, "max_discovery_calls": 3, "max_budget_usd": 1.43}}
+    leads = [_lead(company_domain="p1.com"), _lead(company_domain="p2.com"),
+             _lead(company_domain="q.com", qualification_status="qualified")]
+    plan = continue_plan(run, leads)
+    assert plan["label"] == "Continue: research 2 remaining companies" and plan["undrafted"] == ["q.com"]
+    only_drafts = [_lead(company_domain=d, qualification_status="qualified") for d in ("q1.com", "q2.com", "q3.com")]
+    assert continue_plan(run, only_drafts)["label"] == "Continue: write drafts for 3 leads"
+    assert continue_plan({**run, "status": "failed"}, leads)["label"].startswith("Retry: ")
+    assert continue_plan({**run, "status": "completed"}, leads) is None  # finished runs aren't continued
+    done = {**run, "usage": {"candidates_found": 20, "discovery_calls": 3}}
+    assert continue_plan(done, [_lead(qualification_status="not_qualified")]) is None  # nothing left: refine
+    assert continue_cap({**run, "cost_usd": 1.40}, plan) > 1.43  # cap used up: a new cap on top of what was spent
+    rich = {**run, "limits": {**run["limits"], "max_budget_usd": 5.00}}
+    assert continue_cap(rich, plan) == 5.00  # enough of the cap left: keep it
+
+
+def test_size_band_overlap_settles_unknown_headcount():
+    from app.lib.resume import settle_headcount
+    checks = [{"filter": "20-80 employees", "result": "unknown", "evidence": "LinkedIn gives a band"},
+              {"filter": "Headquartered in the United States", "result": "unknown", "evidence": ""}]
+    out = settle_headcount(checks, "20-80", {"start": 11, "end": 50}, "https://www.linkedin.com/company/x/")
+    assert out[0]["result"] == "pass" and "11-50 overlaps 20-80" in out[0]["evidence"]
+    assert out[1]["result"] == "unknown"  # only the size filter
+    assert settle_headcount(checks, "20-80", {"start": 201, "end": 500}, None)[0]["result"] == "unknown"
+
+
+def test_continue_route_restarts_the_run_and_hides_the_money(client_as, monkeypatch):
+    from decimal import Decimal
+
+    from app.web import routes
+    run = {"id": uuid.uuid4(), "status": "paused", "icp": {"a": 1}, "objective": "o", "created_by": MEMBER.user_id,
+           "cost_usd": 0.2, "usage": {"candidates_found": 2, "discovery_calls": 1},
+           "limits": {"target_qualified": 1, "max_candidates": 5, "max_discovery_calls": 2, "max_budget_usd": 0.72}}
+    monkeypatch.setattr(routes, "_get_run_or_404", lambda rid: run)
+    monkeypatch.setattr(db, "list_leads", lambda rid: [_lead(company_domain="p.com")])
+    monkeypatch.setattr(db, "active_run", lambda: None)
+    monkeypatch.setattr(db, "fail_orphaned_runs", lambda: 0)
+    saved, started = [], []
+    monkeypatch.setattr(db, "set_target_qualified", lambda rid, t, cap: saved.append(cap) or {})
+    monkeypatch.setattr(db, "update_run", lambda rid, **f: saved.append(f["status"]) or {})
+    monkeypatch.setattr(routes.manager, "start", lambda rid, skip_icp=False: started.append(skip_icp))
+
+    def post(who):
+        return client_as(who).post(f"/runs/{run['id']}/continue", headers={"HX-Request": "true"},
+                                   data={"csrf_token": auth.csrf_token_for(who.user_id)})
+    r = post(MEMBER)
+    assert r.status_code == 204 and started == [True] and saved[-1] == "queued"
+    monkeypatch.setattr(db, "claude_budget", lambda: Decimal("0"))  # no money left
+    r = post(MEMBER)
+    assert r.status_code == 402 and "Ask an admin" in r.text and "$" not in r.text  # plain words, no numbers
+
+
+def test_a_person_decides_a_needs_review_lead(client_as, admin_dsn):
+    """Real throwaway run + lead; the decider must be a real member (the decision is linked to them)."""
+    import psycopg
+
+    from app.config import DEV_LIMITS
+    owner = db.fetch_one("select user_id, full_name from lead_agent.members where is_owner")
+    who = Member(user_id=str(owner["user_id"]), email="o@example.invalid", full_name=owner["full_name"],
+                 role="member", is_owner=False)
+    run, _ = db.create_run(idempotency_key=f"test-{uuid.uuid4()}", objective="decide test objective",
+                           objective_hash="h" + uuid.uuid4().hex, limits=DEV_LIMITS.to_dict(), run_kind="dev")
+    lead = db.insert_lead_if_new(str(run["id"]), company_name="Decide Test", company_domain="decide-webtest.com",
+                                 linkedin_url=None, discovery_data={}, prescreen_result="passed", prescreen_reason="",
+                                 qualification_status="needs_review", fetched_urls=[])
+    db.add_usage(str(run["id"]), "needs_review", 1)
+    try:
+        c, token = client_as(who), auth.csrf_token_for(who.user_id)
+        assert "Your call" in c.get(f"/leads/{lead['id']}").text
+        r = c.post(f"/leads/{lead['id']}/decide", headers={"HX-Request": "true"},
+                   data={"decision": "qualified", "note": "They sell SaaS", "csrf_token": token})
+        saved = db.get_lead(str(lead["id"]))
+        assert r.status_code == 200 and "Write drafts for this lead" in r.text and "Decided by a person" in r.text
+        assert saved["qualification_status"] == "qualified" and str(saved["human_decision_by"]) == who.user_id
+        usage = db.get_run(str(run["id"]))["usage"]
+        assert usage["needs_review"] == 0 and usage["qualified"] == 1
+        again = c.post(f"/leads/{lead['id']}/decide", headers={"HX-Request": "true"},
+                       data={"decision": "not_qualified", "csrf_token": token})
+        assert again.status_code == 400  # decided once
+    finally:
+        with psycopg.connect(admin_dsn, prepare_threshold=None, autocommit=True) as conn:
+            conn.execute("delete from lead_agent.leads where run_id = %s", (run["id"],))
+            conn.execute("delete from lead_agent.runs where id = %s", (run["id"],))
+
+
+def test_sample_pack_csv_has_drafts_only_once_approved(client_as, monkeypatch):
+    from app.web import routes
+    run = {"id": uuid.uuid4(), "objective": "Find clinics software"}
+    steps = [{"step": i, "subject": f"S{i}", "body": f"B{i}"} for i in (1, 2, 3)]
+    base = {"qualification_status": "qualified", "company_name": "A", "company_domain": "a.com", "linkedin_url": "L",
+            "confidence": 0.8, "hard_filter_checks": [{"filter": "US", "result": "pass", "evidence": "HQ Austin"}],
+            "disqualifier_checks": [], "fit_reasons": ["r"], "concerns": [], "source_summary": "s", "source_urls": ["u"],
+            "email_sequence": steps, "linkedin_message": "Hi", "outreach_status": "drafted", "discovery_data": {}}
+    monkeypatch.setattr(routes, "_get_run_or_404", lambda rid: run)
+    monkeypatch.setattr(db, "list_leads", lambda rid: [
+        {**base, "review_status": "approved", "reviewed_at": None},
+        {**base, "company_domain": "b.com", "review_status": "pending_review", "reviewed_at": None}])
+    text = client_as(MEMBER).get(f"/runs/{run['id']}/export.csv").text
+    approved, pending = text.splitlines()[1], text.splitlines()[2]
+    assert "Find clinics software" in approved and "S1,B1,S2,B2,S3,B3,Hi" in approved and "US: HQ Austin" in approved
+    assert "S1" not in pending and pending.count("not approved yet") == 7  # 6 email fields + LinkedIn
+
+
+def test_clients_open_on_qualified_leads(client_as, a_run, monkeypatch):
+    leads = [_lead(company_domain="q.com", qualification_status="qualified", company_name="Q", id=uuid.uuid4(),
+                   confidence=0.9, review_status="pending_review"),
+             _lead(company_domain="n.com", qualification_status="not_qualified", company_name="N", id=uuid.uuid4(),
+                   confidence=0.1, review_status="pending_review")]
+    monkeypatch.setattr(db, "list_leads", lambda rid: leads)
+    member_view = client_as(MEMBER).get(f"/runs/{a_run['id']}/tab/leads").text
+    assert "q.com" in member_view and "n.com" not in member_view and "All companies checked" in member_view
+    assert "Pending" not in member_view
+    dev_view = client_as(DEVELOPER).get(f"/runs/{a_run['id']}/tab/leads").text
+    assert "q.com" in dev_view and "n.com" in dev_view  # developers see everything
+
+
+
+# --- your run, from any page (D-101) ------------------------------------------------------------------------------
+def test_run_notice_follows_your_run_from_other_pages(client_as, monkeypatch):
+    rid = uuid.uuid4()
+    run = {"id": rid, "objective": "Find clinic software companies", "status": "researching", "usage": {}}
+    monkeypatch.setattr(db, "latest_run_of", lambda uid: run)
+    c = client_as(MEMBER)
+    r = c.get("/me/run-notice?here=/team")
+    assert r.status_code == 200 and "Your search is running" in r.text and f"/runs/{rid}" in r.text  # keeps polling
+    assert c.get(f"/me/run-notice?here=/runs/{rid}").text.strip() == ""  # not on the run's own page
+    run.update(status="completed", usage={"qualified": 4})
+    r = c.get("/me/run-notice?here=/")
+    assert r.status_code == 286 and "finished: <b>4 qualified leads</b>" in r.text and "View results" in r.text
+    assert f'data-dismiss-key="notice:{rid}"' in r.text  # closing it (or opening the run) keeps it closed
+    monkeypatch.setattr(db, "latest_run_of", lambda uid: None)
+    assert c.get("/me/run-notice").status_code == 286  # nothing running: stop polling

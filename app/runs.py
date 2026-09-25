@@ -63,8 +63,9 @@ class RunManager:
         except asyncio.CancelledError:
             if run_id in self._user_cancels:
                 await db.run(db.set_status, run_id, "cancelled", "Cancelled by a user; work saved so far is kept")
-            else:  # the server is stopping (deploy/restart): same outcome as a restart found on boot (E-19)
-                await db.run(db.set_status, run_id, "failed", "Interrupted by server restart; work saved so far is kept",
+            else:  # the server is stopping (deploy/restart): paused, can be continued (E-19, D-100)
+                await db.run(db.set_status, run_id, "paused",
+                             "Stopped when the server restarted; everything found so far is kept",
                              error_message="Interrupted by server restart")
             raise
         finally:

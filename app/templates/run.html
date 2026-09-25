@@ -9,6 +9,7 @@
   </div>
   <div class="objective">{{ run.objective }}</div>
   {% if run.parent_run_id %}<p class="small muted">Follows a clarification on <a href="/runs/{{ run.parent_run_id }}">an earlier run</a>.</p>{% endif %}
+  <span hidden data-mark-seen="notice:{{ run.id }}"></span>
   <div id="run-live" hx-get="/runs/{{ run.id }}/live" hx-trigger="load, every 3s" hx-swap="innerHTML">
     <p class="muted small">Loading run status…</p>
   </div>

@@ -30,7 +30,7 @@ SCHEMA = get_settings().supabase_db_schema
 _pool: ConnectionPool | None = None
 
 RESEARCHED_STATUSES = ("qualified", "not_qualified", "needs_review")
-TERMINAL_STATUSES = ("completed", "completed_partial", "failed", "cancelled", "superseded",
+TERMINAL_STATUSES = ("completed", "completed_partial", "paused", "failed", "cancelled", "superseded",
                      "needs_clarification")
 ACTIVE_STATUSES = ("queued", "refining_icp", "discovering", "researching", "drafting", "finalizing")
 
@@ -46,6 +46,7 @@ LEAD_COLUMNS = {
     "source_summary", "email_sequence", "linkedin_message", "outreach_status", "outreach_attempts",
     "grounding_report", "review_status", "reviewer_note", "reviewed_by", "reviewed_at", "fetched_urls",
     "disqualifier_checks", "soft_preference_checks", "tools_detected", "confidence_breakdown",
+    "human_decision", "human_decision_by", "human_decision_at", "human_decision_note",
 }
 MEMBER_COLUMNS = {"full_name", "role", "is_active", "is_developer"}
 JSON_COLUMNS = {
@@ -178,7 +179,7 @@ RUN_STATUS_GROUPS: dict[str, tuple[str, ...]] = {
     "in_progress": ACTIVE_STATUSES,
     "needs_you": ("awaiting_confirmation", "needs_clarification"),
     "completed": ("completed",),
-    "partial": ("completed_partial",),
+    "partial": ("completed_partial", "paused"),
     "failed": ("failed",),
     "cancelled": ("cancelled", "superseded"),
 }
@@ -366,9 +367,9 @@ def fail_orphaned_runs(stale_minutes: int = ORPHAN_AFTER_MINUTES) -> int:
     """Runs still 'active' whose server stopped touching them (a crash or restart, E-19). Only STALE runs: the
     database is shared, so a laptop starting up must never fail a run another server is still working on (D-99)."""
     rows = fetch_all(
-        f"""update {t('runs')} set status = 'failed', finished_at = now(),
+        f"""update {t('runs')} set status = 'paused', finished_at = now(),
                    error_message = coalesce(error_message, 'Interrupted by server restart'),
-                   status_detail = 'Interrupted by server restart; work saved so far is kept'
+                   status_detail = 'Stopped when the server restarted; everything found so far is kept'
             where status = any(%s) and updated_at < now() - make_interval(mins => %s) returning id""",
         (list(ACTIVE_STATUSES), int(stale_minutes)),
     )
@@ -429,8 +430,9 @@ def insert_lead_if_new(run_id: str, *, company_name: str, company_domain: str, l
 
 def get_lead(lead_id: str) -> dict | None:
     return fetch_one(
-        f"""select l.*, m.full_name as reviewed_by_name from {t('leads')} l
-            left join {t('members')} m on m.user_id = l.reviewed_by where l.id = %s""",
+        f"""select l.*, m.full_name as reviewed_by_name, d.full_name as human_decision_by_name from {t('leads')} l
+            left join {t('members')} m on m.user_id = l.reviewed_by
+            left join {t('members')} d on d.user_id = l.human_decision_by where l.id = %s""",
         (lead_id,),
     )
 
@@ -596,6 +598,15 @@ def monthly_money() -> tuple[dict[str, Decimal], dict[str, Decimal]]:
     added = fetch_all(f"""select to_char(date_trunc('month', changed_at at time zone 'UTC'), 'YYYY-MM') as month,
                                  sum(new_usd - old_usd) as usd from {t('budget_changes')} group by 1""")
     return ({r["month"]: Decimal(str(r["usd"])) for r in spent}, {r["month"]: Decimal(str(r["usd"])) for r in added})
+
+
+def latest_run_of(user_id: str) -> dict | None:
+    """The person's most recent run that is running, or finished in the last 2 hours (the run notice, D-101)."""
+    return fetch_one(
+        f"""select id, objective, status, usage, finished_at from {t('runs')}
+            where created_by = %s and run_kind <> 'eval_record'
+              and (status = any(%s) or finished_at > now() - interval '2 hours')
+            order by created_at desc limit 1""", (user_id, list(ACTIVE_STATUSES)))
 
 
 def open_budget_request() -> dict | None:

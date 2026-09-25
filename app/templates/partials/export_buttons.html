@@ -1,9 +1,8 @@
-{#- The two exports (D-93): disabled, with the reason, when the run has no leads. Needs: run, has_leads, size. -#}
+{#- The export (D-100): the outreach sample pack as one CSV; disabled, with the reason, when there are no leads.
+    Needs: run, has_leads, size. -#}
 {% if has_leads %}
-<a class="btn {{ size }}" href="/runs/{{ run.id }}/export.csv" title="Every lead in this run, for a spreadsheet or CRM">Download CSV</a>
-<a class="btn {{ size }}" href="/runs/{{ run.id }}/export.json" title="The objective, the ICP, each lead's evidence and sources, and the approved drafts">Download sample pack (JSON)</a>
+<a class="btn {{ size }}" href="/runs/{{ run.id }}/export.csv" title="Each qualified lead: the objective, the company and its LinkedIn, the qualification reasoning with sources, the review status and the approved drafts">Download CSV</a>
 {% else %}
 <span class="btn {{ size }}" aria-disabled="true" aria-describedby="no-export-{{ size or 'lg' }}">Download CSV</span>
-<span class="btn {{ size }}" aria-disabled="true" aria-describedby="no-export-{{ size or 'lg' }}">Download sample pack (JSON)</span>
-<span id="no-export-{{ size or 'lg' }}" class="disabled-reason">Nothing to export: this run has no leads.</span>
+<span id="no-export-{{ size or 'lg' }}" class="disabled-reason">Nothing to export: this run has no qualified leads.</span>
 {% endif %}

@@ -54,7 +54,7 @@ The owner is a **Python developer** who knows some TypeScript, and wants to be *
 9. **Apify is a shared $5/person budget.** Use the team token. Only pay-per-event or pay-per-result actors (**never rental**). Test with 1–2 results first. **Never auto-re-run a failed or odd actor run**: stop, check the Apify console, and ask. One owner-approved exception (specs D-76): a run that SUCCEEDED with **0 results** is retried by the code up to 2 times with the identical input (an empty run is billed only the $0.001 start event). Log every real run's cost in progress.md.
 10. **Database:** only the `lead_agent` schema in the existing Supabase project. It is **not** exposed via the Data API. Connect directly (psycopg) through the Session pooler. **Schema-qualify every query** (`lead_agent.runs`); never rely on `search_path`. The deployed app uses the least-privilege `lead_agent_app` role (no DELETE/DROP). The admin DSN is local-only, for migrations. Never touch other schemas (Week 3/4 data lives there).
 11. **No bypassing access controls:** public pages only; never Firecrawl stealth/proxy options; a 401/403/login wall means `needs_review`.
-12. **Drafts leave the app only after human approval** (JSON export includes approved drafts only).
+12. **Drafts leave the app only after human approval** (the CSV sample pack fills drafts only for approved leads; D-100).
 13. **Access:** Supabase Auth logins (Week 4 pattern), with tokens in HttpOnly cookies and verified server-side via JWKS. Roles are `admin` / `member` in `lead_agent.members`, plus an owner-granted `is_developer` flag for the technical view (System issues, tool calls, raw errors; admins never see developers, specs D-90), all checked on the server for every request, never just by hiding UI. Invite-only; nothing is public except `/login`, `/accept-invite`, `/forgot-password`, `/reset-password` and `/health`. Logins are shared across Koya's tools (single sign-on, specs D-63); access is per tool. **Never add a trigger on `auth.users`.** The Supabase anon and service-role keys are server-side only.
 14. **Never touch another project's schema or migrations** (Week 3/4) without showing the owner the exact SQL and getting an OK.
 
@@ -99,11 +99,11 @@ Models are set per role via `MODEL_ORCHESTRATOR`, `MODEL_ICP`, `MODEL_RESEARCHER
                         context.py, logging.py (logged_call), transcripts.py (cost recovery)
   services/             apify.py, firecrawl.py, grounding.py (fact-check), scope.py, triage.py (candidate ranking), health.py (pre-run checks)
   lib/                  pure rules: domain, sanitize, objective, limits, budget, qualification_rules,
-                        scoring, outreach_checks, tech_signals, icp_defaults, validation, spend_breakdown, triage
+                        scoring, outreach_checks, tech_signals, icp_defaults, validation, spend_breakdown, triage, resume
   web/                  routes.py (pages + actions), templating.py
   templates/            pages, partials/ (HTMX fragments), fixtures/ (test pages)
   static/               app.css, app.js, theme.js, htmx.min.js
-/db/migrations          0000_app_role.sql … 0010_spend_source_triage.sql
+/db/migrations          0000_app_role.sql … 0011_paused_and_human_decisions.sql
 /scripts                migrate, create_app_role, bootstrap_owner, dev_run, secret_scan, claude_credit
 /n8n                    alert-email-workflow.json
 /tests                  unit + integration (real DB, paid APIs faked)
@@ -114,7 +114,7 @@ Models are set per role via `MODEL_ORCHESTRATOR`, `MODEL_ICP`, `MODEL_RESEARCHER
 ```
 py -3.12 -m venv .venv && .venv/Scripts/python -m pip install -r requirements.txt   # + pytest pytest-asyncio respx ruff
 .venv/Scripts/python -m uvicorn app.main:app --port 8000            # run locally (NOT --reload on Windows: it can't start the agent CLI)
-.venv/Scripts/python -m pytest -q                                   # 288 tests (real DB, paid APIs faked)
+.venv/Scripts/python -m pytest -q                                   # 295 tests (real DB, paid APIs faked)
 .venv/Scripts/python scripts/migrate.py                             # apply DB migrations (admin DSN, laptop only)
 .venv/Scripts/python scripts/create_app_role.py                     # create/sync the app DB user from the DSN you put in .env
 .venv/Scripts/python scripts/bootstrap_owner.py <email> "<Name>" --owner [--invite]   # give the first admin access

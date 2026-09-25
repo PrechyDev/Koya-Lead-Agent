@@ -47,6 +47,7 @@ from app.config import (
 from app.failures import ServiceFailure, classify_claude_error
 from app.lib.budget import BudgetExceeded, assert_run_fits
 from app.lib.objective import objective_problem
+from app.lib.resume import work_left
 from app.lib.sanitize import redact
 from app.services import health
 from app.services import scope as scope_svc
@@ -429,7 +430,10 @@ async def run_research_phase(run_id: str) -> None:
     session = _Session()
     timeout_s = int(ctx.limits.get("phase_timeout_s", 1800))
     try:
-        result = await _consume(prompts.orchestrator_user_prompt(run), options, session, timeout_s=timeout_s, ctx=ctx)
+        leads = await db.run(db.list_leads, run_id)  # a continued run (D-100) finishes what's left
+        prompt = (prompts.orchestrator_continue_prompt(run, work_left(run, leads)) if leads
+                  else prompts.orchestrator_user_prompt(run))
+        result = await _consume(prompt, options, session, timeout_s=timeout_s, ctx=ctx)
     except PhaseTimeout as exc:
         await db.run(_phase_cost, run_id, "run", session, settings.model_orchestrator, "watchdog timeout")
         await db.run(_refresh_run_cost, run_id)

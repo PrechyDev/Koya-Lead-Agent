@@ -21,6 +21,32 @@
   <div class="body">
     {% if flash %}{% set kind = "success" %}{% set message = flash %}{% include "partials/banner.html" %}{% endif %}
 
+    {% if lead.human_decision %}
+    <p class="small"><span class="badge info">Decided by a person</span> {{ 'Qualified' if lead.human_decision == 'qualified' else 'Not a fit' }}
+      by {{ lead.human_decision_by_name or 'a teammate' }}{% if lead.human_decision_at %}, {{ lead.human_decision_at | ago }}{% endif %}{% if lead.human_decision_note %}: “{{ lead.human_decision_note }}”{% endif %}</p>
+    {% endif %}
+    {% if lead.qualification_status == 'needs_review' %}
+    <section class="card stack">
+      <h3>Your call</h3>
+      <p class="small">The research couldn't settle every requirement from the company's public pages (see below). Check it and decide.</p>
+      <form hx-post="/leads/{{ lead.id }}/decide" hx-target="#drawer" hx-swap="innerHTML" class="stack">
+        <input type="hidden" name="csrf_token" value="{{ csrf }}">
+        <div class="field"><label for="decide-{{ lead.id }}">Note <span class="small muted">(optional)</span></label>
+          <input id="decide-{{ lead.id }}" name="note" type="text" maxlength="1000" placeholder="e.g. Checked their pricing page: they sell SaaS"></div>
+        <div class="row">
+          <button class="btn primary" type="submit" name="decision" value="qualified"><span class="when-idle">Qualify</span><span class="when-loading"><span class="spinner"></span> Saving…</span></button>
+          <button class="btn" type="submit" name="decision" value="not_qualified">Not a fit</button>
+        </div>
+      </form>
+    </section>
+    {% elif lead.human_decision == 'qualified' and lead.outreach_status != 'drafted' %}
+    <form hx-post="/runs/{{ lead.run_id }}/continue" hx-target="#system-message" class="row">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <button class="btn primary" type="submit"><span class="when-idle">Write drafts for this lead</span><span class="when-loading"><span class="spinner"></span> Starting…</span></button>
+      <span class="help">Writes the 3 emails and the LinkedIn message, for your review.</span>
+    </form>
+    {% endif %}
+
     <section class="card stack">
       <h3>Why: qualification</h3>
       {% if lead.hard_filter_checks %}

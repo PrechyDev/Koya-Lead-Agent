@@ -245,6 +245,8 @@ tr.row-blocked { background: var(--warning-bg); }
 .tab[aria-selected="true"] { background: var(--surface); border-color: var(--border); color: var(--primary); }
 .tab-panel { padding-top: 12px; }
 .live-stamp { font-size: 0.8rem; color: var(--text-muted); }
+#run-notice:empty { display: none; }
+.run-notice { display: flex; gap: 8px; align-items: center; margin: 0; color: var(--text-muted); }
 .kv { display: grid; grid-template-columns: minmax(140px, 220px) 1fr; gap: 6px 16px; font-size: 0.92rem; }
 .kv dt { color: var(--text-muted); } .kv dd { margin: 0; }
 ul.clean { margin: 0; padding-left: 18px; }

@@ -356,6 +356,9 @@
 
   // Banners closed in a refreshing panel stay closed (same run + status) instead of coming back every 3 s.
   function hideDismissed() {
+    document.querySelectorAll("[data-mark-seen]").forEach(function (el) {  // opening a run = its notice was seen
+      try { sessionStorage.setItem("dismissed:" + el.getAttribute("data-mark-seen"), "1"); } catch (e) {}
+    });
     document.querySelectorAll(".banner[data-dismiss-key]").forEach(function (b) {
       try { if (sessionStorage.getItem("dismissed:" + b.getAttribute("data-dismiss-key"))) b.remove(); } catch (e) {}
     });

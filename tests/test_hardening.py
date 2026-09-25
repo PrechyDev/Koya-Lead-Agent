@@ -409,7 +409,7 @@ def test_startup_recovery_never_fails_a_run_another_server_is_working_on(admin_d
                 pytest.skip("can't bypass the updated_at trigger with this role")
             conn.execute("update lead_agent.runs set updated_at = now() - interval '10 minutes' where id = %s", (rid,))
         db.fail_orphaned_runs()
-        assert db.get_run(rid)["status"] == "failed"
+        assert db.get_run(rid)["status"] == "paused"  # can be continued (D-100)
     finally:
         with psycopg.connect(admin_dsn, prepare_threshold=None, autocommit=True) as conn:
             conn.execute("delete from lead_agent.runs where id = %s", (rid,))

@@ -9,6 +9,8 @@
   {% set kind = "success" %}{% set message = "Run completed: " ~ (run.status_detail or "") %}{% include "partials/banner.html" %}
 {% elif run.status == "completed_partial" %}
   {% set kind = "warning" %}{% set message = shortfall_sentence(run, drafted) %}{% include "partials/banner.html" %}
+{% elif run.status == "paused" %}
+  {% set kind = "warning" %}{% set message = "This search stopped before it finished (" ~ ((run.status_detail or "the server restarted") | lower) ~ "). Continue to carry on from where it stopped." %}{% include "partials/banner.html" %}
 {% elif run.status == "failed" %}
   {% set kind = "error" %}{% set message = run.error_message or "The run couldn't finish. Anything saved before the problem is kept below." %}{% include "partials/banner.html" %}
 {% elif run.status == "cancelled" %}
@@ -53,6 +55,24 @@
     {% endif %}
   </div>
 </div>
+
+{#- A stopped run: carry on from where it stopped, or refine and search again (D-100). No budget talk here. -#}
+{% if can_control and run.status not in ACTIVE and run.status not in ("awaiting_confirmation", "needs_clarification", "superseded") %}
+{% set q = usage.get('qualified', 0) %}
+{% if plan or q < (limits.get('target_qualified') or 0) %}
+<div class="row" style="margin-top: 10px;">
+  {% if plan %}
+  <form hx-post="/runs/{{ run.id }}/continue" hx-target="#system-message">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <button class="btn primary" type="submit"><span class="when-idle">{{ plan.label }}</span><span class="when-loading"><span class="spinner"></span> Starting…</span></button>
+  </form>
+  {% endif %}
+  {% if q < (limits.get('target_qualified') or 0) %}
+  <a class="btn" href="{{ refine_url }}">Refine the objective and search again</a>
+  {% endif %}
+</div>
+{% endif %}
+{% endif %}
 
 {#- "Waiting for you" moments are full-screen dialogs, not text further down the page (owner feedback): the run
     is paused until the person chooses, so the choice must be impossible to miss. ✕, Cancel and Esc go back to the
