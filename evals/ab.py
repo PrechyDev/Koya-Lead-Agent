@@ -452,6 +452,50 @@ def score(name: str, results: dict[str, dict]) -> None:
                               passed=passed, score=score_value, cost_usd=res.get("cost"), notes=notes)
 
 
+def fact_check_copy(name: str) -> None:
+    """Run the app's own fact-checker (MODEL_GROUNDING, as in production) over every saved copywriting answer,
+    against the company's pages + the answer-key facts, and print a table. Spec §9: copy is judged on the writing
+    rules AND on unsupported claims. ~$0.002 per draft set; each call is recorded in the spend ledger."""
+    import asyncio
+
+    from app.services.grounding import check_grounding
+    fx, ref = load(name), load_reference(name)
+    by_domain = {c["domain"]: c for c in fx["companies"]}
+    answers: dict[str, dict] = {}
+    for f in sorted(FIXTURES.glob("batch_ab-copy_*.results.json")):
+        answers.update(json.loads(f.read_text(encoding="utf-8")))
+    rows = []
+    for cid, res in sorted(answers.items()):
+        _, model, rep, domain = cid.split("::")
+        out = res.get("output") or {}
+        c = by_domain[domain]
+        sources = [c["linkedin_url"]] + [p["url"] for p in c["pages"]]
+        emails = out.get("emails") or []
+        rules = check_outreach(emails, out.get("linkedin_message", ""), sources) if emails else ["no answer"]
+        facts = ref.get(domain, {})
+        context = (f"Company: {c['name']} ({domain})\nSource summary: {facts.get('source_summary')}\n"
+                   f"Fit reasons: {facts.get('fit_reasons')}\n" + _company_block(c))
+        g = asyncio.run(check_grounding(context, emails, out.get("linkedin_message", ""))) if emails else None
+        if g and g.cost_usd:
+            db.record_spend("eval", g.cost_usd, model=g.model, input_tokens=g.input_tokens,
+                            output_tokens=g.output_tokens, note=f"copy fact-check {cid}")
+        rows.append((model, domain, len(rules), len(g.unsupported) if g else None,
+                     len(g.missing_specifics) if g else None, g.error if g else "no answer", rules, g))
+    log.info("| Model | Company | Rule problems | Unsupported claims | Emails without a real company fact | Checker note |")
+    log.info("| --- | --- | --- | --- | --- | --- |")
+    for model, domain, nr, nu, nm, err, _rules, _g in rows:
+        log.info(f"| {model} | {domain} | {nr} | {nu} | {nm} | {err or ''} |")
+    for model, domain, _nr, _nu, _nm, _err, rules, g in rows:
+        for r in rules:
+            log.info(f"  rule  {model} {domain}: {r}")
+        for u in (g.unsupported if g else []):
+            log.info(f"  claim {model} {domain}: {u}")
+    (FIXTURES / f"{name}.copy_factcheck.json").write_text(json.dumps(
+        [{"model": m, "domain": d, "rule_problems": r, "unsupported": g.unsupported if g else None,
+          "missing_specifics": g.missing_specifics if g else None} for m, d, _a, _b, _c, _e, r, g in rows],
+        indent=1), encoding="utf-8")
+
+
 def rescore(name: str, stages: set[str]) -> None:
     """Score saved answers again (free: no API calls), e.g. after fixing a scorer. The app's DB role can't
     DELETE (least privilege), so the old rows are removed with the local admin DSN (laptop only)."""
@@ -486,7 +530,8 @@ def report(name: str) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=["export", "estimate", "reference", "run", "collect", "rescore", "report"])
+    parser.add_argument("command", choices=["export", "estimate", "reference", "run", "collect", "rescore",
+                                            "fact-check-copy", "report"])
     parser.add_argument("--batch-id", help="for `collect`: a batch submitted earlier whose answers weren't fetched")
     parser.add_argument("--repeats", type=int, default=REPEATS, help="for `run`/`estimate`: repeats per case")
     parser.add_argument("--ids", help="for `run`: only these request ids (comma list), e.g. to redo cut-off answers")
@@ -534,6 +579,8 @@ def main() -> int:
         else:
             score(args.name, results)
             report(args.name)
+    elif args.command == "fact-check-copy":
+        fact_check_copy(args.name)
     elif args.command == "rescore":
         rescore(args.name, stages)
     elif args.command == "report":

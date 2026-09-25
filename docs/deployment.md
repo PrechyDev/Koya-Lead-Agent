@@ -41,7 +41,10 @@ headers are served; idle memory is **122 MB** (Render free allows 512 MB); a DEV
    is only a fallback, D-65). Add the Lead Agent's addresses to **Redirect URLs**: `https://<service>.onrender.com/**`
    (and `http://localhost:8001/**` for local Docker tests). `**` covers `/accept-invite` and `/reset-password`.
 2. Authentication → Sign-ups: keep **invite-only** (no public sign-up).
-3. Authentication → Emails → Templates: paste `docs/email-templates/invite.html` into **Invite user** (subject: copy the
+3. *(Optional; Supabase only allows editing email templates once custom SMTP is set up.)* Without it, Supabase's
+   default Invite and Reset emails are used: plainer, but they work, because they carry the same `{{ .ConfirmationURL }}`
+   link, which returns people to this app's `/accept-invite` and `/reset-password`. With SMTP set up:
+   Authentication → Emails → Templates: paste `docs/email-templates/invite.html` into **Invite user** (subject: copy the
    one-line subject template from the top of that file) and `docs/email-templates/reset_password.html` into **Reset Password** (subject
    "Reset your Koya password"). They're shared with the other tools, so the invite is filled in from the details each tool
    sends with it (app name, description, inviter, role); anything missing falls back to neutral Koya wording. Both were checked with Go's html/template (Supabase's engine).
