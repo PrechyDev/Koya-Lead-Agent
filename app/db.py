@@ -571,6 +571,21 @@ def budget_history(limit: int = 20, offset: int = 0) -> tuple[list[dict], int]:
     return [], int(row["n"]) if row else 0
 
 
+def budget_start() -> Decimal:
+    """What the balance started at: the value before the first top-up, else CLAUDE_BUDGET_TOTAL_USD."""
+    row = fetch_one(f"select old_usd from {t('budget_changes')} order by changed_at asc limit 1")
+    return Decimal(str(row["old_usd"])) if row else get_settings().claude_budget_total_usd
+
+
+def monthly_money() -> tuple[dict[str, Decimal], dict[str, Decimal]]:
+    """(spent by month, added by month), months "YYYY-MM" starting 00:00 UTC on the 1st (D-95)."""
+    spent = fetch_all(f"""select to_char(date_trunc('month', created_at at time zone 'UTC'), 'YYYY-MM') as month,
+                                 sum(cost_usd) as usd from {t('spend_ledger')} group by 1""")
+    added = fetch_all(f"""select to_char(date_trunc('month', changed_at at time zone 'UTC'), 'YYYY-MM') as month,
+                                 sum(new_usd - old_usd) as usd from {t('budget_changes')} group by 1""")
+    return ({r["month"]: Decimal(str(r["usd"])) for r in spent}, {r["month"]: Decimal(str(r["usd"])) for r in added})
+
+
 def open_budget_request() -> dict | None:
     """The pending "more budget" request, if any (it is a System issue, so the developer is emailed)."""
     return fetch_one(f"""select * from {t('system_events')} where code = 'budget_requested' and resolved_at is null

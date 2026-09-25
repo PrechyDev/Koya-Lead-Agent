@@ -13,7 +13,7 @@
 {% if shown %}
 <div class="table-wrap">
   <table>
-    <thead><tr><th>#</th><th>Agent</th><th>Tool</th><th>Purpose</th><th>Input</th><th>Result</th><th>Status</th><th>ms</th></tr></thead>
+    <thead><tr><th class="nums">#</th><th>Agent</th><th>Tool</th><th>Purpose</th><th>Input</th><th>Result</th><th>Status</th><th class="nums" title="How long the call took">Time</th></tr></thead>
     <tbody>
     {% for c in shown %}
       {% set b = badge(c.status) %}
@@ -26,7 +26,7 @@
         <td class="small">{{ c.result_summary or "" }}{% if c.error_message %}<div style="color: var(--danger);">{{ c.error_message }}</div>{% endif %}
           {% if c.external_cost_usd %}<div class="muted">Cost ${{ "%.4f" | format(c.external_cost_usd) }}</div>{% endif %}</td>
         <td><span class="badge {{ b[0] }}">{{ b[1] }}</span></td>
-        <td class="nums small">{{ c.duration_ms or "" }}</td>
+        <td class="nums small">{% if c.duration_ms %}{{ "%.1f" | format(c.duration_ms / 1000) }} s{% endif %}</td>
       </tr>
     {% endfor %}
     </tbody>

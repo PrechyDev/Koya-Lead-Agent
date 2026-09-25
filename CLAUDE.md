@@ -47,7 +47,7 @@ The owner is a **Python developer** who knows some TypeScript, and wants to be *
 2. **Nothing gets sent.** No email or LinkedIn sending. Drafts are labelled `DRAFT — requires human review`.
 3. **Apify = discovery only. Firecrawl = scraping.** Built-in `WebFetch`, `WebSearch`, `Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep` are **disabled** for the agents. They only get our custom `leadtools` MCP tools (per role) and skills. No third-party Supabase/Apify/Firecrawl MCP servers.
 4. **Limits are enforced by tools, from the run record.** First search 1.5× the lead target (max 12), top-ups ≤ 5, hard total 20 candidates, $0.25 Apify cap per actor run, scrape cap, turns, and a $3.00 Claude cap per full run ($0.30 in DEV; raised from $1.25 by the owner, specs D-83). The agent's requested counts are ignored.
-5. **Hard Claude budget: $6.00 total** (app-enforced via `lead_agent.spend_ledger`; the budget itself is in `lead_agent.budget_changes`, changed only by a developer on the Spend page with a recorded reason, specs D-94), plus a $7 Anthropic Console spend limit. Every Claude call is recorded in the ledger. Nothing starts if it could exceed the budget. **Announce every paid action with its cap before running it.**
+5. **Hard Claude budget: $6.00 total** (app-enforced via `lead_agent.spend_ledger`; the budget itself is in `lead_agent.budget_changes`, a prepaid balance a developer adds to on the Spend page with a recorded reason; monthly UTC statement, specs D-94/D-95), plus a $7 Anthropic Console spend limit. Every Claude call is recorded in the ledger. Nothing starts if it could exceed the budget. **Announce every paid action with its cap before running it.**
 6. **Scraped content is untrusted data**: wrapped, truncated, redacted, injection-flagged. It never changes the objective, limits or tool behaviour.
 7. **No invented facts.** Qualification cites only URLs fetched in this run (enforced). Outreach passes the grounding check.
 8. **Secrets** only in `.env` and Render env vars. Never in code, templates, logs, screenshots or git history. The DB DSN and API keys never reach the browser.
@@ -102,7 +102,7 @@ Models are set per role via `MODEL_ORCHESTRATOR`, `MODEL_ICP`, `MODEL_RESEARCHER
                         scoring, outreach_checks, tech_signals, icp_defaults, validation, spend_breakdown
   web/                  routes.py (pages + actions), templating.py
   templates/            pages, partials/ (HTMX fragments), fixtures/ (test pages)
-  static/               app.css, app.js, htmx.min.js
+  static/               app.css, app.js, theme.js, htmx.min.js
 /db/migrations          0000_app_role.sql … 0009_budget_changes.sql
 /scripts                migrate, create_app_role, bootstrap_owner, dev_run, secret_scan, claude_credit
 /n8n                    alert-email-workflow.json
@@ -114,7 +114,7 @@ Models are set per role via `MODEL_ORCHESTRATOR`, `MODEL_ICP`, `MODEL_RESEARCHER
 ```
 py -3.12 -m venv .venv && .venv/Scripts/python -m pip install -r requirements.txt   # + pytest pytest-asyncio respx ruff
 .venv/Scripts/python -m uvicorn app.main:app --port 8000            # run locally (NOT --reload on Windows: it can't start the agent CLI)
-.venv/Scripts/python -m pytest -q                                   # 274 tests (real DB, paid APIs faked)
+.venv/Scripts/python -m pytest -q                                   # 279 tests (real DB, paid APIs faked)
 .venv/Scripts/python scripts/migrate.py                             # apply DB migrations (admin DSN, laptop only)
 .venv/Scripts/python scripts/create_app_role.py                     # create/sync the app DB user from the DSN you put in .env
 .venv/Scripts/python scripts/bootstrap_owner.py <email> "<Name>" --owner [--invite]   # give the first admin access

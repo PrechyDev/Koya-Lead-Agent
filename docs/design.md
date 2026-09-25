@@ -135,7 +135,7 @@ Sections in order, each with a heading:
 - **Accept invite:** a name + password (with confirm) form. Rules are shown before typing, not only after an error.
 - **Password fields** (everywhere) have an eye button inside the box to show/hide what's typed.
 - **Forgot password:** "Forgot password?" under the Sign in button → email → [Send reset link] → the same neutral confirmation for everyone ("If this email has access, a reset link is on its way"). **Choose a new password:** opened from the email; new password + confirm; locked with an explanation if opened without the email link. Team page: [Send reset link] per active member (confirm first).
-- **Header:** app name · **+ New run** (every page, D-93) · Runs · (admin) Team · (admin) Spend · (developer) System issues with an open-issue count · the user's name, role badge and Sign out. Developers also get a banner on every page while an issue is open (D-90).
+- **Header:** app name · **+ New run** first (every page, D-93/D-95) · Runs · (admin) Team · (admin) Spend · (developer) System issues with an open-issue count · the user's name, role badge and Sign out. Developers also get a banner on every page while an issue is open (D-90).
 - **Team (admin):** a table of name · email · role badge · status (Active/Deactivated) · actions. [Invite teammate] is the primary button. Deactivate needs a confirm and is disabled, with a tooltip, for the owner or the last admin. The result of inviting an existing account is shown as an info banner: "They already have an account. They can sign in with their existing password."
 - **Spend (admin):** budget bar ($ spent / $6.00), then tables by run, model and source (icp / run / grounding / preflight / eval), plus Apify cost.
 - **System issues (developer, D-90):** open and resolved alerts, each with what happened and how to fix it; [Mark fixed]; [Send a test alert] (disabled, with the reason, until the n8n webhook is set).
@@ -192,3 +192,9 @@ Plain words. Say "companies", "sites scraped", "qualified". Don't say "MCP", "to
 - [ ] Repeat gate: the stage-1 hint sits beside the form (not in results); the stage-2 pause shows 4 clearly labelled buttons, one primary ("Open it")
 - [ ] Cold-start friendly: the first page load shows the layout immediately (server-rendered). No blank screen while Render wakes up
 - [ ] Spend is visible **to admins only** (D-66): the Run page and Summary tab show Claude $ used / cap and model names to admins; the Spend page shows project spend / $6.00. Members never see AI costs
+
+## Themes and row menus (D-95)
+
+- **Theme switch** in the header on every page (also signed out): Auto (follows the device) → Light → Dark, remembered per browser (`localStorage`). Colours are tokens in `:root`; dark overrides apply under `prefers-color-scheme: dark` unless Light is chosen, or whenever Dark is chosen.
+- **Row actions:** one **Manage ▾** menu per row when a row has more than two actions. Disabled items stay visible with the reason underneath; destructive items are red and last, after a divider.
+- **Tables:** numbers right-aligned; dates and names never wrap; long text clamps to 2 lines with the full text on hover; clickable rows end in a › column.

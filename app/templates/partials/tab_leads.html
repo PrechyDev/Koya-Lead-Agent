@@ -18,7 +18,7 @@
 {% if shown %}
 <div class="table-wrap">
   <table>
-    <thead><tr><th>Company</th><th>Domain</th><th>Status</th><th>Fit score</th><th>Drafts</th><th>Review</th><th></th></tr></thead>
+    <thead><tr><th>Company</th><th>Domain</th><th>Status</th><th class="nums">Fit score</th><th>Drafts</th><th>Review</th><th class="chev"></th></tr></thead>
     <tbody>
     {% for l in shown %}
       {% set b = badge(l.qualification_status) %}{% set o = badge(l.outreach_status) %}{% set r = badge(l.review_status) %}
@@ -29,7 +29,7 @@
         <td class="nums">{{ "%.2f" | format(l.confidence) if l.confidence is not none else "—" }}</td>
         <td>{% if l.qualification_status == 'qualified' %}<span class="badge {{ o[0] }}">{{ o[1] }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
         <td>{% if l.outreach_status == 'drafted' %}<span class="badge {{ r[0] }}">{{ r[1] }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
-        <td></td>
+        <td class="chev" aria-hidden="true"></td>
       </tr>
     {% endfor %}
     </tbody>

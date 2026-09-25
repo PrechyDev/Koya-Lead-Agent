@@ -1,6 +1,6 @@
 {#- One breakdown table (app/lib/spend_breakdown.Line rows): name + what it is, calls, cost, share of total, avg per call. -#}
 <div class="table-wrap"><table>
-  <thead><tr><th></th><th title="One record per Claude call, or one per model for an agent run">Records</th><th>Cost</th><th style="min-width: 160px;">Share of spend</th><th>Avg per record</th><th>Last</th></tr></thead>
+  <thead><tr><th></th><th class="nums" title="One record per Claude call, or one per model for an agent run">Records</th><th class="nums">Cost</th><th style="min-width: 160px;">Share of spend</th><th class="nums">Avg per record</th><th>Last</th></tr></thead>
   <tbody>{% for l in rows %}<tr>
     <td>{{ l.name }}{% if l.detail %}<div class="small muted">{{ l.detail }}</div>{% endif %}</td>
     <td class="nums">{{ l.calls }}</td>
@@ -8,6 +8,6 @@
     <td><div class="bar" role="img" aria-label="{{ l.share | round(0) | int }}% of spend"><span style="width: {{ [l.share, 100] | min }}%"></span></div>
       <div class="small muted nums">{{ l.share | round(0) | int }}%</div></td>
     <td class="nums">${{ "%.4f" | format(l.per_call) }}</td>
-    <td class="small muted">{{ l.last_at | ago if l.last_at else '—' }}</td></tr>
+    <td class="small muted when">{{ l.last_at | ago if l.last_at else '—' }}</td></tr>
   {% else %}<tr><td colspan="6" class="empty">No spend recorded yet.</td></tr>{% endfor %}</tbody>
 </table></div>

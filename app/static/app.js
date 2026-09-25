@@ -350,6 +350,38 @@
     if (cancel) { event.preventDefault(); cancel.click(); }
   });
 
+  // Row "Manage" menus (D-95): one open at a time, placed under their button with fixed positioning so the
+  // table's scroll box can't clip them (flipped up near the bottom of the screen); outside click / Esc closes.
+  function placeMenu(menu) {
+    var button = menu.querySelector("summary"), panel = menu.querySelector(".menu-panel");
+    if (!button || !panel) return;
+    var r = button.getBoundingClientRect();
+    panel.style.right = Math.max(8, window.innerWidth - r.right) + "px";
+    var top = r.bottom + 4;
+    if (top + panel.offsetHeight > window.innerHeight - 8) top = Math.max(8, r.top - 4 - panel.offsetHeight);
+    panel.style.top = top + "px";
+  }
+  function closeMenus(except) {
+    document.querySelectorAll("details.menu[open]").forEach(function (m) { if (m !== except) m.open = false; });
+  }
+  document.addEventListener("toggle", function (event) {
+    var menu = event.target;
+    if (!menu.matches || !menu.matches("details.menu") || !menu.open) return;
+    closeMenus(menu);
+    placeMenu(menu);
+  }, true);
+  document.addEventListener("click", function (event) {
+    document.querySelectorAll("details.menu[open]").forEach(function (m) { if (!m.contains(event.target)) m.open = false; });
+  });
+  document.addEventListener("keydown", function (event) {
+    if (event.key !== "Escape") return;
+    document.querySelectorAll("details.menu[open]").forEach(function (m) { m.open = false; m.querySelector("summary").focus(); });
+  });
+  ["scroll", "resize"].forEach(function (name) {
+    window.addEventListener(name, function () { document.querySelectorAll("details.menu[open]").forEach(placeMenu); }, true);
+  });
+  document.addEventListener("htmx:afterRequest", function () { closeMenus(null); });
+
   // "Last updated" stamp for the live panel.
   document.body && document.body.addEventListener("htmx:afterSwap", function (event) {
     var stamp = document.getElementById("live-stamp");

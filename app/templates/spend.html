@@ -10,20 +10,25 @@
     <span class="muted small">at this run size, before the AI budget is used up</span></p>
   {% if member.is_developer %}
   <div class="bar {% if pct >= 90 %}full{% elif pct >= 70 %}warn{% endif %}" role="progressbar" aria-valuenow="{{ pct }}" aria-valuemin="0" aria-valuemax="100"><span style="width: {{ [pct, 100] | min }}%"></span></div>
-  <p class="nums">{{ spent | money }} of {{ budget | money }} Claude budget used (estimated; includes development and tests). Each run reserves {{ run_cap | money }} + $0.10 for fact-checks, so new runs are refused before any spend if they could go over.</p>
-  {% if request_pending %}<div class="callout small"><b>More budget requested</b> {{ request_pending.last_seen_at | ago }}: {{ request_pending.message.split("Detail: ")[-1] }}. Raising the budget below resolves it.</div>{% endif %}
+  <div class="stat-row">
+    <div><div class="small muted">Balance left</div><div class="big nums"><b>{{ (budget - spent) | money }}</b></div></div>
+    <div><div class="small muted">Spent this month ({{ this_month }}, UTC)</div><div class="big nums">{{ spent_this_month | money }}</div></div>
+    <div><div class="small muted">Spent in total / added in total</div><div class="big nums">{{ spent | money }} / {{ budget | money }}</div></div>
+  </div>
+  <p class="help">A prepaid balance: unspent money never expires and carries into the next month (months start 00:00 UTC on the 1st). Costs are estimates and include development and tests. Each run reserves {{ run_cap | money }} + $0.10 for fact-checks, so runs that could go over are refused before any spend.</p>
+  {% if request_pending %}<div class="callout small"><b>More budget requested</b> {{ request_pending.last_seen_at | ago }}: {{ request_pending.message.split("Detail: ")[-1] }}. Adding to the budget resolves it.</div>{% endif %}
   <details>
-    <summary>Change the budget</summary>
+    <summary>Add to budget</summary>
     <form class="stack" style="max-width: 560px; margin-top: 10px;" hx-post="/spend/budget" hx-target="#system-message">
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
-      <div class="field"><label for="b-total">New total budget ($)</label>
-        <input id="b-total" name="new_total" type="number" step="0.01" min="{{ '%.2f' | format(spent) }}" max="{{ max_budget }}" value="{{ '%.2f' | format(budget) }}" required></div>
-      <div class="field"><label for="b-reason">Why</label>
-        <input id="b-reason" name="reason" type="text" minlength="5" maxlength="300" placeholder="e.g. Koya topped up $20 on Oct 1" required></div>
-      <label class="row small"><input type="checkbox" name="credit_confirmed" value="yes" required>
-        I've checked the Anthropic Console: the account has credit for this, and its spend limit is at least this high.</label>
-      <div><button class="btn primary" type="submit"><span class="when-idle">Save budget</span><span class="when-loading"><span class="spinner"></span> Saving…</span></button></div>
-      <p class="help">Takes effect at once; no redeploy, and a run in progress keeps going. Every change is kept under "Budget changes". CLAUDE_BUDGET_TOTAL_USD is only the starting value.</p>
+      <div class="field"><label for="b-amount">Amount to add ($)</label>
+        <input id="b-amount" name="amount" type="number" step="0.01" min="0.01" max="{{ max_budget - budget }}" placeholder="20.00" required></div>
+      <div class="field"><label for="b-reason">Where the money came from</label>
+        <input id="b-reason" name="reason" type="text" minlength="5" maxlength="300" placeholder="e.g. Koya topped up the Anthropic account on Oct 1" required></div>
+      <label class="check small"><input type="checkbox" name="credit_confirmed" value="yes" required>
+        I've checked the Anthropic Console: this credit is in the account, and its spend limit covers the new total.</label>
+      <div><button class="btn primary" type="submit"><span class="when-idle">Add to budget</span><span class="when-loading"><span class="spinner"></span> Adding…</span></button></div>
+      <p class="help">It's added to the balance left and takes effect at once: no redeploy, and a run in progress keeps going. Every top-up is kept under "Top-ups".</p>
     </form>
   </details>
   {% else %}
@@ -49,27 +54,37 @@
   <div class="tab-panel" role="tabpanel">
   {% if tab == "runs" %}
     <div class="table-wrap"><table>
-      <thead><tr><th>Objective</th><th>Status</th><th>By</th><th>Claude (est.)</th><th>When</th></tr></thead>
+      <thead><tr><th>Objective</th><th>Status</th><th>By</th><th class="nums">Claude (est.)</th><th>When</th><th class="chev"></th></tr></thead>
       <tbody>{% for r in items %}{% set b = badge(r.status) %}<tr class="clickable" tabindex="0" onclick="window.location='/runs/{{ r.id }}'">
-        <td>{{ r.objective[:90] }}</td><td><span class="badge {{ b[0] }}">{{ b[1] }}</span></td><td>{{ r.created_by_name or '—' }}</td>
-        <td class="nums">{{ r.cost_usd | money }}</td><td class="small muted">{{ r.created_at | ago }}</td></tr>
-      {% else %}<tr><td colspan="5" class="empty">No runs yet.</td></tr>{% endfor %}</tbody>
+        <td><span class="clamp-2" title="{{ r.objective }}">{{ r.objective }}</span></td><td><span class="badge {{ b[0] }}">{{ b[1] }}</span></td><td class="who">{{ r.created_by_name or '—' }}</td>
+        <td class="nums">{{ r.cost_usd | money }}</td><td class="small muted when">{{ r.created_at | ago }}</td><td class="chev" aria-hidden="true"></td></tr>
+      {% else %}<tr><td colspan="6" class="empty">No runs yet.</td></tr>{% endfor %}</tbody>
     </table></div>
   {% elif tab == "apify" %}
     <div class="table-wrap"><table>
-      <thead><tr><th>Run</th><th>Apify cost</th><th>When</th></tr></thead>
-      <tbody>{% for a in items %}<tr class="clickable" tabindex="0" onclick="window.location='/runs/{{ a.id }}'"><td>{{ a.objective[:90] }}</td>
-        <td class="nums">${{ "%.4f" | format(a.apify_usd or 0) }}</td><td class="small muted">{{ a.last_at | ago }}</td></tr>
-      {% else %}<tr><td colspan="3" class="empty">No Apify runs recorded yet.</td></tr>{% endfor %}</tbody>
+      <thead><tr><th>Run</th><th class="nums">Apify cost</th><th>When</th><th class="chev"></th></tr></thead>
+      <tbody>{% for a in items %}<tr class="clickable" tabindex="0" onclick="window.location='/runs/{{ a.id }}'"><td><span class="clamp-2" title="{{ a.objective }}">{{ a.objective }}</span></td>
+        <td class="nums">${{ "%.4f" | format(a.apify_usd or 0) }}</td><td class="small muted when">{{ a.last_at | ago }}</td><td class="chev" aria-hidden="true"></td></tr>
+      {% else %}<tr><td colspan="4" class="empty">No Apify runs recorded yet.</td></tr>{% endfor %}</tbody>
     </table></div>
     <p class="help">Apify finds the companies. Its budget is separate from Claude's; the Apify console has the authoritative figure.</p>
   {% elif tab == "budget" %}{# developers only (D-94) #}
     <div class="table-wrap"><table>
-      <thead><tr><th>When</th><th>By</th><th>Change</th><th>Why</th></tr></thead>
-      <tbody>{% for b in items %}<tr><td class="small">{{ b.changed_at | ago }}</td><td>{{ b.changed_by_name or '—' }}</td>
-        <td class="nums">{{ b.old_usd | money }} → <b>{{ b.new_usd | money }}</b></td><td class="small">{{ b.reason }}<div class="muted">Anthropic credit confirmed</div></td></tr>
-      {% else %}<tr><td colspan="4" class="empty">No changes yet: the budget is the starting value ({{ budget | money }}).</td></tr>{% endfor %}</tbody>
+      <thead><tr><th>When</th><th>By</th><th class="nums">Added</th><th class="nums">Total after</th><th>Where it came from</th></tr></thead>
+      <tbody>{% for b in items %}<tr><td class="small when">{{ b.changed_at | ago }}</td><td class="who">{{ b.changed_by_name or '—' }}</td>
+        <td class="nums"><b>{{ '+' if b.new_usd >= b.old_usd else '−' }}{{ (b.new_usd - b.old_usd) | abs | money }}</b></td><td class="nums">{{ b.new_usd | money }}</td>
+        <td class="small">{{ b.reason }}<div class="muted">Anthropic credit confirmed</div></td></tr>
+      {% else %}<tr><td colspan="5" class="empty">No top-ups yet: the balance started at {{ budget | money }}.</td></tr>{% endfor %}</tbody>
     </table></div>
+  {% elif tab == "month" %}
+    <div class="table-wrap"><table>
+      <thead><tr><th>Month (UTC)</th><th class="nums">Opening balance</th><th class="nums">Added</th><th class="nums">Spent</th><th class="nums">Carried over</th></tr></thead>
+      <tbody>{% for m in items %}<tr><td>{{ m.month }}{% if m.month == this_month %} <span class="badge info">this month</span>{% endif %}</td>
+        <td class="nums">{{ m.opening | money }}</td><td class="nums">{{ ('+' ~ (m.added | money)) if m.added else '—' }}</td>
+        <td class="nums">{{ m.spent | money }}</td><td class="nums"><b>{{ m.closing | money }}</b></td></tr>
+      {% endfor %}</tbody>
+    </table></div>
+    <p class="help">Each month opens with what the previous one left unspent. Months start at 00:00 UTC on the 1st.</p>
   {% else %}{# breakdown: developers only (D-90, D-92) #}
     <h3>By step</h3>
     <p class="help">What each part of the system spent on Claude, across all runs and tests.</p>

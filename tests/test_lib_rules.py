@@ -77,7 +77,7 @@ def test_budget_guard_refuses_before_spending():
     with pytest.raises(BudgetExceeded) as err:
         assert_can_spend(Decimal("5.10"), 1.25, 6)
     assert err.value.remaining == Decimal("0.90")
-    assert "raise the budget on the Spend page" in str(err.value)
+    assert "add to the budget on the Spend page" in str(err.value)
 
 
 # --- qualification rules (E-15, E-16, E-17) -------------------------------------

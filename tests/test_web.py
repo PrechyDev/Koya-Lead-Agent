@@ -654,24 +654,52 @@ def test_admins_see_runs_left_and_request_more_budget(client_as, monkeypatch):
     assert r.status_code == 403  # only developers change the budget
 
 
-def test_developer_changes_the_budget_with_a_reason_and_confirmed_credit(client_as, monkeypatch):
+def test_developer_adds_to_the_budget_with_a_reason_and_confirmed_credit(client_as, monkeypatch):
+    """A top-up is ADDED to the balance (prepaid, D-95), with a reason and the Anthropic-credit confirmation."""
     from decimal import Decimal
     changes = []
-    monkeypatch.setattr(db, "total_spend", lambda: Decimal("2.61"))
+    monkeypatch.setattr(db, "claude_budget", lambda: Decimal("6.00"))
     monkeypatch.setattr(db, "change_budget", lambda new, reason, by: changes.append((new, reason, by)))
     c, token = client_as(DEVELOPER), auth.csrf_token_for(DEVELOPER.user_id)
     def post(**form):
         return c.post("/spend/budget", data={"csrf_token": token, **form}, headers={"HX-Request": "true"})
-    good = {"new_total": "20", "reason": "Koya topped up $20", "credit_confirmed": "yes"}
+    good = {"amount": "20", "reason": "Koya topped up $20", "credit_confirmed": "yes"}
     assert "Confirm the Anthropic account" in post(**{**good, "credit_confirmed": ""}).text
-    assert "already been spent" in post(**{**good, "new_total": "2.00"}).text
-    assert "Say why" in post(**{**good, "reason": "x"}).text
-    assert "between" in post(**{**good, "new_total": "5000"}).text
-    assert "in dollars" in post(**{**good, "new_total": "lots"}).text
+    assert "above $0" in post(**{**good, "amount": "0"}).text
+    assert "Say where the money came from" in post(**{**good, "reason": "x"}).text
+    assert "typo guard" in post(**{**good, "amount": "5000"}).text
+    assert "in dollars" in post(**{**good, "amount": "lots"}).text
     assert changes == []
     r = post(**good)
     assert r.status_code == 204 and r.headers["HX-Redirect"] == "/spend?tab=budget"
-    assert changes == [(Decimal("20.00"), "Koya topped up $20", DEVELOPER.user_id)]
+    assert changes == [(Decimal("26.00"), "Koya topped up $20", DEVELOPER.user_id)]  # 6 + 20, not "set to 20"
+
+
+def test_the_monthly_statement_carries_unspent_money_forward():
+    """Prepaid (D-95): each UTC month opens with what the last one left; the newest closing = budget - spent."""
+    from decimal import Decimal as D
+
+    from app.lib.budget import monthly_statement
+    rows = monthly_statement(D("6.00"), {"2026-09": D("2.61"), "2026-11": D("1.00")}, {"2026-10": D("20.00")}, "2026-12")
+    assert [r["month"] for r in rows] == ["2026-12", "2026-11", "2026-10", "2026-09"]  # newest first, gaps filled
+    sep, oct_, nov, dec = rows[::-1]
+    assert (sep["opening"], sep["closing"]) == (D("6.00"), D("3.39"))
+    assert (oct_["opening"], oct_["added"], oct_["closing"]) == (D("3.39"), D("20.00"), D("23.39"))
+    assert (nov["closing"], dec["opening"], dec["closing"]) == (D("22.39"), D("22.39"), D("22.39"))
+    assert dec["closing"] == D("6.00") + D("20.00") - D("2.61") - D("1.00")
+    assert monthly_statement(D("6"), {}, {}, "2027-01")[0]["month"] == "2027-01"  # year roll-over, empty ledger
+
+
+def test_months_turn_over_at_midnight_utc():
+    from datetime import UTC, datetime
+
+    from app.web import routes
+    assert routes._utc_month() == datetime.now(UTC).strftime("%Y-%m")
+
+
+def test_spend_by_month_tab_renders_for_admins(client_as):
+    page = client_as(ADMIN).get("/spend?tab=month").text
+    assert "Opening balance" in page and "Carried over" in page and "this month" in page
 
 
 def test_budget_changes_are_stored_append_only_and_resolve_the_request(admin_dsn):
@@ -697,3 +725,24 @@ def test_budget_changes_are_stored_append_only_and_resolve_the_request(admin_dsn
             conn.execute("delete from lead_agent.system_events where code = 'budget_requested' "
                          "and message like %s", ("%requested by test%",))
     assert db.claude_budget() == before
+
+
+# --- UI pass (D-95): theme switch everywhere, one Manage menu per person, New run first ------------------------
+def test_theme_switch_is_on_every_page_including_sign_in(client_as):
+    for who, url in ((None, "/login"), (MEMBER, "/"), (DEVELOPER, "/spend")):
+        html = client_as(who).get(url).text
+        assert 'id="theme-toggle"' in html and "/static/theme.js" in html, url
+    css = client_as(None).get("/static/app.css").text
+    assert ':root[data-theme="dark"]' in css and ':root:not([data-theme="light"])' in css  # auto + forced dark
+
+
+def test_header_puts_new_run_first_and_team_rows_use_one_menu(client_as, monkeypatch):
+    html = client_as(ADMIN).get("/spend").text
+    nav = html[html.index('<nav class="nav"'):html.index("</nav>")]
+    assert nav.index("/runs/new") < nav.index('href="/"')  # "+ New run" is the first item
+    row = {"user_id": str(uuid.uuid4()), "email": "x@acme.io", "full_name": "X", "role": "member",
+           "is_active": True, "is_owner": False, "is_developer": False}
+    monkeypatch.setattr(db, "list_members", lambda: [row])
+    team = client_as(ADMIN).get("/team").text
+    assert team.count('<details class="menu">') == 1 and 'value="deactivate"' in team and 'value="make_admin"' in team
+    assert 'class="invite-row"' in team  # name, email, role and the button on one row

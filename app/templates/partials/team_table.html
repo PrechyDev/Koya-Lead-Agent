@@ -1,42 +1,47 @@
 <div class="table-wrap">
   <table>
-    <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Actions</th></tr></thead>
+    <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th class="actions">Actions</th></tr></thead>
     <tbody>
     {% for m in members %}
       {% set protected = m.is_owner or (m.role == 'admin' and m.is_active and active_admins <= 1) %}
+      {% set is_me = m.user_id|string == member.user_id %}
       <tr>
-        <td>{{ m.full_name }}{% if m.is_owner %} <span class="badge info">Owner</span>{% endif %}</td>
+        <td>{{ m.full_name }}{% if m.is_owner %} <span class="badge info">Owner</span>{% endif %}{% if is_me %} <span class="muted small">(you)</span>{% endif %}</td>
         <td class="small">{{ m.email }}</td>
-        <td><span class="badge {{ 'info' if m.role == 'admin' else 'outline' }}">{{ m.role }}</span>{% if m.is_developer %} <span class="badge warning">Developer</span>{% endif %}</td>
+        <td><span class="row tight"><span class="badge {{ 'info' if m.role == 'admin' else 'outline' }}">{{ m.role }}</span>{% if m.is_developer %}<span class="badge warning">developer</span>{% endif %}</span></td>
         <td><span class="badge {{ 'success' if m.is_active else 'neutral' }}">{{ 'Active' if m.is_active else 'Deactivated' }}</span></td>
-        <td>
-          <form class="row" hx-post="/team/{{ m.user_id }}/update" hx-target="#system-message">
-            <input type="hidden" name="csrf_token" value="{{ csrf }}">
-            {% if member.is_owner and m.is_active and not m.is_owner %}{# only the owner grants developer access (D-90) #}
-            {% if m.is_developer %}
-            <button class="btn small" type="submit" name="action" value="remove_developer"
-              data-confirm="Remove developer access for {{ m.full_name }}? They stay an admin.">Remove developer</button>
-            {% else %}
-            <button class="btn small" type="submit" name="action" value="make_developer"
-              data-confirm="Give {{ m.full_name }} developer access? They will see System issues, tool calls and technical error detail, and become an admin.">Make developer</button>
-            {% endif %}
-            {% endif %}
-            {% if m.role == 'member' %}
-            <button class="btn small" type="submit" name="action" value="make_admin">Make admin</button>
-            {% elif m.is_developer %}
-            <button class="btn small" type="submit" name="action" value="make_member" disabled title="A developer is always an admin: remove developer access first">Make member</button>
-            {% else %}
-            <button class="btn small" type="submit" name="action" value="make_member" {% if protected %}disabled title="{{ 'The owner stays an admin' if m.is_owner else 'At least one active admin must remain' }}"{% endif %}>Make member</button>
-            {% endif %}
-            {% if m.is_active %}
-            <button class="btn small" type="submit" name="action" value="send_reset"
-              data-confirm="Email {{ m.full_name }} a link to choose a new password? It changes their password for every Koya tool.">Send reset link</button>
-            <button class="btn small danger" type="submit" name="action" value="deactivate" data-confirm="Deactivate {{ m.full_name }}? They lose access immediately."
-              {% if protected or m.user_id|string == member.user_id %}disabled title="{{ 'You can’t deactivate yourself' if m.user_id|string == member.user_id else ('The owner can’t be deactivated' if m.is_owner else 'At least one active admin must remain') }}"{% endif %}>Deactivate</button>
-            {% else %}
-            <button class="btn small" type="submit" name="action" value="reactivate">Reactivate</button>
-            {% endif %}
-          </form>
+        <td class="actions">
+          {#- One menu per person (D-95): every action in one place instead of a row of wrapping buttons. -#}
+          <details class="menu">
+            <summary class="btn small" aria-label="Manage {{ m.full_name }}">Manage <span aria-hidden="true">▾</span></summary>
+            <form class="menu-panel" hx-post="/team/{{ m.user_id }}/update" hx-target="#system-message">
+              <input type="hidden" name="csrf_token" value="{{ csrf }}">
+              {% if m.is_active %}
+                {% if m.role == 'member' %}
+                <button class="menu-item" type="submit" name="action" value="make_admin">Make admin</button>
+                {% elif m.is_developer %}
+                <button class="menu-item" type="submit" disabled>Make member<span class="menu-why">A developer is always an admin</span></button>
+                {% else %}
+                <button class="menu-item" type="submit" name="action" value="make_member" {% if protected or is_me %}disabled{% endif %}>Make member
+                  {% if protected or is_me %}<span class="menu-why">{{ 'The owner stays an admin' if m.is_owner else ('You can’t remove your own admin access' if is_me else 'At least one active admin must remain') }}</span>{% endif %}</button>
+                {% endif %}
+                {% if member.is_owner and not m.is_owner %}{# only the owner grants developer access (D-90) #}
+                  {% if m.is_developer %}
+                  <button class="menu-item" type="submit" name="action" value="remove_developer" data-confirm="Remove developer access for {{ m.full_name }}? They stay an admin.">Remove developer access</button>
+                  {% else %}
+                  <button class="menu-item" type="submit" name="action" value="make_developer" data-confirm="Give {{ m.full_name }} developer access? They will see System issues, tool calls and technical error detail, and become an admin.">Make developer</button>
+                  {% endif %}
+                {% endif %}
+                <button class="menu-item" type="submit" name="action" value="send_reset" data-confirm="Email {{ m.full_name }} a link to choose a new password? It changes their password for every Koya tool.">Send password reset link</button>
+                <hr>
+                <button class="menu-item danger" type="submit" name="action" value="deactivate" {% if protected or is_me %}disabled{% endif %}
+                  data-confirm="Deactivate {{ m.full_name }}? They lose access immediately.">Deactivate
+                  {% if protected or is_me %}<span class="menu-why">{{ 'You can’t deactivate yourself' if is_me else ('The owner can’t be deactivated' if m.is_owner else 'At least one active admin must remain') }}</span>{% endif %}</button>
+              {% else %}
+                <button class="menu-item" type="submit" name="action" value="reactivate">Reactivate</button>
+              {% endif %}
+            </form>
+          </details>
         </td>
       </tr>
     {% else %}

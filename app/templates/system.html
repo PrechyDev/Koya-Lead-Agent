@@ -16,18 +16,20 @@
 <section class="card">
   {% if events %}
   <div class="table-wrap"><table>
-    <thead><tr><th>Status</th><th>Resolved by</th><th>Severity</th><th>Service</th><th>What happened and how to fix it</th><th>Seen</th><th>Run</th><th></th></tr></thead>
+    <thead><tr><th>Status</th><th>Issue</th><th>What happened and how to fix it</th><th>Seen</th><th>Resolved by</th><th></th></tr></thead>
     <tbody>
     {% for e in events %}
+      {% set parts = e.message.split(" — Detail: ", 1) %}
       <tr class="{{ 'row-error' if e.severity == 'critical' and not e.resolved_at else ('row-blocked' if e.severity == 'warning' and not e.resolved_at else '') }}">
         <td>{% if e.resolved_at %}<span class="badge success">✓ Resolved</span>{% else %}<span class="badge warning">Open</span>{% endif %}</td>
-        <td class="small">{% if e.resolved_at %}{{ e.resolved_by_name or '—' }}<div class="muted">{{ e.resolved_at | ago }}</div>{% else %}<span class="muted">—</span>{% endif %}</td>
-        <td><span class="badge {{ 'danger' if e.severity == 'critical' else ('warning' if e.severity == 'warning' else 'info') }}">{{ e.severity }}</span></td>
-        <td>{{ e.service }}<div class="small mono muted">{{ e.code }}</div></td>
-        <td class="small">{{ e.message }}</td>
-        <td class="small nums">{{ e.last_seen_at | ago }}{% if e.occurrences > 1 %}<div class="muted">×{{ e.occurrences }}</div>{% endif %}{% if e.notified_at %}<div class="muted">emailed</div>{% endif %}</td>
-        <td>{% if e.run_id %}<a href="/runs/{{ e.run_id }}">View run</a>{% endif %}</td>
-        <td>{% if not e.resolved_at %}
+        <td class="issue"><span class="badge {{ 'danger' if e.severity == 'critical' else ('warning' if e.severity == 'warning' else 'info') }}">{{ e.severity }}</span>
+          <div><b>{{ e.service | capitalize }}</b></div><div class="small muted">{{ e.code.replace('_', ' ') | capitalize }}</div></td>
+        <td class="small">{{ parts[0] }}
+          {% if parts | length > 1 %}<details class="detail"><summary>Technical detail</summary><pre class="mono">{{ parts[1] }}</pre></details>{% endif %}
+          {% if e.run_id %}<div><a href="/runs/{{ e.run_id }}">View run</a></div>{% endif %}</td>
+        <td class="small when">{{ e.last_seen_at | ago }}{% if e.occurrences > 1 %}<div class="muted">{{ e.occurrences }} times since {{ e.first_seen_at | ago }}</div>{% endif %}{% if e.notified_at %}<div class="muted">emailed</div>{% endif %}</td>
+        <td class="small who">{% if e.resolved_at %}{{ e.resolved_by_name or '—' }}<div class="muted when">{{ e.resolved_at | ago }}</div>{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td class="actions">{% if not e.resolved_at %}
           <form hx-post="/system/{{ e.id }}/resolve">
             <input type="hidden" name="csrf_token" value="{{ csrf }}">
             <button class="btn small" type="submit">Mark fixed</button></form>{% endif %}</td>

@@ -13,7 +13,7 @@ class BudgetExceeded(Exception):
         remaining = max(Decimal("0"), total - spent)
         super().__init__(
             f"Claude budget would be exceeded: ${spent:.2f} of ${total:.2f} spent, "
-            f"${remaining:.2f} left, and this job can cost up to ${cap:.2f}. A developer must raise "
+            f"${remaining:.2f} left, and this job can cost up to ${cap:.2f}. A developer must add to "
             f"the budget on the Spend page before starting it."
         )
 
@@ -29,6 +29,24 @@ def runs_left(spent: Decimal, total: Decimal, run_cap: Decimal | float) -> int:
     """How many more runs of this size the budget allows: exactly what assert_run_fits would let start."""
     per_run = Decimal(str(run_cap)) + GROUNDING_RUN_CAP_USD
     return max(0, int((total - spent) // per_run)) if per_run > 0 else 0
+
+
+def monthly_statement(start: Decimal, spent: dict[str, Decimal], added: dict[str, Decimal],
+                      this_month: str) -> list[dict]:
+    """A prepaid balance, month by month (UTC), newest first (D-95): each month opens with what the last one
+    left unspent, then top-ups come in and runs spend. Nothing expires, so the last closing balance is exactly
+    budget − spent, the number the guard uses."""
+    months = sorted(set(spent) | set(added) | {this_month})
+    first_y, first_m = map(int, months[0].split("-"))
+    last_y, last_m = map(int, this_month.split("-"))
+    rows, opening, (y, m) = [], start, (first_y, first_m)
+    while (y, m) <= (last_y, last_m):
+        key = f"{y:04d}-{m:02d}"
+        a, s = added.get(key, Decimal(0)), spent.get(key, Decimal(0))
+        rows.append({"month": key, "opening": opening, "added": a, "spent": s, "closing": opening + a - s})
+        opening = opening + a - s
+        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+    return rows[::-1]
 
 
 def _price(model: str) -> tuple[Decimal, Decimal, Decimal]:

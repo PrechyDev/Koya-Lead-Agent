@@ -4,7 +4,7 @@ import csv
 import io
 import re
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from urllib.parse import urlencode
 
@@ -18,7 +18,7 @@ from app.agent.runner import AGENT_CANNOT_START, agent_can_start
 from app.auth import Member, current_member, require_admin, require_developer
 from app.config import get_settings, limits_for_run
 from app.failures import CATALOGUE, ServiceFailure, admin_message_from_detail, message_for
-from app.lib.budget import MAX_BUDGET_USD, BudgetExceeded, assert_run_fits, runs_left
+from app.lib.budget import MAX_BUDGET_USD, BudgetExceeded, assert_run_fits, monthly_statement, runs_left
 from app.lib.icp_defaults import MAX_LEAD_COUNT
 from app.lib.objective import objective_hash, objective_problem
 from app.lib.spend_breakdown import breakdown
@@ -250,6 +250,11 @@ async def accept_invite_submit(request: Request, access_token: str = Form(...), 
 # ---------------------------------------------------------------------------
 RUNS_PER_PAGE = 20
 SPEND_PER_PAGE = 20  # every Spend list (D-92)
+
+
+def _utc_month() -> str:
+    """This month as "YYYY-MM"; months turn over at 00:00 UTC on the 1st (D-95)."""
+    return datetime.now(UTC).strftime("%Y-%m")
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -659,8 +664,8 @@ async def team_table(request: Request, member: Member = Depends(require_admin)):
 async def spend_page(request: Request, tab: str = "runs", page: int = 1, member: Member = Depends(require_admin)):
     """Tabs (D-92): By run first, then Apify; "Where the money went" is the technical view (developers, D-90).
     Every list is paginated, SPEND_PER_PAGE rows a page."""
-    tabs = {"runs": "By run", "apify": "Apify"} | ({"breakdown": "Where the money went", "budget": "Budget changes"}
-                                                    if member.is_developer else {})
+    tabs = {"runs": "By run", "month": "By month", "apify": "Apify"} | (
+        {"breakdown": "Where the money went", "budget": "Top-ups"} if member.is_developer else {})
     tab = tab if tab in tabs else "runs"
     page, models = max(1, page), []
     offset = (page - 1) * SPEND_PER_PAGE
@@ -670,6 +675,9 @@ async def spend_page(request: Request, tab: str = "runs", page: int = 1, member:
         items, total = await db.run(db.apify_spend_by_run, SPEND_PER_PAGE, offset)
     elif tab == "budget":
         items, total = await db.run(db.budget_history, SPEND_PER_PAGE, offset)
+    elif tab == "month":
+        statement = monthly_statement(await db.run(db.budget_start), *await db.run(db.monthly_money), _utc_month())
+        items, total = statement[offset:offset + SPEND_PER_PAGE], len(statement)
     else:
         steps, models = breakdown(await db.run(db.spend_summary))
         items, total = steps[offset:offset + SPEND_PER_PAGE], len(steps)
@@ -677,9 +685,11 @@ async def spend_page(request: Request, tab: str = "runs", page: int = 1, member:
     if page > pages:
         return RedirectResponse(f"/spend?tab={tab}&page={pages}", status_code=303)
     spent, budget = await db.run(db.total_spend), await db.run(db.claude_budget)
+    spent_by_month, _ = await db.run(db.monthly_money)
     run_cap = limits_for_run(MAX_LEAD_COUNT, dev=get_settings().dev_limits).max_budget_usd
     return templates.TemplateResponse(request, "spend.html", _ctx(
         request, spent=spent, budget=budget, runs_left=runs_left(spent, budget, run_cap), run_cap=run_cap,
+        this_month=_utc_month(), spent_this_month=spent_by_month.get(_utc_month(), Decimal(0)),
         request_pending=await db.run(db.open_budget_request), max_budget=MAX_BUDGET_USD, tabs=tabs,
         tab=tab, items=items, models=models, page=page, pages=pages, total=total,
         first=offset + 1 if total else 0, last=min(offset + SPEND_PER_PAGE, total),
@@ -688,25 +698,26 @@ async def spend_page(request: Request, tab: str = "runs", page: int = 1, member:
 
 @router.post("/spend/budget")
 @limiter.limit("10/hour")
-async def change_budget(request: Request, new_total: str = Form(""), reason: str = Form(""),
-                        credit_confirmed: str = Form(""), csrf_token: str = Form(""),
-                        member: Member = Depends(require_developer)):
-    """Developers change the Claude budget in the app (D-94): no redeploy, no stopped run, every change logged."""
+async def add_budget(request: Request, amount: str = Form(""), reason: str = Form(""),
+                     credit_confirmed: str = Form(""), csrf_token: str = Form(""),
+                     member: Member = Depends(require_developer)):
+    """Developers top up the prepaid Claude budget in the app (D-94, D-95): the amount is ADDED to what's left;
+    nothing expires. No redeploy, no stopped run, every top-up logged."""
     _check_csrf(request, member, csrf_token)
     try:
-        new = Decimal(new_total.strip().lstrip("$")).quantize(Decimal("0.01"))
+        add = Decimal(amount.strip().lstrip("$")).quantize(Decimal("0.01"))
     except (InvalidOperation, ValueError):
-        return _banner(request, "error", "Enter the new total budget in dollars, e.g. 12.00.", 400)
-    spent = await db.run(db.total_spend)
-    if not (0 < new <= MAX_BUDGET_USD):
-        return _banner(request, "error", f"The budget must be between $0.01 and ${MAX_BUDGET_USD:.0f}.", 400)
-    if new < spent:
-        return _banner(request, "error", f"${new:.2f} is less than what's already been spent (${spent:.2f}).", 400)
+        return _banner(request, "error", "Enter the amount to add in dollars, e.g. 20.00.", 400)
+    budget = await db.run(db.claude_budget)
+    if add <= 0:
+        return _banner(request, "error", "Enter an amount above $0.", 400)
+    if budget + add > MAX_BUDGET_USD:
+        return _banner(request, "error", f"That would take the total over ${MAX_BUDGET_USD:.0f} (a typo guard).", 400)
     if len(reason.strip()) < 5:
-        return _banner(request, "error", "Say why the budget is changing (at least 5 characters).", 400)
+        return _banner(request, "error", "Say where the money came from (at least 5 characters).", 400)
     if credit_confirmed != "yes":
-        return _banner(request, "error", "Confirm the Anthropic account has credit for this budget first.", 400)
-    await db.run(db.change_budget, new, reason.strip()[:300], member.user_id)
+        return _banner(request, "error", "Confirm the Anthropic account has this credit first.", 400)
+    await db.run(db.change_budget, budget + add, reason.strip()[:300], member.user_id)
     return Response(status_code=204, headers={"HX-Redirect": "/spend?tab=budget"})
 
 
