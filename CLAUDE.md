@@ -97,13 +97,13 @@ Models are set per role via `MODEL_ORCHESTRATOR`, `MODEL_ICP`, `MODEL_RESEARCHER
   logging_setup.py      one logging format with secret/email redaction
   agent/                runner.py (phases, SDK options, hooks), tools.py (the 10 leadtools), prompts.py,
                         context.py, logging.py (logged_call), transcripts.py (cost recovery)
-  services/             apify.py, firecrawl.py, grounding.py (fact-check), scope.py, health.py (pre-run checks)
+  services/             apify.py, firecrawl.py, grounding.py (fact-check), scope.py, triage.py (candidate ranking), health.py (pre-run checks)
   lib/                  pure rules: domain, sanitize, objective, limits, budget, qualification_rules,
-                        scoring, outreach_checks, tech_signals, icp_defaults, validation, spend_breakdown
+                        scoring, outreach_checks, tech_signals, icp_defaults, validation, spend_breakdown, triage
   web/                  routes.py (pages + actions), templating.py
   templates/            pages, partials/ (HTMX fragments), fixtures/ (test pages)
   static/               app.css, app.js, theme.js, htmx.min.js
-/db/migrations          0000_app_role.sql … 0009_budget_changes.sql
+/db/migrations          0000_app_role.sql … 0010_spend_source_triage.sql
 /scripts                migrate, create_app_role, bootstrap_owner, dev_run, secret_scan, claude_credit
 /n8n                    alert-email-workflow.json
 /tests                  unit + integration (real DB, paid APIs faked)
@@ -114,7 +114,7 @@ Models are set per role via `MODEL_ORCHESTRATOR`, `MODEL_ICP`, `MODEL_RESEARCHER
 ```
 py -3.12 -m venv .venv && .venv/Scripts/python -m pip install -r requirements.txt   # + pytest pytest-asyncio respx ruff
 .venv/Scripts/python -m uvicorn app.main:app --port 8000            # run locally (NOT --reload on Windows: it can't start the agent CLI)
-.venv/Scripts/python -m pytest -q                                   # 283 tests (real DB, paid APIs faked)
+.venv/Scripts/python -m pytest -q                                   # 288 tests (real DB, paid APIs faked)
 .venv/Scripts/python scripts/migrate.py                             # apply DB migrations (admin DSN, laptop only)
 .venv/Scripts/python scripts/create_app_role.py                     # create/sync the app DB user from the DSN you put in .env
 .venv/Scripts/python scripts/bootstrap_owner.py <email> "<Name>" --owner [--invite]   # give the first admin access

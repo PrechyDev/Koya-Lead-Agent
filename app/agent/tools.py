@@ -18,7 +18,13 @@ from pydantic import BaseModel, Field, ValidationError
 from app import db
 from app.agent.context import RunContext
 from app.agent.logging import Outcome, blocked, failure, logged_call, success
-from app.config import GROUNDING_RUN_CAP_USD, ICP_PHASE_MAX_BUDGET_USD, get_settings, run_cap_usd
+from app.config import (
+    GROUNDING_RUN_CAP_USD,
+    ICP_PHASE_MAX_BUDGET_USD,
+    TRIAGE_CALL_CAP_USD,
+    get_settings,
+    run_cap_usd,
+)
 from app.failures import ServiceFailure
 from app.lib.budget import BudgetExceeded, affordable_target, assert_can_spend
 from app.lib.domain import normalize_domain
@@ -35,8 +41,16 @@ from app.lib.qualification_rules import (
 )
 from app.lib.sanitize import contains_contact_details, redact, redact_obj, wrap_untrusted
 from app.lib.scoring import compute_fit_score, decide
+from app.lib.triage import (
+    generic_queries,
+    industry_ids_for,
+    quote_is_in,
+    service_firm_reason,
+    wants_service_firms,
+)
 from app.services import apify as apify_svc
 from app.services import firecrawl as fc
+from app.services import triage as triage_svc
 from app.services.grounding import check_grounding, grounding_call_cap
 
 SERVER_NAME = "leadtools"
@@ -66,6 +80,9 @@ def mcp_name(name: str) -> str:
 # ---------------------------------------------------------------------------
 # Input models (validated server-side, whatever the model sends)
 # ---------------------------------------------------------------------------
+SERVICES_FILTER = "Sells its own product (not a services firm)"  # the free pre-screen's check (D-98)
+
+
 class ICPModel(BaseModel):
     target_company_type: str = ""
     industries: list[str] = Field(default_factory=list)
@@ -304,6 +321,13 @@ def build_handlers(ctx: RunContext) -> dict:
                 target = fits
         if parsed.is_searchable and (not icp["hard_filters"] or not icp["discovery_query_plan"]):
             return failure("A searchable ICP needs at least one hard filter and one discovery query.")
+        vague_terms = generic_queries(list(icp.get("discovery_query_plan") or []))
+        if parsed.is_searchable and vague_terms:  # D-98: "B2B SaaS" matches company NAMES, i.e. agencies
+            return failure("Each discovery query must name what the companies sell, do or who they serve (a product "
+                           "category, niche or customer type), not just the category. For example \"clinic scheduling "
+                           "software\" or \"field service management software\", not \"B2B SaaS\". For a vague "
+                           "objective, pick 3 concrete niches that fit it and list them in assumptions. Rewrite: "
+                           + "; ".join(vague_terms))
         negative = [d for d in icp["disqualifiers"] if NEGATIVE_DISQUALIFIER_RE.match(d)]
         if parsed.is_searchable and negative:
             return failure("Write each disqualifier as what to EXCLUDE, because the researcher answers \"does it "
@@ -353,6 +377,7 @@ def build_handlers(ctx: RunContext) -> dict:
             result = await apify_svc.find_companies(
                 query=query, geos=geos, size_bands=apify_svc.size_bands_for(low, high), max_items=size,
                 max_charge_usd=float(limits["apify_max_charge_usd"]), start_page=start_page,
+                industry_ids=industry_ids_for(icp),  # e.g. "Software Development" for a SaaS target (D-98)
             )
         except apify_svc.DiscoveryError as exc:
             if exc.failure_code:
@@ -371,12 +396,36 @@ def build_handlers(ctx: RunContext) -> dict:
         seen = (await db.run(db.recently_researched, domains, settings.research_reuse_days, ctx.run_id)
                 if ctx.cross_run_dedupe else {})
         to_research, rejected, dupes, skipped = [], [], 0, []
+        found: dict[str, tuple[dict, dict]] = {}  # domain -> (company, lead) for the triage step
+        services_ok = wants_service_firms(icp)
+
+        async def reject(lead: dict, company: dict, filt: str, reason: str, *, triaged: bool = False) -> None:
+            """Rejected on discovery data, before any paid research: the same record for pre-screen and triage."""
+            await db.run(db.update_lead, str(lead["id"]), qualification_status="not_qualified",
+                         prescreen_result=f"rejected:{filt}", prescreen_reason=reason,
+                         concerns=[f"{'Triage' if triaged else 'Pre-screen'}: {reason}"],
+                         hard_filter_checks=[{"filter": filt, "result": "fail", "evidence": reason,
+                                              "source_url": company.get("linkedin_url")}],
+                         source_urls=[u for u in [company.get("linkedin_url")] if u],
+                         source_summary=f"Rejected on discovery data before scraping: {reason}.",
+                         confidence=0.0,
+                         confidence_breakdown=[{"points": 0.0, "reason": f"{'triage' if triaged else 'pre-screen'} "
+                                                                         f"on discovery data: {reason}"}])
+            await db.run(db.add_usage, ctx.run_id, "prescreen_rejected")
+            await db.run(db.add_usage, ctx.run_id, "not_qualified")
+            if triaged:
+                await db.run(db.add_usage, ctx.run_id, "triage_rejected")
+            rejected.append({"domain": company["domain"], "reason": reason})
+
         for company in result.companies:
             if company["domain"] in seen:
                 skipped.append(company["domain"])
                 continue
             screen, reason = prescreen(company, icp)
-            status = "not_qualified" if screen.startswith("rejected") else "pending"
+            if not screen.startswith("rejected") and not services_ok:
+                why = service_firm_reason(company)  # free: an obvious agency/consultancy isn't worth research (D-98)
+                if why:
+                    screen, reason = f"rejected:{SERVICES_FILTER}", why
             # Citable sources = pages really fetched in this run. Apify fetched the LinkedIn page; the website only
             # becomes citable once scrape_website succeeds (a failed or skipped scrape must not be cited).
             fetched = [company["linkedin_url"]] if company.get("linkedin_url") else []
@@ -384,26 +433,49 @@ def build_handlers(ctx: RunContext) -> dict:
                 db.insert_lead_if_new, ctx.run_id, company_name=company["name"][:200],
                 company_domain=company["domain"], linkedin_url=company.get("linkedin_url"),
                 discovery_data=company, prescreen_result=screen, prescreen_reason=reason,
-                qualification_status=status, fetched_urls=fetched,
+                qualification_status="pending", fetched_urls=fetched,
             )
             if lead is None:
                 dupes += 1
                 continue
-            if status == "not_qualified":
-                filt = screen.split(":", 1)[1]
-                await db.run(db.update_lead, str(lead["id"]), concerns=[f"Pre-screen: {reason}"],
-                             hard_filter_checks=[{"filter": filt, "result": "fail", "evidence": reason,
-                                                  "source_url": company.get("linkedin_url")}],
-                             source_urls=[u for u in [company.get("linkedin_url")] if u],
-                             source_summary=f"Rejected on discovery data before scraping: {reason}.",
-                             confidence=0.0,
-                             confidence_breakdown=[{"points": 0.0, "reason": f"pre-screen on discovery data: {reason}"}])
-                await db.run(db.add_usage, ctx.run_id, "prescreen_rejected")
-                await db.run(db.add_usage, ctx.run_id, "not_qualified")
-                rejected.append({"domain": company["domain"], "reason": reason})
+            if screen.startswith("rejected"):
+                await reject(lead, company, screen.split(":", 1)[1], reason)
             else:
+                found[company["domain"]] = (company, lead)
                 to_research.append({"domain": company["domain"], "name": company["name"], "prescreen": screen,
                                     "note": reason})
+
+        # One cheap call ranks the rest before any paid research (D-98): likely first; "unlikely" only with the
+        # company's own words as evidence (checked in code). Skipped, never fatal, if it can't run or can't fit.
+        triage_note = ""
+        if to_research:
+            try:
+                assert_can_spend(await db.run(db.total_spend), TRIAGE_CALL_CAP_USD, await db.run(db.claude_budget))
+                verdict = await triage_svc.triage_candidates(str(icp.get("target_company_type") or ""),
+                                                             list(icp.get("hard_filters") or []),
+                                                             [found[t["domain"]][0] for t in to_research])
+            except BudgetExceeded:
+                verdict = None
+            if verdict and verdict.cost_usd:
+                await db.run(db.record_spend, "triage", verdict.cost_usd, ref_id=ctx.run_id, model=verdict.model,
+                             input_tokens=verdict.input_tokens, output_tokens=verdict.output_tokens,
+                             note=f"candidate triage: {len(to_research)} companies")
+            if verdict and verdict.verdicts:
+                order = {"likely": 0, "unclear": 1}
+                kept = []
+                for item in to_research:
+                    company, lead = found[item["domain"]]
+                    v = verdict.verdicts.get(item["domain"])
+                    if v and v.verdict == "unlikely" and quote_is_in(v.evidence, company):
+                        await reject(lead, company, "Matches the target (triage)",
+                                     f"its LinkedIn text says \u201c{v.evidence.strip()}\u201d ({v.reason})", triaged=True)
+                    else:
+                        item["triage"] = v.verdict if v and v.verdict != "unlikely" else "unclear"
+                        kept.append(item)
+                to_research = sorted(kept, key=lambda t: order.get(t.get("triage", "unclear"), 1))
+                triage_note = f"; triage skipped {len(found) - len(kept)} unlikely, research the list in order"
+            elif verdict and verdict.error:
+                triage_note = "; triage unavailable, research as listed"
         if skipped:
             await db.run(db.add_usage, ctx.run_id, "skipped_seen_recently", len(skipped))
 
@@ -412,11 +484,12 @@ def build_handlers(ctx: RunContext) -> dict:
         await db.run(ctx.detail, f"Found {len(to_research)} companies to research "
                                  f"({usage_after.get('candidates_found', 0)} of {limits['max_candidates']} candidates used)")
         summary = (f"Apify returned {result.raw_count} (cap {size}, page {start_page}) for '{query}': "
-                   f"{len(to_research)} to research, {len(rejected)} rejected on pre-screen, "
+                   f"{len(to_research)} to research, {len(rejected)} rejected on pre-screen or triage, "
                    f"{result.dropped_no_domain} without a website, {dupes} duplicates, "
                    f"{len(skipped)} researched in the last {settings.research_reuse_days} days"
                    + (f"; {result.empty_retries} empty result(s) retried with the same input "
-                      f"(runs {', '.join(result.apify_run_ids)})" if result.empty_retries else ""))
+                      f"(runs {', '.join(result.apify_run_ids)})" if result.empty_retries else "")
+                   + triage_note)
         return success({
             "companies_to_research": to_research,
             "rejected_on_prescreen": rejected,

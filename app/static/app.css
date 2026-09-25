@@ -132,6 +132,11 @@ main { max-width: 1180px; margin: 0 auto; padding: 16px; display: flex; flex-dir
 .btn .when-loading { display: none; }
 .htmx-request .btn .when-loading, .btn.htmx-request .when-loading { display: inline; }
 .htmx-request .btn .when-idle, .btn.htmx-request .when-idle { display: none; }
+/* A polling panel (the run's live status) is also "htmx-request" while it refreshes: its buttons must not look busy. */
+[hx-trigger*="every"].htmx-request .btn .when-loading { display: none; }
+[hx-trigger*="every"].htmx-request .btn .when-idle { display: inline; }
+[hx-trigger*="every"].htmx-request form.htmx-request .btn .when-loading { display: inline; }
+[hx-trigger*="every"].htmx-request form.htmx-request .btn .when-idle { display: none; }
 /* Plain (non-HTMX) forms: set by app.js on a validated submit, never on click. */
 .btn.is-loading .when-loading { display: inline; }
 .btn.is-loading .when-idle { display: none; }

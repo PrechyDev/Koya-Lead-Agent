@@ -6,7 +6,9 @@
   `cancelled`; a server shutdown ends it `failed: Interrupted by server restart` (E-19).
 * While a run is active, a keep-alive task pings our own public /health URL
   every 5 minutes so Render free doesn't put the service to sleep mid-run.
-* On boot, runs left "active" by a restart are marked failed (work kept).
+* A heartbeat touches each active run every minute. On boot, and before a new run starts, runs that went
+  silent for 5 minutes are marked failed (work kept); a run another server is still working on is left alone,
+  because the database is shared (a laptop and Render, D-99).
 """
 
 import asyncio
@@ -20,6 +22,7 @@ from app.config import get_settings
 
 log = logging.getLogger("lead_agent.runs")
 KEEPALIVE_SECONDS = 300
+HEARTBEAT_SECONDS = 60
 SHUTDOWN_GRACE_S = 5  # how long a stopping server waits for runs to record that they were interrupted
 
 
@@ -28,6 +31,7 @@ class RunManager:
         self._tasks: dict[str, asyncio.Task] = {}
         self._user_cancels: set[str] = set()  # runs a person cancelled (vs. stopped by a shutdown)
         self._keepalive: asyncio.Task | None = None
+        self._heartbeat: asyncio.Task | None = None
 
     def is_running(self, run_id: str) -> bool:
         task = self._tasks.get(run_id)
@@ -42,6 +46,16 @@ class RunManager:
         task = asyncio.create_task(self._run(run_id, skip_icp), name=f"run-{run_id}")
         self._tasks[run_id] = task
         self._ensure_keepalive()
+        if not self._heartbeat or self._heartbeat.done():
+            self._heartbeat = asyncio.create_task(self._beat())
+
+    async def _beat(self) -> None:
+        while self.active_count() > 0:
+            try:
+                await db.run(db.touch_runs, [rid for rid, t in self._tasks.items() if not t.done()])
+            except Exception:  # noqa: BLE001 — a missed beat is harmless; 5 missed ones mark the run as orphaned
+                log.warning("run heartbeat failed")
+            await asyncio.sleep(HEARTBEAT_SECONDS)
 
     async def _run(self, run_id: str, skip_icp: bool) -> None:
         try:
@@ -87,8 +101,9 @@ class RunManager:
             task.cancel()
         if tasks:  # let each run write its "interrupted" status before the DB pool closes
             await asyncio.wait(tasks, timeout=SHUTDOWN_GRACE_S)
-        if self._keepalive:
-            self._keepalive.cancel()
+        for extra in (self._keepalive, self._heartbeat):
+            if extra:
+                extra.cancel()
 
 
 manager = RunManager()

@@ -359,16 +359,27 @@ def find_recent_run_by_signature(signature: str, days: int, exclude_id: str) -> 
     )
 
 
-def fail_orphaned_runs() -> int:
-    """On boot: any run still 'active' was interrupted by a restart (E-19)."""
+ORPHAN_AFTER_MINUTES = 5  # a live run is touched every minute (RunManager heartbeat); 5 silent minutes = dead
+
+
+def fail_orphaned_runs(stale_minutes: int = ORPHAN_AFTER_MINUTES) -> int:
+    """Runs still 'active' whose server stopped touching them (a crash or restart, E-19). Only STALE runs: the
+    database is shared, so a laptop starting up must never fail a run another server is still working on (D-99)."""
     rows = fetch_all(
         f"""update {t('runs')} set status = 'failed', finished_at = now(),
                    error_message = coalesce(error_message, 'Interrupted by server restart'),
                    status_detail = 'Interrupted by server restart; work saved so far is kept'
-            where status = any(%s) returning id""",
-        (list(ACTIVE_STATUSES),),
+            where status = any(%s) and updated_at < now() - make_interval(mins => %s) returning id""",
+        (list(ACTIVE_STATUSES), int(stale_minutes)),
     )
     return len(rows)
+
+
+def touch_runs(run_ids: list[str]) -> None:
+    """Heartbeat: "this server is still working on these runs" (the updated_at trigger records the time)."""
+    if run_ids:
+        execute(f"update {t('runs')} set updated_at = now() where id = any(%s::uuid[]) and status = any(%s)",
+                (run_ids, list(ACTIVE_STATUSES)))
 
 
 # ---------------------------------------------------------------------------

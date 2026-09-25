@@ -1,5 +1,5 @@
 {% set icons = {"info": "ℹ", "success": "✓", "warning": "⚠", "error": "✕"} %}
-<div class="banner {{ kind }}" role="{{ 'alert' if kind == 'error' else 'status' }}">
+<div class="banner {{ kind }}"{% if dismiss_key %} data-dismiss-key="{{ dismiss_key }}"{% endif %} role="{{ 'alert' if kind == 'error' else 'status' }}">
   <span class="icon" aria-hidden="true">{{ icons.get(kind, "ℹ") }}</span>
   <div class="msg">{% if message_html %}{{ message_html | safe }}{% else %}{{ message }}{% endif %}</div>
   <button class="close" type="button" aria-label="Dismiss message">✕</button>

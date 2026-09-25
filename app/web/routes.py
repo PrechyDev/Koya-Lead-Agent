@@ -321,6 +321,7 @@ async def create_run(request: Request, objective: str = Form(""),
     existing = await db.run(db.get_run_by_idempotency_key, idempotency_key)
     if existing:  # double-click / resubmit (E-20): go to the run that already exists
         return Response(status_code=204, headers={"HX-Redirect": f"/runs/{existing['id']}"})
+    await db.run(db.fail_orphaned_runs)  # a run whose server died must not block new runs forever (D-99)
     active = await db.run(db.active_run)
     if active or manager.active_count():
         link = f"/runs/{active['id']}" if active else "/"  # a UUID path we built: safe markup

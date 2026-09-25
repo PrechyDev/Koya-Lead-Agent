@@ -320,3 +320,16 @@ async def test_a_search_that_stays_empty_stops_after_two_retries(monkeypatch):
     monkeypatch.setattr(apify_svc.asyncio, "sleep", _no_sleep)
     res = await apify_svc.find_companies(query="saas", geos=[], size_bands=[], max_items=3, max_charge_usd=0.05)
     assert len(fake._actor.calls) == 3 and res.raw_count == 0 and res.cost_usd == pytest.approx(0.003)
+
+
+async def test_triage_failure_skips_nobody():
+    """Triage is an optimisation (D-98): if the call fails, every candidate is still researched."""
+    from app.services import triage
+
+    class Broken:
+        class messages:  # noqa: N801
+            @staticmethod
+            async def parse(**kwargs):
+                raise RuntimeError("API down")
+    result = await triage.run_triage("B2B SaaS", ["US"], [{"domain": "a.com", "name": "A"}], client=Broken())
+    assert result.verdicts == {} and result.cost_usd == 0 and "API down" in result.error

@@ -184,7 +184,7 @@ async def call(ctx, name, args):
 
 ICP = {"target_company_type": "B2B SaaS", "industries": ["B2B SaaS"], "geography": ["United States"],
        "headcount_range": "10-100", "hard_filters": ["US"], "soft_preferences": [], "disqualifiers": [],
-       "discovery_query_plan": ["saas"], "assumptions": [], "user_constraints_preserved": []}
+       "discovery_query_plan": ["clinic scheduling software"], "assumptions": [], "user_constraints_preserved": []}
 
 
 @pytest.mark.db
@@ -389,3 +389,27 @@ def test_marking_an_issue_fixed_updates_the_badge_at_once(admin_dsn, monkeypatch
     finally:
         with psycopg.connect(admin_dsn, prepare_threshold=None, autocommit=True) as conn:
             conn.execute("delete from lead_agent.system_events where code = %s", (code,))
+
+
+@pytest.mark.db
+def test_startup_recovery_never_fails_a_run_another_server_is_working_on(admin_dsn):
+    """The database is shared (laptop + Render): only runs silent for 5 minutes are orphans (D-99, live run c7cfea10)."""
+    run, _ = db.create_run(idempotency_key=f"test-{uuid.uuid4()}", objective="heartbeat test objective",
+                           objective_hash="h" + uuid.uuid4().hex, limits=DEV_LIMITS.to_dict(), run_kind="dev")
+    rid = str(run["id"])
+    try:
+        db.set_status(rid, "researching", "working")
+        db.touch_runs([rid])  # the heartbeat of the server doing the work
+        db.fail_orphaned_runs()  # e.g. a laptop starting up at the same moment
+        assert db.get_run(rid)["status"] == "researching"
+        with psycopg.connect(admin_dsn, prepare_threshold=None, autocommit=True) as conn:
+            try:  # backdate without the updated_at trigger (session-only), to simulate a server that died
+                conn.execute("set session_replication_role = replica")
+            except psycopg.Error:
+                pytest.skip("can't bypass the updated_at trigger with this role")
+            conn.execute("update lead_agent.runs set updated_at = now() - interval '10 minutes' where id = %s", (rid,))
+        db.fail_orphaned_runs()
+        assert db.get_run(rid)["status"] == "failed"
+    finally:
+        with psycopg.connect(admin_dsn, prepare_threshold=None, autocommit=True) as conn:
+            conn.execute("delete from lead_agent.runs where id = %s", (rid,))

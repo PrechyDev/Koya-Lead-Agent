@@ -1,6 +1,7 @@
 {#- Polled every 3s while the run is active. Status/errors show in banners here, never inside results. -#}
 {% set usage = run.usage or {} %}
 {% set limits = run.limits or {} %}
+{% set dismiss_key = "run:" ~ run.id ~ ":" ~ run.status %}{# closing a banner here keeps it closed across refreshes #}
 {% if run.status in ACTIVE %}
   {% set kind = "info" %}{% set message = (run.status_detail or "Working…") ~ ". Runs usually take 5–15 minutes; you can leave this page." %}
   {% include "partials/banner.html" %}

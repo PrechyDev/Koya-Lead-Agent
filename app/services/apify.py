@@ -157,7 +157,7 @@ async def _settled_cost(client, run_id: str | None, reported: float, items: int)
 
 async def find_companies(
     *, query: str, geos: list[str], size_bands: list[str], max_items: int, max_charge_usd: float,
-    start_page: int = 1, timeout_s: int = 180,
+    start_page: int = 1, timeout_s: int = 180, industry_ids: list[str] | None = None,
 ) -> DiscoveryResult:
     settings = get_settings()
     if max_items <= 0:
@@ -172,6 +172,8 @@ async def find_companies(
         actor_input["locations"] = location_names(geos)
     if size_bands:
         actor_input["companySize"] = size_bands
+    if industry_ids:  # LinkedIn industry ids as strings, e.g. ["4"] = Software Development (D-98)
+        actor_input["industryIds"] = [str(i) for i in industry_ids]
 
     client = ApifyClientAsync(settings.apify_token)
     total_cost, run_ids = 0.0, []

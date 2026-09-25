@@ -183,6 +183,7 @@ APP_TAGLINE = ("the tool Koya's outbound team uses to find and research companie
 
 ICP_PHASE_MAX_TURNS = 6
 GROUNDING_RUN_CAP_USD = Decimal("0.10")  # fact-check spend allowed per run, on top of the run's Claude cap
+TRIAGE_CALL_CAP_USD = Decimal("0.02")  # one candidate-triage call (Haiku, ~$0.005); skipped if it can't fit (D-98)
 ICP_PHASE_MAX_BUDGET_USD = 0.05
 ICP_PHASE_TIMEOUT_S = 240
 

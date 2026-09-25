@@ -109,7 +109,11 @@
   // Dismissible banners.
   document.addEventListener("click", function (event) {
     var close = event.target.closest(".banner .close");
-    if (close) close.closest(".banner").remove();
+    if (close) {
+      var banner = close.closest(".banner"), key = banner.getAttribute("data-dismiss-key");
+      if (key) { try { sessionStorage.setItem("dismissed:" + key, "1"); } catch (e) { /* private mode */ } }
+      banner.remove();
+    }
   });
 
   // Show/hide password: an eye button inside every password field (added here, so every form gets it).
@@ -349,6 +353,15 @@
     var cancel = document.querySelector("[data-modal] [data-modal-cancel]");
     if (cancel) { event.preventDefault(); cancel.click(); }
   });
+
+  // Banners closed in a refreshing panel stay closed (same run + status) instead of coming back every 3 s.
+  function hideDismissed() {
+    document.querySelectorAll(".banner[data-dismiss-key]").forEach(function (b) {
+      try { if (sessionStorage.getItem("dismissed:" + b.getAttribute("data-dismiss-key"))) b.remove(); } catch (e) {}
+    });
+  }
+  document.addEventListener("DOMContentLoaded", hideDismissed);
+  document.addEventListener("htmx:afterSwap", hideDismissed);
 
   // Row "Manage" menus (D-95): one open at a time, placed under their button with fixed positioning so the
   // table's scroll box can't clip them (flipped up near the bottom of the screen); outside click / Esc closes.

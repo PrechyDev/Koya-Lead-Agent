@@ -27,7 +27,7 @@ ICP_ARGS = {
         "headcount_range": "10-100", "buyer_persona": "Founder / COO", "business_problem": "manual ops",
         "hard_filters": ["Headquartered in the United States", "B2B SaaS", "10-100 employees"],
         "soft_preferences": ["hiring ops roles"], "disqualifiers": ["agencies"],
-        "discovery_query_plan": ["workflow automation saas", "b2b saas operations"],
+        "discovery_query_plan": ["workflow automation saas", "clinic scheduling software"],
         "assumptions": ["Assumed US"], "user_constraints_preserved": ["US", "10-100 employees"],
     },
 }
@@ -259,7 +259,7 @@ async def test_icp_without_company_type_asks_and_defaults_fill_the_rest(run_ctx)
     assert data["is_searchable"] is False and "Which kind of companies" in run["clarification_question"]
     minimal = {"target_company_type": "B2B SaaS", "industries": [], "geography": [], "headcount_range": "",
                "hard_filters": ["Sells software to businesses (B2B SaaS)"], "soft_preferences": [], "disqualifiers": [],
-               "discovery_query_plan": ["b2b saas"], "assumptions": [], "user_constraints_preserved": ["SaaS"],
+               "discovery_query_plan": ["clinic scheduling software"], "assumptions": [], "user_constraints_preserved": ["SaaS"],
                "requested_lead_count": None}
     data, err = await call(run_ctx, "save_icp", {**ICP_ARGS, "icp": minimal})
     run = db.get_run(run_ctx.run_id)
@@ -424,3 +424,66 @@ async def test_save_icp_sizes_the_cap_and_shrinks_the_run_to_the_balance(run_ctx
     assert not err, data
     assert run["limits"]["target_qualified"] == 3 and run["limits"]["max_budget_usd"] == 1.43
     assert any("allows 3 leads in this run instead of 5" in a for a in run["icp"]["assumptions"])
+
+
+
+# --- discovery finds better companies: niche terms, industry filter, service-firm pre-screen, triage (D-98) -----
+def test_free_discovery_rules():
+    from app.lib.triage import (
+        generic_queries,
+        industry_ids_for,
+        quote_is_in,
+        service_firm_reason,
+        wants_service_firms,
+    )
+    assert generic_queries(["B2B SaaS", "SaaS operations", "Software-as-a-service company", "clinic scheduling software"])         == ["B2B SaaS", "SaaS operations", "Software-as-a-service company"]
+    saas = {"target_company_type": "B2B SaaS", "industries": ["SaaS"]}
+    agencies = {"target_company_type": "Marketing agencies", "industries": []}
+    assert industry_ids_for(saas) == ["4"] and industry_ids_for(agencies) == [] and wants_service_firms(agencies)
+    shop = {"tagline": "We build nearshore teams", "description": "Salesforce consulting partner and custom software "
+            "development for clients", "industries": ["IT Services and IT Consulting"], "specialities": []}
+    product = {**shop, "description": "Our platform helps clinics book patients. Custom software development too."}
+    assert "IT Services" in service_firm_reason(shop) and service_firm_reason(product) is None  # product words keep it
+    assert service_firm_reason({"description": "Scheduling software for dental clinics", "industries": []}) is None
+    assert quote_is_in("custom software development", shop) and not quote_is_in("a marketing agency", shop)
+
+
+async def test_discovery_skips_services_firms_and_triage_needs_the_companys_own_words(run_ctx, fake_apify, monkeypatch):
+    from app.services import triage
+
+    agency = _company("delta-tooltest.com")
+    agency.update(description="Digital agency and nearshore development services for startups", industries=[
+        "IT Services and IT Consulting"])
+    claimed = _company("epsilon-tooltest.com")
+    claimed.update(description="Makes SaaS for dental clinics")
+
+    async def apify(**kwargs):
+        fake_apify.append(kwargs)
+        comps = [_company("alpha-tooltest.com"), agency, claimed]
+        return apify_svc.DiscoveryResult(companies=comps, raw_count=3, dropped_no_domain=0, apify_run_id="f", cost_usd=0.0)
+    monkeypatch.setattr(T.apify_svc, "find_companies", apify)
+
+    async def fake_triage(target, hard_filters, companies):
+        v = triage.CompanyVerdict
+        return triage.TriageResult(verdicts={
+            "alpha-tooltest.com": v(domain="alpha-tooltest.com", verdict="unlikely", evidence="a totally made-up quote",
+                                    reason="invented"),  # not the company's words: must be ignored
+            "epsilon-tooltest.com": v(domain="epsilon-tooltest.com", verdict="likely", reason="SaaS for clinics")},
+            cost_usd=__import__("decimal").Decimal("0.004"), model="claude-haiku-4-5")
+    monkeypatch.setattr(triage, "triage_candidates", fake_triage)
+    await call(run_ctx, "save_icp", ICP_ARGS)
+    run_ctx.limits = {**run_ctx.limits, "first_pool": 3}
+    data, err = await call(run_ctx, "discover_companies", {"purpose": "p", "search_query": "clinic scheduling software"})
+    assert not err, data
+    assert fake_apify[-1]["industry_ids"] == ["4"]  # a SaaS target searches LinkedIn's Software Development industry
+    delta = db.get_lead_by_domain(run_ctx.run_id, "delta-tooltest.com")
+    assert delta["qualification_status"] == "not_qualified" and "services firm" in delta["prescreen_result"]
+    order = [t["domain"] for t in data["companies_to_research"]]
+    assert order == ["epsilon-tooltest.com", "alpha-tooltest.com"]  # likely first; the invented "unlikely" is ignored
+    assert db.run_spend(run_ctx.run_id, "triage") == __import__("decimal").Decimal("0.004")
+
+
+async def test_save_icp_refuses_bare_category_search_terms(run_ctx):
+    vague = {**ICP_ARGS["icp"], "discovery_query_plan": ["B2B SaaS", "SaaS operations"]}
+    data, err = await call(run_ctx, "save_icp", {**ICP_ARGS, "icp": vague})
+    assert err and "must name what the companies sell" in data["error"] and "B2B SaaS" in data["error"]

@@ -15,6 +15,7 @@ STEPS: dict[str, tuple[str, str]] = {
     "icp": ("Understanding the objective", "the scope check, then turning the objective into an ICP"),
     "grounding": ("Fact-checking drafts", "checks every claim in the drafts against the scraped pages"),
     "preflight": ("Pre-run key check", "a 1-token call before each run to confirm the AI key works"),
+    "triage": ("Candidate triage", "one cheap check ranks the companies found before any paid research"),
     "eval": ("Model A/B test", "one-off, finished: chose the models for each role"),
     "spike": ("SDK trial", "one-off, day 1: proved the Agent SDK works"),
 }
