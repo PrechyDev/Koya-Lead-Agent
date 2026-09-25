@@ -433,7 +433,6 @@ def test_free_discovery_rules():
         generic_queries,
         industry_ids_for,
         quote_is_in,
-        service_firm_reason,
         wants_service_firms,
     )
     assert generic_queries(["B2B SaaS", "SaaS operations", "Software-as-a-service company", "clinic scheduling software"])         == ["B2B SaaS", "SaaS operations", "Software-as-a-service company"]
@@ -442,13 +441,10 @@ def test_free_discovery_rules():
     assert industry_ids_for(saas) == ["4"] and industry_ids_for(agencies) == [] and wants_service_firms(agencies)
     shop = {"tagline": "We build nearshore teams", "description": "Salesforce consulting partner and custom software "
             "development for clients", "industries": ["IT Services and IT Consulting"], "specialities": []}
-    product = {**shop, "description": "Our platform helps clinics book patients. Custom software development too."}
-    assert "IT Services" in service_firm_reason(shop) and service_firm_reason(product) is None  # product words keep it
-    assert service_firm_reason({"description": "Scheduling software for dental clinics", "industries": []}) is None
     assert quote_is_in("custom software development", shop) and not quote_is_in("a marketing agency", shop)
 
 
-async def test_discovery_skips_services_firms_and_triage_needs_the_companys_own_words(run_ctx, fake_apify, monkeypatch):
+async def test_discovery_keeps_agencies_and_triage_needs_the_companys_own_words(run_ctx, fake_apify, monkeypatch):
     from app.services import triage
 
     agency = _company("delta-tooltest.com")
@@ -477,9 +473,10 @@ async def test_discovery_skips_services_firms_and_triage_needs_the_companys_own_
     assert not err, data
     assert fake_apify[-1]["industry_ids"] == ["4"]  # a SaaS target searches LinkedIn's Software Development industry
     delta = db.get_lead_by_domain(run_ctx.run_id, "delta-tooltest.com")
-    assert delta["qualification_status"] == "not_qualified" and "services firm" in delta["prescreen_result"]
+    assert delta["qualification_status"] == "pending"  # an agency is never rejected for being one (D-102)
     order = [t["domain"] for t in data["companies_to_research"]]
-    assert order == ["epsilon-tooltest.com", "alpha-tooltest.com"]  # likely first; the invented "unlikely" is ignored
+    assert order == ["epsilon-tooltest.com", "alpha-tooltest.com", "delta-tooltest.com"]  # likely first; the
+    # invented "unlikely" (a quote that isn't in alpha's text) is ignored
     assert db.run_spend(run_ctx.run_id, "triage") == __import__("decimal").Decimal("0.004")
 
 

@@ -46,8 +46,6 @@ from app.lib.triage import (
     generic_queries,
     industry_ids_for,
     quote_is_in,
-    service_firm_reason,
-    wants_service_firms,
 )
 from app.services import apify as apify_svc
 from app.services import firecrawl as fc
@@ -81,9 +79,6 @@ def mcp_name(name: str) -> str:
 # ---------------------------------------------------------------------------
 # Input models (validated server-side, whatever the model sends)
 # ---------------------------------------------------------------------------
-SERVICES_FILTER = "Sells its own product (not a services firm)"  # the free pre-screen's check (D-98)
-
-
 class ICPModel(BaseModel):
     target_company_type: str = ""
     industries: list[str] = Field(default_factory=list)
@@ -398,7 +393,6 @@ def build_handlers(ctx: RunContext) -> dict:
                 if ctx.cross_run_dedupe else {})
         to_research, rejected, dupes, skipped = [], [], 0, []
         found: dict[str, tuple[dict, dict]] = {}  # domain -> (company, lead) for the triage step
-        services_ok = wants_service_firms(icp)
 
         async def reject(lead: dict, company: dict, filt: str, reason: str, *, triaged: bool = False) -> None:
             """Rejected on discovery data, before any paid research: the same record for pre-screen and triage."""
@@ -423,10 +417,6 @@ def build_handlers(ctx: RunContext) -> dict:
                 skipped.append(company["domain"])
                 continue
             screen, reason = prescreen(company, icp)
-            if not screen.startswith("rejected") and not services_ok:
-                why = service_firm_reason(company)  # free: an obvious agency/consultancy isn't worth research (D-98)
-                if why:
-                    screen, reason = f"rejected:{SERVICES_FILTER}", why
             # Citable sources = pages really fetched in this run. Apify fetched the LinkedIn page; the website only
             # becomes citable once scrape_website succeeds (a failed or skipped scrape must not be cited).
             fetched = [company["linkedin_url"]] if company.get("linkedin_url") else []
