@@ -64,18 +64,26 @@ def ago(value: datetime | None) -> str:
     return value.strftime("%b %d, %Y")
 
 
-def shortfall_sentence(run: dict) -> str:
-    """Plain, code-built reason for a short run (the agent's own explanation is on the Summary tab)."""
+def shortfall_sentence(run: dict, drafted: int) -> str:
+    """Why a run is partial, in the client's terms (D-91): what they're missing (leads or drafts) and why. A run
+    stopped by a limit says so (its stored reason); otherwise the companies didn't meet the requirements."""
     usage, limits = run.get("usage") or {}, run.get("limits") or {}
     found, qualified = int(usage.get("candidates_found", 0)), int(usage.get("qualified", 0))
     target = int(limits.get("target_qualified", 0) or 0)
+    stopped = run.get("shortfall_reason") if run.get("error_detail") else None  # the system's own plain reason
+    missing = max(qualified - drafted, 0)
+    leads = f"{qualified} qualified lead{'s' if qualified != 1 else ''}"
+    if qualified >= target:
+        if missing:
+            return (f"Found {leads}, but {missing} {'has' if missing == 1 else 'have'} no email drafts yet. "
+                    + (stopped or "The run stopped before writing them."))
+        return f"Found {leads} with drafts. Some list-quality checks weren't met: see the Summary tab."
+    if stopped:
+        return f"Found {qualified} of {target} qualified leads. {stopped}"
     if found == 0:
-        reason = "The company search found no matching companies."
-    elif qualified == 0:
-        reason = f"None of the {found} companies found met every requirement."
-    else:
-        reason = f"Only {qualified} of the {found} companies found met every requirement within this run's limits."
-    return f"Found {qualified} of {target} qualified leads. {reason} The full explanation is on the Summary tab."
+        return "No qualified leads: the company search found no matching companies. Try a broader objective."
+    rest = "None of the companies found" if qualified == 0 else "The other companies found"
+    return f"Found {qualified} of {target} qualified leads. {rest} didn't meet every requirement. See the Summary tab."
 
 
 def money(value) -> str:

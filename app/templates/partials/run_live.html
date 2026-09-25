@@ -7,7 +7,7 @@
 {% elif run.status == "completed" %}
   {% set kind = "success" %}{% set message = "Run completed: " ~ (run.status_detail or "") %}{% include "partials/banner.html" %}
 {% elif run.status == "completed_partial" %}
-  {% set kind = "warning" %}{% set message = shortfall_sentence(run) %}{% include "partials/banner.html" %}
+  {% set kind = "warning" %}{% set message = shortfall_sentence(run, drafted) %}{% include "partials/banner.html" %}
 {% elif run.status == "failed" %}
   {% set kind = "error" %}{% set message = run.error_message or "The run couldn't finish. Anything saved before the problem is kept below." %}{% include "partials/banner.html" %}
 {% elif run.status == "cancelled" %}
@@ -33,8 +33,10 @@
 
 <div class="row between">
   <div class="counters" aria-label="Usage">
+    {% if member and member.is_developer %}{# the run's internal limits: technical (D-91) #}
     <span class="counter">Companies <b>{{ usage.get('candidates_found', 0) }} / {{ limits.get('max_candidates') }}</b></span>
     <span class="counter">Pages scraped <b>{{ usage.get('scrapes', 0) }} / {{ limits.get('max_scrapes') }}</b></span>
+    {% endif %}
     <span class="counter">Qualified <b>{{ usage.get('qualified', 0) }} / {{ limits.get('target_qualified') }}</b></span>
     {% if member and member.is_admin %}<span class="counter" title="Estimated from token usage; the Anthropic Console shows the actual bill">AI cost (est.) <b>{{ run.cost_usd | money }} / {{ limits.get('max_budget_usd') | money }}</b></span>{% endif %}
   </div>

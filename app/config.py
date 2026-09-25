@@ -139,7 +139,7 @@ FULL_LIMITS = RunLimits(
 )
 
 DEV_LIMITS = RunLimits(
-    target_qualified=2,
+    target_qualified=1,  # D-91: with Opus research (~$0.11/company) one lead + its drafts fits the $0.30 cap
     first_pool=3,
     topup_size=2,
     max_candidates=5,

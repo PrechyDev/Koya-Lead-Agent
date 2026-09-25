@@ -385,6 +385,7 @@ async def run_live(request: Request, run_id: str, member: Member = Depends(curre
     response = templates.TemplateResponse(request, "partials/run_live.html", _ctx(
         request, run=run, steps=stepper(run["status"], _last_active_step(run), run.get("usage")),
         can_control=_can_control(member, run), duplicate=duplicate, follow_up=follow_up,
+        drafted=await db.run(db.drafted_count, run_id) if run["status"] == "completed_partial" else 0,
         tech_message=admin_message_from_detail(run.get("error_detail")) if member.is_developer else None))
     if run["status"] not in ACTIVE:
         response.status_code = 286  # HTMX: stop polling

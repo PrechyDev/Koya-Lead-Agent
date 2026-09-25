@@ -534,3 +534,26 @@ def test_the_database_refuses_a_developer_who_is_not_an_admin(admin_dsn):
         with pytest.raises(psycopg.errors.CheckViolation):
             conn.execute("update lead_agent.members set is_owner = false, role = 'member' where user_id = %s", (uid,))
         conn.rollback()  # nothing is changed: the trigger stays enabled and the owner row is untouched
+
+
+# --- the partial-run banner says what the client is missing, and why (D-91) ---------------------------------------
+def test_partial_banner_names_the_real_gap():
+    from app.web.templating import shortfall_sentence
+    base = {"limits": {"target_qualified": 2}, "error_detail": None, "shortfall_reason": "the agent's long story"}
+    budget = {**base, "error_detail": "[agent_stopped] error_max_budget_usd",
+              "shortfall_reason": "The research stopped because it reached this run's AI budget."}
+    # all leads found, but the budget ran out before drafting (live run dc8b74f9): drafts are the gap, not the leads
+    s = shortfall_sentence({**budget, "usage": {"candidates_found": 3, "qualified": 2}}, 0)
+    assert "2 have no email drafts" in s and "AI budget" in s and "met every requirement" not in s
+    s = shortfall_sentence({**budget, "usage": {"candidates_found": 5, "qualified": 1}}, 1)
+    assert s.startswith("Found 1 of 2") and "AI budget" in s
+    s = shortfall_sentence({**base, "usage": {"candidates_found": 5, "qualified": 1}}, 1)
+    assert "other companies found didn't meet" in s and "5" not in s  # no rejected-company counts for the client
+    assert "no matching companies" in shortfall_sentence({**base, "usage": {}}, 0)
+    assert "the agent's long story" not in shortfall_sentence({**base, "usage": {"qualified": 1}}, 1)
+
+
+def test_run_limit_counters_are_developer_only(client_as, a_run):
+    for who, shown in ((MEMBER, False), (ADMIN, False), (DEVELOPER, True)):
+        live = client_as(who).get(f"/runs/{a_run['id']}/live").text
+        assert ("Pages scraped" in live) is shown and "Qualified" in live

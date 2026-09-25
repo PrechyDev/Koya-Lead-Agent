@@ -475,6 +475,14 @@ def recently_researched(domains: list[str], days: int, exclude_run_id: str) -> d
     return {r["company_domain"]: str(r["run_id"]) for r in rows}
 
 
+def drafted_count(run_id: str) -> int:
+    """Qualified leads that have their email sequence written."""
+    row = fetch_one(f"""select count(*) as n from {t('leads')}
+                         where run_id = %s and qualification_status = 'qualified' and email_sequence is not null""",
+                    (run_id,))
+    return int(row["n"]) if row else 0
+
+
 def lead_counts(run_id: str) -> dict[str, int]:
     rows = fetch_all(
         f"select qualification_status as s, count(*) as n from {t('leads')} where run_id = %s group by 1",
