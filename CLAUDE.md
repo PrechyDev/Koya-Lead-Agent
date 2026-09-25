@@ -99,7 +99,7 @@ Models are set per role via `MODEL_ORCHESTRATOR`, `MODEL_ICP`, `MODEL_RESEARCHER
                         context.py, logging.py (logged_call), transcripts.py (cost recovery)
   services/             apify.py, firecrawl.py, grounding.py (fact-check), scope.py, health.py (pre-run checks)
   lib/                  pure rules: domain, sanitize, objective, limits, budget, qualification_rules,
-                        scoring, outreach_checks, tech_signals, icp_defaults, validation
+                        scoring, outreach_checks, tech_signals, icp_defaults, validation, spend_breakdown
   web/                  routes.py (pages + actions), templating.py
   templates/            pages, partials/ (HTMX fragments), fixtures/ (test pages)
   static/               app.css, app.js, htmx.min.js
@@ -114,7 +114,7 @@ Models are set per role via `MODEL_ORCHESTRATOR`, `MODEL_ICP`, `MODEL_RESEARCHER
 ```
 py -3.12 -m venv .venv && .venv/Scripts/python -m pip install -r requirements.txt   # + pytest pytest-asyncio respx ruff
 .venv/Scripts/python -m uvicorn app.main:app --port 8000            # run locally (NOT --reload on Windows: it can't start the agent CLI)
-.venv/Scripts/python -m pytest -q                                   # 265 tests (real DB, paid APIs faked)
+.venv/Scripts/python -m pytest -q                                   # 268 tests (real DB, paid APIs faked)
 .venv/Scripts/python scripts/migrate.py                             # apply DB migrations (admin DSN, laptop only)
 .venv/Scripts/python scripts/create_app_role.py                     # create/sync the app DB user from the DSN you put in .env
 .venv/Scripts/python scripts/bootstrap_owner.py <email> "<Name>" --owner [--invite]   # give the first admin access

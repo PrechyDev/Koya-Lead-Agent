@@ -74,6 +74,7 @@ def raise_alert(code: str, detail: str = "", run_id: str | None = None, notify: 
                 values (%s, %s, %s, %s, %s) returning id""",
             (kind.severity, kind.service, kind.code, message[:2000], run_id),
         )
+        _reset_issue_count()  # a new issue shows in the nav badge at once
     except Exception:  # noqa: BLE001 — the DB may be the thing that's down
         log.exception("could not record alert %s", code)
         if notify:
@@ -106,6 +107,11 @@ _issue_count_cache: tuple[float, int] = (0.0, 0)
 ISSUE_COUNT_TTL_S = 15  # the nav badge may lag a few seconds; pages (and HTMX polls) don't each hit the DB
 
 
+def _reset_issue_count() -> None:
+    global _issue_count_cache
+    _issue_count_cache = (0.0, 0)
+
+
 def open_issue_count() -> int:
     """Open warning/critical issues, for the admin nav badge (cached for ISSUE_COUNT_TTL_S seconds)."""
     global _issue_count_cache
@@ -132,3 +138,4 @@ def list_events(limit: int = 100) -> list[dict]:
 def resolve(event_id: str, user_id: str) -> None:
     db.execute(f"update {db.t('system_events')} set resolved_at = now(), resolved_by = %s where id = %s",
                (user_id, event_id))
+    _reset_issue_count()  # the nav badge must drop right after "Mark fixed", not up to 15 s later

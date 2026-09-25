@@ -475,8 +475,10 @@ def test_technical_views_are_developer_only(client_as, a_run):
         assert c.post("/system/test-alert", data={"csrf_token": auth.csrf_token_for(who.user_id)}).status_code == 403
     admin = client_as(ADMIN)
     assert 'href="/system"' not in admin.get("/runs/new").text and 'href="/spend"' in admin.get("/runs/new").text
-    assert "By source and model" not in admin.get("/spend").text
-    assert "By source and model" in client_as(DEVELOPER).get("/spend").text
+    assert "Where the money went" not in admin.get("/spend").text
+    assert "By step" not in admin.get("/spend?tab=breakdown").text  # refused on the server: falls back to By run
+    assert "Where the money went" in client_as(DEVELOPER).get("/spend").text
+    assert "By step" in client_as(DEVELOPER).get("/spend?tab=breakdown").text
     assert "Tool calls" in client_as(DEVELOPER).get(f"/runs/{rid}").text
 
 
@@ -557,3 +559,38 @@ def test_run_limit_counters_are_developer_only(client_as, a_run):
     for who, shown in ((MEMBER, False), (ADMIN, False), (DEVELOPER, True)):
         live = client_as(who).get(f"/runs/{a_run['id']}/live").text
         assert ("Pages scraped" in live) is shown and "Qualified" in live
+
+
+
+# --- Spend page: tabs (By run first), 20 a page, a readable breakdown (D-92) ------------------------------------
+def test_spend_tabs_paginate_20_a_page(client_as, monkeypatch):
+    seen = []
+    def fake(limit, offset):
+        seen.append((limit, offset))
+        return [], 45
+    monkeypatch.setattr(db, "spend_by_run", fake)
+    c = client_as(ADMIN)
+    page = c.get("/spend").text
+    assert page.index("By run") < page.index("Apify")  # By run is the first tab and the default
+    page = c.get("/spend?tab=runs&page=2").text
+    assert seen[-1] == (20, 20) and "Page 2 of 3" in page and "/spend?tab=runs&amp;page=3" in page
+    assert c.get("/spend?tab=runs&page=9").headers["location"] == "/spend?tab=runs&page=3"
+
+
+def test_spend_breakdown_names_steps_and_merges_model_variants():
+    from datetime import datetime, timezone
+    from decimal import Decimal
+
+    from app.lib.spend_breakdown import breakdown, model_family
+    assert model_family("claude-haiku-4-5-20251001") == model_family("claude-haiku-4-5") == "Haiku 4.5"
+    assert model_family("claude-opus-5-5[1m]") == "Opus 5.5" and model_family("claude-sonnet-5") == "Sonnet 5"
+    now = datetime.now(timezone.utc)
+    rows = [{"source": "run", "model": "claude-opus-5-5[1m]", "entries": 1, "cost_usd": Decimal("0.30"), "last_at": now},
+            {"source": "run", "model": "claude-opus-5-5", "entries": 1, "cost_usd": Decimal("0.10"), "last_at": now},
+            {"source": "icp", "model": "claude-haiku-4-5-20251001", "entries": 4, "cost_usd": Decimal("0.10"),
+             "last_at": now}]
+    steps, models = breakdown(rows)
+    assert [(s.name, s.calls, round(s.share)) for s in steps] == [("Research & drafting", 2, 80),
+                                                                    ("Understanding the objective", 4, 20)]
+    assert [m.name for m in models] == ["Opus 5.5", "Haiku 4.5"] and models[0].per_call == Decimal("0.20")
+    assert models[1].detail == "Used for: Understanding the objective"

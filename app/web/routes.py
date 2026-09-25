@@ -20,6 +20,7 @@ from app.failures import CATALOGUE, ServiceFailure, admin_message_from_detail, m
 from app.lib.budget import BudgetExceeded, assert_run_fits
 from app.lib.icp_defaults import MAX_LEAD_COUNT
 from app.lib.objective import objective_hash, objective_problem
+from app.lib.spend_breakdown import breakdown
 from app.lib.validation import EMAIL_HINT, MIN_PASSWORD_LENGTH, csv_cell, is_valid_email, safe_next
 from app.main import limiter
 from app.runs import manager
@@ -247,6 +248,7 @@ async def accept_invite_submit(request: Request, access_token: str = Form(...), 
 # Home + run creation
 # ---------------------------------------------------------------------------
 RUNS_PER_PAGE = 20
+SPEND_PER_PAGE = 20  # every Spend list (D-92)
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -654,12 +656,28 @@ async def team_table(request: Request, member: Member = Depends(require_admin)):
 # Spend (admin)
 # ---------------------------------------------------------------------------
 @router.get("/spend", response_class=HTMLResponse)
-async def spend_page(request: Request, member: Member = Depends(require_admin)):
-    settings = get_settings()
+async def spend_page(request: Request, tab: str = "runs", page: int = 1, member: Member = Depends(require_admin)):
+    """Tabs (D-92): By run first, then Apify; "Where the money went" is the technical view (developers, D-90).
+    Every list is paginated, SPEND_PER_PAGE rows a page."""
+    tabs = {"runs": "By run", "apify": "Apify"} | ({"breakdown": "Where the money went"} if member.is_developer else {})
+    tab = tab if tab in tabs else "runs"
+    page, models = max(1, page), []
+    offset = (page - 1) * SPEND_PER_PAGE
+    if tab == "runs":
+        items, total = await db.run(db.spend_by_run, SPEND_PER_PAGE, offset)
+    elif tab == "apify":
+        items, total = await db.run(db.apify_spend_by_run, SPEND_PER_PAGE, offset)
+    else:
+        steps, models = breakdown(await db.run(db.spend_summary))
+        items, total = steps[offset:offset + SPEND_PER_PAGE], len(steps)
+    pages = max(1, -(-total // SPEND_PER_PAGE))
+    if page > pages:
+        return RedirectResponse(f"/spend?tab={tab}&page={pages}", status_code=303)
     return templates.TemplateResponse(request, "spend.html", _ctx(
-        request, spent=await db.run(db.total_spend), budget=settings.claude_budget_total_usd,
-        by_source=await db.run(db.spend_summary), by_run=await db.run(db.spend_by_run, 50),
-        apify=await db.run(db.apify_spend_by_run, 50)))
+        request, spent=await db.run(db.total_spend), budget=get_settings().claude_budget_total_usd, tabs=tabs,
+        tab=tab, items=items, models=models, page=page, pages=pages, total=total,
+        first=offset + 1 if total else 0, last=min(offset + SPEND_PER_PAGE, total),
+        page_url=lambda n: f"/spend?tab={tab}&page={n}"))
 
 
 # ---------------------------------------------------------------------------

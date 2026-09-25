@@ -1,0 +1,13 @@
+{#- Previous / Next for a list. Needs: page, pages, total, first, last, page_url(n). Hidden when it all fits on one page. -#}
+{% if pages > 1 %}
+<nav class="row between" aria-label="Pages" style="margin-top: 10px;">
+  <span class="small muted nums">Showing {{ first }}–{{ last }} of {{ total }}</span>
+  <div class="row">
+    {% if page > 1 %}<a class="btn small" href="{{ page_url(page - 1) }}">← Previous</a>
+    {% else %}<span class="btn small" aria-disabled="true">← Previous</span>{% endif %}
+    <span class="small muted">Page {{ page }} of {{ pages }}</span>
+    {% if page < pages %}<a class="btn small" href="{{ page_url(page + 1) }}">Next →</a>
+    {% else %}<span class="btn small" aria-disabled="true">Next →</span>{% endif %}
+  </div>
+</nav>
+{% endif %}

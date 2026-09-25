@@ -11,16 +11,17 @@
         <span class="when-idle">Send a test alert</span><span class="when-loading"><span class="spinner"></span> Sending…</span></button>
     </form>
   </div>
-  <p class="muted">Admin view only.</p>
+  <p class="muted">Developer view only: the cause, the fix and the technical detail. Admins and members see plain-language messages.</p>
 </section>
 <section class="card">
   {% if events %}
   <div class="table-wrap"><table>
-    <thead><tr><th>Status</th><th>Severity</th><th>Service</th><th>What happened and how to fix it</th><th>Seen</th><th>Run</th><th></th></tr></thead>
+    <thead><tr><th>Status</th><th>Resolved by</th><th>Severity</th><th>Service</th><th>What happened and how to fix it</th><th>Seen</th><th>Run</th><th></th></tr></thead>
     <tbody>
     {% for e in events %}
       <tr class="{{ 'row-error' if e.severity == 'critical' and not e.resolved_at else ('row-blocked' if e.severity == 'warning' and not e.resolved_at else '') }}">
-        <td>{% if e.resolved_at %}<span class="badge success">✓ Resolved</span><div class="small muted">{{ e.resolved_by_name or '' }}</div>{% else %}<span class="badge warning">Open</span>{% endif %}</td>
+        <td>{% if e.resolved_at %}<span class="badge success">✓ Resolved</span>{% else %}<span class="badge warning">Open</span>{% endif %}</td>
+        <td class="small">{% if e.resolved_at %}{{ e.resolved_by_name or '—' }}<div class="muted">{{ e.resolved_at | ago }}</div>{% else %}<span class="muted">—</span>{% endif %}</td>
         <td><span class="badge {{ 'danger' if e.severity == 'critical' else ('warning' if e.severity == 'warning' else 'info') }}">{{ e.severity }}</span></td>
         <td>{{ e.service }}<div class="small mono muted">{{ e.code }}</div></td>
         <td class="small">{{ e.message }}</td>

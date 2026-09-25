@@ -542,28 +542,40 @@ def total_spend() -> Decimal:
     return Decimal(str(row["s"]))
 
 
-def apify_spend_by_run(limit: int = 50) -> list[dict]:
-    """Apify cost per run, from the discovery tool calls (the Spend page)."""
-    return fetch_all(
-        f"""select r.id, r.objective, sum(tc.external_cost_usd) as apify_usd
+def apify_spend_by_run(limit: int = 20, offset: int = 0) -> tuple[list[dict], int]:
+    """Apify cost per run, from the discovery tool calls (the Spend page): (one page, total runs)."""
+    rows = fetch_all(
+        f"""select r.id, r.objective, sum(tc.external_cost_usd) as apify_usd, max(tc.created_at) as last_at,
+                   count(*) over () as total
             from {t('tool_calls')} tc join {t('runs')} r on r.id = tc.run_id
             where tc.tool_name = 'discover_companies' and tc.external_cost_usd is not null
-            group by r.id, r.objective order by max(tc.created_at) desc limit %s""",
-        (limit,),
+            group by r.id, r.objective order by max(tc.created_at) desc limit %s offset %s""",
+        (limit, offset),
     )
+    return rows, int(rows[0]["total"]) if rows else _apify_run_count()
+
+
+def _apify_run_count() -> int:
+    """Only for a page past the end (no row carries the total)."""
+    row = fetch_one(f"""select count(distinct run_id) as n from {t('tool_calls')}
+                        where tool_name = 'discover_companies' and external_cost_usd is not null""")
+    return int(row["n"]) if row else 0
 
 
 def spend_summary() -> list[dict]:
     return fetch_all(f"select * from {t('spend_summary_v')} order by cost_usd desc")
 
 
-def spend_by_run(limit: int = 50) -> list[dict]:
-    return fetch_all(
-        f"""select r.id, r.objective, r.status, r.created_at, r.cost_usd, r.models, m.full_name as created_by_name
+def spend_by_run(limit: int = 20, offset: int = 0) -> tuple[list[dict], int]:
+    """Claude cost per run, newest first: (one page, total runs)."""
+    rows = fetch_all(
+        f"""select r.id, r.objective, r.status, r.created_at, r.cost_usd, m.full_name as created_by_name
             from {t('runs')} r left join {t('members')} m on m.user_id = r.created_by
-            order by r.created_at desc limit %s""",
-        (limit,),
+            order by r.created_at desc limit %s offset %s""",
+        (limit, offset),
     )
+    total = fetch_one(f"select count(*) as n from {t('runs')}")
+    return rows, int(total["n"]) if total else 0
 
 
 # ---------------------------------------------------------------------------

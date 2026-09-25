@@ -371,3 +371,21 @@ def test_developer_sees_fix_when_a_service_is_down(client_as, monkeypatch):
     assert r.status_code == 503 and "Apify Console" in r.text and "Our support team has been told" not in r.text
     r = post(ADMIN)  # admins get plain language, like members (D-90)
     assert r.status_code == 503 and "Apify Console" not in r.text and "Our support team has been told" in r.text
+
+
+@pytest.mark.db
+def test_marking_an_issue_fixed_updates_the_badge_at_once(admin_dsn, monkeypatch):
+    from app import alerts
+    monkeypatch.setattr(alerts, "_post_webhook", lambda payload: True)
+    code = "test_only_badge"
+    real = alerts.CATALOGUE["apify_actor_not_found"]
+    monkeypatch.setitem(alerts.CATALOGUE, code, type(real)(code, real.service, real.severity, real.client, real.admin))
+    try:
+        alerts.raise_alert(code, "x", notify=False)
+        before = alerts.open_issue_count()  # now cached for 15 s
+        row = db.fetch_one("select id from lead_agent.system_events where code = %s", (code,))
+        alerts.resolve(str(row["id"]), None)
+        assert alerts.open_issue_count() == before - 1
+    finally:
+        with psycopg.connect(admin_dsn, prepare_threshold=None, autocommit=True) as conn:
+            conn.execute("delete from lead_agent.system_events where code = %s", (code,))

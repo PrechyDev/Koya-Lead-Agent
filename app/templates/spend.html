@@ -9,33 +9,39 @@
   <p class="nums">{{ spent | money }} of {{ budget | money }} Claude budget used (estimated). New runs are refused before any spend if they could go over.</p>
   <p class="help">Claude cost is estimated from the token usage Anthropic reports for each call, priced with the published rates. The Anthropic Console (Usage page) shows the actual bill.</p>
 </section>
-{% if member.is_developer %}{# which part of the system spent it, per model: the technical view (D-90) #}
+
 <section class="card">
-  <h2>By source and model</h2>
-  <div class="table-wrap"><table>
-    <thead><tr><th>Source</th><th>Model</th><th>Entries</th><th>Cost</th><th>Last</th></tr></thead>
-    <tbody>{% for s in by_source %}<tr><td>{{ s.source }}</td><td class="mono">{{ s.model }}</td><td class="nums">{{ s.entries }}</td><td class="nums">${{ "%.4f" | format(s.cost_usd) }}</td><td class="small muted">{{ s.last_at | ago }}</td></tr>
-    {% else %}<tr><td colspan="5" class="empty">No spend recorded yet.</td></tr>{% endfor %}</tbody>
-  </table></div>
-</section>
-{% endif %}
-<section class="card">
-  <h2>By run</h2>
-  <div class="table-wrap"><table>
-    <thead><tr><th>Objective</th><th>Status</th><th>By</th><th>Claude (est.)</th><th>When</th></tr></thead>
-    <tbody>{% for r in by_run %}{% set b = badge(r.status) %}<tr class="clickable" tabindex="0" onclick="window.location='/runs/{{ r.id }}'">
-      <td>{{ r.objective[:90] }}</td><td><span class="badge {{ b[0] }}">{{ b[1] }}</span></td><td>{{ r.created_by_name or '—' }}</td>
-      <td class="nums">{{ r.cost_usd | money }}</td><td class="small muted">{{ r.created_at | ago }}</td></tr>
-    {% else %}<tr><td colspan="5" class="empty">No runs yet.</td></tr>{% endfor %}</tbody>
-  </table></div>
-</section>
-<section class="card">
-  <h2>Apify (discovery)</h2>
-  <div class="table-wrap"><table>
-    <thead><tr><th>Run</th><th>Apify cost</th></tr></thead>
-    <tbody>{% for a in apify %}<tr><td>{{ a.objective[:90] }}</td><td class="nums">${{ "%.4f" | format(a.apify_usd or 0) }}</td></tr>
-    {% else %}<tr><td colspan="2" class="empty">No Apify runs recorded yet.</td></tr>{% endfor %}</tbody>
-  </table></div>
-  <p class="help">The Apify budget is shared across the cohort ($5 per person). Check the Apify console for the authoritative figure.</p>
+  <div class="tabs" role="tablist" aria-label="Spend details">
+    {% for key, label in tabs.items() %}
+    <a class="tab" role="tab" href="/spend?tab={{ key }}" aria-selected="{{ 'true' if tab == key else 'false' }}">{{ label }}</a>
+    {% endfor %}
+  </div>
+  <div class="tab-panel" role="tabpanel">
+  {% if tab == "runs" %}
+    <div class="table-wrap"><table>
+      <thead><tr><th>Objective</th><th>Status</th><th>By</th><th>Claude (est.)</th><th>When</th></tr></thead>
+      <tbody>{% for r in items %}{% set b = badge(r.status) %}<tr class="clickable" tabindex="0" onclick="window.location='/runs/{{ r.id }}'">
+        <td>{{ r.objective[:90] }}</td><td><span class="badge {{ b[0] }}">{{ b[1] }}</span></td><td>{{ r.created_by_name or '—' }}</td>
+        <td class="nums">{{ r.cost_usd | money }}</td><td class="small muted">{{ r.created_at | ago }}</td></tr>
+      {% else %}<tr><td colspan="5" class="empty">No runs yet.</td></tr>{% endfor %}</tbody>
+    </table></div>
+  {% elif tab == "apify" %}
+    <div class="table-wrap"><table>
+      <thead><tr><th>Run</th><th>Apify cost</th><th>When</th></tr></thead>
+      <tbody>{% for a in items %}<tr class="clickable" tabindex="0" onclick="window.location='/runs/{{ a.id }}'"><td>{{ a.objective[:90] }}</td>
+        <td class="nums">${{ "%.4f" | format(a.apify_usd or 0) }}</td><td class="small muted">{{ a.last_at | ago }}</td></tr>
+      {% else %}<tr><td colspan="3" class="empty">No Apify runs recorded yet.</td></tr>{% endfor %}</tbody>
+    </table></div>
+    <p class="help">Apify finds the companies. Its budget is separate from Claude's; the Apify console has the authoritative figure.</p>
+  {% else %}{# breakdown: developers only (D-90, D-92) #}
+    <h3>By step</h3>
+    <p class="help">What each part of the system spent on Claude, across all runs and tests.</p>
+    {% set rows = items %}{% include "partials/spend_lines.html" %}
+    <h3 style="margin-top: 18px;">By model</h3>
+    <p class="help">The same spend by model. Name variants the API reports (dated or long-context) are merged.</p>
+    {% set rows = models %}{% include "partials/spend_lines.html" %}
+  {% endif %}
+  {% include "partials/pager.html" %}
+  </div>
 </section>
 {% endblock %}
