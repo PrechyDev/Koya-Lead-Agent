@@ -13,7 +13,8 @@ from app.lib.objective import (
     parse_headcount_range,
 )
 from app.lib.outreach_checks import check_outreach, measure
-from app.lib.qualification_rules import HardFilterCheck, decide_status, invalid_sources, prescreen
+from app.lib.qualification_rules import HardFilterCheck, invalid_sources, prescreen
+from app.lib.scoring import compute_fit_score, decide
 
 SRC = "https://acme.io/"
 ICP = {"geography": ["United States"], "headcount_range": "10-100", "industries": ["B2B SaaS"],
@@ -77,32 +78,43 @@ def _pass(f):
     return HardFilterCheck(filter=f, result="pass", evidence="stated on site", source_url=SRC)
 
 
-def test_qualified_requires_all_pass_and_confidence():
-    checks = [_pass("US"), _pass("B2B SaaS"), _pass("10-100 employees")]
-    assert decide_status("qualified", checks, 0.8)[0] == "qualified"
-    status, notes = decide_status("qualified", checks, 0.6)
-    assert status == "needs_review" and "confidence" in notes[0]
+def _decide(checks, requested="qualified", required=None, disq=(), required_disq=()):
+    score = compute_fit_score(hard_checks=checks, disqualifier_checks=list(disq), soft_checks=[],
+                              required_filters=list(required or [c.filter for c in checks]),
+                              required_disqualifiers=list(required_disq), discovery={}, company_domain="acme.io",
+                              source_urls=[SRC])
+    return decide(requested, score)
+
+
+def test_qualified_requires_every_filter_to_pass_with_evidence():
+    status, _, score = _decide([_pass("US"), _pass("B2B SaaS"), _pass("10-100 employees")])
+    assert status == "qualified" and score.value >= 0.70
 
 
 def test_unknown_filter_downgrades_to_needs_review():
     checks = [_pass("US"), HardFilterCheck(filter="10-100 employees", result="unknown")]
-    assert decide_status("qualified", checks, 0.9)[0] == "needs_review"
+    status, notes, _ = _decide(checks)
+    assert status == "needs_review" and "human review" in notes[-1]
 
 
 def test_pass_without_evidence_counts_as_unknown():
-    checks = [HardFilterCheck(filter="US", result="pass", evidence="", source_url=None)]
-    status, notes = decide_status("qualified", checks, 0.9)
+    status, notes, _ = _decide([HardFilterCheck(filter="US", result="pass", evidence="", source_url=None)])
     assert status == "needs_review" and "without evidence" in notes[0]
 
 
 def test_any_fail_forces_not_qualified():
     checks = [_pass("US"), HardFilterCheck(filter="B2B", result="fail", evidence="consumer app", source_url=SRC)]
-    assert decide_status("qualified", checks, 0.95)[0] == "not_qualified"
+    assert _decide(checks)[0] == "not_qualified"
 
 
 def test_missing_required_filter_check_is_unknown():
-    status, notes = decide_status("qualified", [_pass("US")], 0.9, required_filters=["US", "10-100 employees"])
+    status, notes, _ = _decide([_pass("US")], required=["US", "10-100 employees"])
     assert status == "needs_review" and "no check" in notes[0]
+
+
+def test_the_researchers_safer_choice_wins_and_caps_the_score():
+    status, _, score = _decide([_pass("US")], requested="needs_review")
+    assert status == "needs_review" and score.value <= 0.65 and "safer status wins" in score.breakdown[-1]["reason"]
 
 
 def test_invalid_sources_flags_urls_never_fetched():
@@ -194,9 +206,7 @@ def test_blank_env_values_fall_back_to_defaults(monkeypatch):
     from app.config import Settings
     monkeypatch.setenv("APIFY_ACTOR_ID", "")
     monkeypatch.setenv("MODEL_RESEARCHER", "  ")
-    monkeypatch.setenv("MAX_PARALLEL_SUBAGENTS", "")
     s = Settings(_env_file=None)
-    assert s.max_parallel_subagents is None
     assert s.apify_actor_id == "harvestapi/linkedin-company-search"
     assert s.model_researcher == "claude-opus-5-5"  # a blank value falls back to the A/B default (D-77)
     assert "ANTHROPIC_API_KEY" in Settings(_env_file=None, anthropic_api_key="").missing_run_config()

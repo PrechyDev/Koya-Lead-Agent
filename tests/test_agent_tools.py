@@ -127,7 +127,7 @@ async def test_full_tool_flow(run_ctx, fake_apify, fake_scrape, monkeypatch):
     # The ICP has a disqualifier ("agencies"): without a check for it the server refuses to qualify.
     data, _ = await call(ctx, "save_qualification", {**base, "hard_filter_checks": checks,
                                                      "source_urls": ["https://alpha-tooltest.com/"]})
-    assert data["stored_status"] == "needs_review" and any("disqualifier" in n for n in data["server_notes"])
+    assert data["stored_status"] == "needs_review" and any("exclusion" in n for n in data["server_notes"])
     db.update_lead(str(db.get_lead_by_domain(ctx.run_id, "alpha-tooltest.com")["id"]), qualification_status="pending")
     db.add_usage(ctx.run_id, "needs_review", -1)
     no_agency = [{"disqualifier": "agencies", "applies": "no", "evidence": "sells its own SaaS",
@@ -215,7 +215,9 @@ async def test_unsearchable_icp_needs_question(run_ctx):
     assert data["saved"] and run["clarification_question"] == "Which industry?" and not run["icp_signature"]
 
 
-async def test_empty_search_is_given_back_once_and_queries_append(run_ctx, monkeypatch):
+async def test_an_empty_search_uses_its_slot_and_queries_append(run_ctx, monkeypatch):
+    """The service already retried an empty search twice (D-76), so a search that is STILL empty is a real
+    result and uses its slot; the older one-time refund (D-54) is gone (D-81)."""
     await call(run_ctx, "save_icp", ICP_ARGS)
 
     async def empty(**kwargs):
@@ -225,16 +227,16 @@ async def test_empty_search_is_given_back_once_and_queries_append(run_ctx, monke
         await call(run_ctx, "discover_companies", {"purpose": "x", "search_query": q})
     usage = db.get_run(run_ctx.run_id)["usage"]
     assert usage["queries"] == ["q one", "q two"]
-    assert usage["discovery_calls"] == 1 and usage["empty_searches"] == 1  # only the first empty search refunded
+    assert usage["discovery_calls"] == 2 and "empty_searches" not in usage
 
 
 async def test_parallel_subagent_cap_is_enforced_by_code(run_ctx):
+    """One subagent at a time, fixed in code (D-49, D-81): a second delegation waits for the first."""
     from app.agent.runner import _make_hooks
-    run_ctx.limits = {**run_ctx.limits, "max_parallel_subagents": 2}
     hooks = _make_hooks(run_ctx, "orchestrator", set(), set())
     pre, post = hooks["PreToolUse"][0].hooks[0], hooks["PostToolUse"][0].hooks[0]
     agent = {"tool_name": "Agent", "tool_input": {"subagent_type": "researcher", "prompt": "Research a.com"}}
-    assert await pre(agent, "t1", None) == {} and await pre(agent, "t2", None) == {}
+    assert await pre(agent, "t1", None) == {}
     denied = await pre(agent, "t3", None)
     assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
     assert "parallel_limit_reached" in denied["hookSpecificOutput"]["permissionDecisionReason"]

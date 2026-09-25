@@ -1,7 +1,7 @@
 """The fit score is computed by code (D-48): repeatable, itemised, banded like the status rules."""
 
 from app.lib.qualification_rules import DisqualifierCheck, HardFilterCheck, SoftPreferenceCheck
-from app.lib.scoring import cap_for_status, compute_fit_score
+from app.lib.scoring import compute_fit_score, decide
 
 SITE, LI = "https://www.expeditecommerce.com/", "https://www.linkedin.com/company/expeditecommerce/"
 FILTERS = ["Headquartered in the United States", "Sells software to businesses (B2B SaaS)", "10-100 employees"]
@@ -78,6 +78,6 @@ def test_pass_without_evidence_counts_as_unknown():
 
 
 def test_safer_status_wins_and_the_cap_is_explained():
-    s = cap_for_status(score(), "needs_review", "researcher chose 'needs_review'")
-    assert (s.value, s.band) == (0.65, "needs_review") and "researcher chose" in s.breakdown[-1]["reason"]
-    assert cap_for_status(score(), "qualified", "x").value == 0.80  # never raised
+    status, _, s = decide("needs_review", score())
+    assert (status, s.value, s.band) == ("needs_review", 0.65, "needs_review") and "researcher chose" in s.breakdown[-1]["reason"]
+    assert decide("qualified", score())[2].value == 0.80  # never raised

@@ -56,6 +56,9 @@ BLOCKED_BUILTINS = ["Bash", "Read", "Write", "Edit", "MultiEdit", "Glob", "Grep"
 ICP_TOOLS = ["save_icp"]
 ORCHESTRATOR_TOOLS = ["discover_companies", "get_run_state", "finish_run"]
 RESEARCHER_TOOLS = ["get_research_brief", "scrape_website", "save_qualification"]
+# Researchers/copywriters working at once. Fixed at 1 in code, not a setting (D-49, D-81): in CLI 2.1.280 several
+# Agent calls in one message run as BACKGROUND tasks and the run can stop early (live run a1f525ef).
+MAX_PARALLEL_SUBAGENTS = 1
 SUBAGENT_MAX_TURNS = 10      # a researcher/copywriter handles ONE company; more turns means it's stuck
 MIN_PHASE_BUDGET_USD = 0.05  # the research phase always gets at least this much of the run's cap
 COPYWRITER_TOOLS = ["get_lead", "check_drafts", "save_outreach"]
@@ -87,7 +90,7 @@ def _make_hooks(ctx: RunContext, main_role: str, allowed: set[str], main_thread_
     copywriting to subagents instead of doing it itself (keeps its context, and cost, small).
     """
 
-    parallel_cap = max(1, int(ctx.limits.get("max_parallel_subagents", 1)))
+    parallel_cap = MAX_PARALLEL_SUBAGENTS
     in_flight: set[str] = set()  # tool_use_ids of subagents currently working
 
     async def pre_tool(input_data, tool_use_id, context):

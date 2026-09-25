@@ -285,7 +285,8 @@ def test_system_issues_page_is_admin_only(client_as):
 
 
 # --- disqualifiers, soft preferences, tool fingerprints, scope pre-check ----------------------
-from app.lib.qualification_rules import DisqualifierCheck, HardFilterCheck, decide_status  # noqa: E402
+from app.lib.qualification_rules import DisqualifierCheck, HardFilterCheck  # noqa: E402
+from app.lib.scoring import compute_fit_score, decide  # noqa: E402
 from app.lib.tech_signals import detect_tools  # noqa: E402
 from app.services import scope as scope_svc  # noqa: E402
 
@@ -293,20 +294,27 @@ SRC = "https://acme.io/"
 PASS = [HardFilterCheck(filter="US", result="pass", evidence="HQ Austin", source_url=SRC)]
 
 
+def _status_with(disq):
+    score = compute_fit_score(hard_checks=PASS, disqualifier_checks=disq, soft_checks=[], required_filters=["US"],
+                              required_disqualifiers=["Agency"], discovery={}, company_domain="acme.io",
+                              source_urls=[SRC])
+    return decide("qualified", score)[0]
+
+
 def test_disqualifier_that_applies_means_not_qualified():
     d = [DisqualifierCheck(disqualifier="Agency", applies="yes", evidence="sells agency services", source_url=SRC)]
-    assert decide_status("qualified", PASS, 0.9, disqualifier_checks=d, required_disqualifiers=["Agency"])[0] == "not_qualified"
+    assert _status_with(d) == "not_qualified"
 
 
 def test_disqualifier_unknown_or_unevidenced_means_needs_review():
     d = [DisqualifierCheck(disqualifier="Agency", applies="no", evidence="", source_url=None)]
-    assert decide_status("qualified", PASS, 0.9, disqualifier_checks=d, required_disqualifiers=["Agency"])[0] == "needs_review"
-    assert decide_status("qualified", PASS, 0.9, disqualifier_checks=[], required_disqualifiers=["Agency"])[0] == "needs_review"
+    assert _status_with(d) == "needs_review"
+    assert _status_with([]) == "needs_review"
 
 
 def test_disqualifier_confirmed_not_applying_allows_qualified():
     d = [DisqualifierCheck(disqualifier="Agency", applies="no", evidence="own SaaS product", source_url=SRC)]
-    assert decide_status("qualified", PASS, 0.9, disqualifier_checks=d, required_disqualifiers=["Agency"])[0] == "qualified"
+    assert _status_with(d) == "qualified"
 
 
 def test_tool_fingerprints_found_in_html():

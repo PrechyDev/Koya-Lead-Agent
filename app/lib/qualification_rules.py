@@ -1,13 +1,10 @@
 """Server-side qualification rules (specs.md §8.2–8.3; E-15, E-16, E-17, E-31, E-45).
 
-"Qualify from evidence, not guesses" is enforced here, in code, whatever the
-agent asks for:
-  * every cited source URL must have been fetched/returned in this run;
-  * a hard filter only counts as 'pass' with evidence + a source URL;
-  * any 'fail'  -> not_qualified;
-  * any 'unknown' (or a missing check) -> needs_review, never qualified;
-  * qualified needs a fit score >= 0.70. The score is computed by code (app/lib/scoring.py, D-48), which
-    already keeps a fully-passing lead at 0.70+, so this is a last safety net, not a model's opinion.
+"Qualify from evidence, not guesses" is enforced in code, whatever the agent asks for:
+  * the check models below are what the researcher must fill in (evidence + source per check);
+  * every cited source URL must have been fetched in this run (invalid_sources);
+  * the status itself comes from the evidence band in app/lib/scoring.py (compute_fit_score + decide, D-80):
+    any fail -> not_qualified; anything unknown/unevidenced/missing -> needs_review; all pass -> qualified.
 Pre-screening rejects candidates that already fail a hard filter on the
 discovery data, before any scrape or Claude call.
 """
@@ -18,9 +15,6 @@ from pydantic import BaseModel, Field
 
 from app.lib.domain import same_url
 from app.lib.objective import country_code, parse_headcount_range
-
-QUALIFIED_MIN_CONFIDENCE = 0.70
-Status = Literal["qualified", "not_qualified", "needs_review"]
 
 
 class HardFilterCheck(BaseModel):
@@ -48,63 +42,6 @@ class SoftPreferenceCheck(BaseModel):
 
 def invalid_sources(source_urls: list[str], allowed_urls: list[str]) -> list[str]:
     return [u for u in source_urls if not any(same_url(u, a) for a in allowed_urls)]
-
-
-def decide_status(
-    requested: Status,
-    checks: list[HardFilterCheck],
-    confidence: float,
-    required_filters: list[str] | None = None,
-    disqualifier_checks: list[DisqualifierCheck] | None = None,
-    required_disqualifiers: list[str] | None = None,
-) -> tuple[Status, list[str]]:
-    """Return the status the server will actually store, plus notes explaining any change."""
-    notes: list[str] = []
-    effective: list[str] = []
-    for d in disqualifier_checks or []:
-        if d.applies == "yes":
-            notes.append(f'disqualifier applies: "{d.disqualifier}"')
-            effective.append("fail")
-        elif d.applies == "no" and (d.evidence.strip() and d.source_url):
-            effective.append("pass")
-        else:
-            if d.applies == "no":
-                notes.append(f'"{d.disqualifier}" was marked not applying without evidence, so it counts as unknown')
-            effective.append("unknown")
-    if required_disqualifiers:
-        covered = {d.disqualifier.strip().lower() for d in disqualifier_checks or []}
-        missing = [d for d in required_disqualifiers if d.strip().lower() not in covered]
-        if missing:
-            notes.append("no check for disqualifier(s): " + "; ".join(missing))
-            effective += ["unknown"] * len(missing)
-    for c in checks:
-        result = c.result
-        if result == "pass" and (not c.evidence.strip() or not c.source_url):
-            notes.append(f'"{c.filter}" was marked pass without evidence and a source URL, so it counts as unknown')
-            result = "unknown"
-        effective.append(result)
-
-    if required_filters:
-        covered = {c.filter.strip().lower() for c in checks}
-        missing = [f for f in required_filters if f.strip().lower() not in covered]
-        if missing:
-            notes.append("no check for hard filter(s): " + "; ".join(missing))
-            effective += ["unknown"] * len(missing)
-
-    if "fail" in effective:
-        if requested != "not_qualified":
-            notes.append("a hard filter failed, so the lead is not_qualified")
-        return "not_qualified", notes
-    if requested == "not_qualified":
-        return "not_qualified", notes
-    if "unknown" in effective:
-        if requested == "qualified":
-            notes.append("at least one hard filter is unknown, so the lead needs human review instead of qualified")
-        return "needs_review", notes
-    if requested == "qualified" and confidence < QUALIFIED_MIN_CONFIDENCE:
-        notes.append(f"confidence {confidence:.2f} is below {QUALIFIED_MIN_CONFIDENCE:.2f}, so it needs review")
-        return "needs_review", notes
-    return requested, notes
 
 
 # ---------------------------------------------------------------------------

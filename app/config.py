@@ -54,7 +54,6 @@ class Settings(BaseSettings):
     max_runs_per_day: int = 5
     max_runs_per_user_per_day: int = 2
     max_runs_per_admin_per_day: int = 5
-    max_parallel_subagents: int | None = None  # optional override of the preset (e.g. 2 if Render memory is tight)
     render_external_url: str = ""
     alert_webhook_url: str = ""
     alert_webhook_secret: str = ""
@@ -119,10 +118,6 @@ class RunLimits:
     max_outreach_rewrites: int
     max_tool_calls: int
     phase_timeout_s: int
-    # Researchers/copywriters at once (D-49). 1 on purpose: in CLI 2.1.280 several Agent calls in one message run as
-    # BACKGROUND tasks and the run can stop early (live run a1f525ef). Kept as a setting to revisit on SDK upgrades.
-    max_parallel_subagents: int = 1
-
     def to_dict(self) -> dict:
         return asdict(self)
 
@@ -174,9 +169,7 @@ ICP_PHASE_TIMEOUT_S = 240
 def limits_for_run(target_qualified: int, dev: bool) -> RunLimits:
     base = DEV_LIMITS if dev else FULL_LIMITS
     target = max(1, min(int(target_qualified), base.target_qualified))
-    override = get_settings().max_parallel_subagents
-    parallel = max(1, min(int(override), 5)) if override else base.max_parallel_subagents
-    return RunLimits(**{**base.to_dict(), "target_qualified": target, "max_parallel_subagents": parallel})
+    return RunLimits(**{**base.to_dict(), "target_qualified": target})
 
 
 # ---------------------------------------------------------------------------

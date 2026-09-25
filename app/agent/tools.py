@@ -29,12 +29,11 @@ from app.lib.qualification_rules import (
     DisqualifierCheck,
     HardFilterCheck,
     SoftPreferenceCheck,
-    decide_status,
     invalid_sources,
     prescreen,
 )
 from app.lib.sanitize import contains_contact_details, redact, redact_obj, wrap_untrusted
-from app.lib.scoring import cap_for_status, compute_fit_score
+from app.lib.scoring import compute_fit_score, decide
 from app.services import apify as apify_svc
 from app.services import firecrawl as fc
 from app.services.grounding import check_grounding, grounding_call_cap
@@ -52,7 +51,6 @@ MISSING_TYPE_QUESTION = ("Which kind of companies should the agent look for? For
                          "defaults if you leave them out.")
 GROUNDING_PAGE_CHARS = 2500      # per cached page in the fact-checker's context
 GROUNDING_CONTEXT_CHARS = 14000  # whole fact-check context (keeps each check near its ~$0.005 cost)
-MAX_FREE_EMPTY_SEARCHES = 1    # an Apify search that returns nothing is given back once per run
 MAX_DRAFT_CHECKS_PER_LEAD = 5  # free self-checks before save_outreach; bounded so a confused writer can't loop
 # A disqualifier is answered "does it apply?", so it must name what to EXCLUDE. "Not an agency" inverts that:
 # "applies" would mean "is not an agency" and would reject exactly the companies we want (seen in dev ICPs).
@@ -351,12 +349,6 @@ def build_handlers(ctx: RunContext) -> dict:
 
         await db.run(db.add_usage, ctx.run_id, "candidates_found", result.raw_count)
         await db.run(db.append_usage_item, ctx.run_id, "queries", query)
-        refunded = False
-        if result.raw_count == 0 and int(usage.get("empty_searches", 0)) < MAX_FREE_EMPTY_SEARCHES:
-            # LinkedIn search is variable (errors log #10): one empty search doesn't use up a search slot.
-            await db.run(db.add_usage, ctx.run_id, "discovery_calls", -1)
-            await db.run(db.add_usage, ctx.run_id, "empty_searches")
-            refunded = True
 
         domains = [c["domain"] for c in result.companies]
         seen = (await db.run(db.recently_researched, domains, settings.research_reuse_days, ctx.run_id)
@@ -407,8 +399,7 @@ def build_handlers(ctx: RunContext) -> dict:
                    f"{result.dropped_no_domain} without a website, {dupes} duplicates, "
                    f"{len(skipped)} researched in the last {settings.research_reuse_days} days"
                    + (f"; {result.empty_retries} empty result(s) retried with the same input "
-                      f"(runs {', '.join(result.apify_run_ids)})" if result.empty_retries else "")
-                   + ("; empty search not counted against the search limit" if refunded else ""))
+                      f"(runs {', '.join(result.apify_run_ids)})" if result.empty_retries else ""))
         return success({
             "companies_to_research": to_research,
             "rejected_on_prescreen": rejected,
@@ -546,11 +537,7 @@ def build_handlers(ctx: RunContext) -> dict:
             required_disqualifiers=required_disq, discovery=lead.get("discovery_data") or {},
             company_domain=lead["company_domain"], source_urls=parsed.source_urls,
         )
-        final, notes = decide_status(parsed.status, parsed.hard_filter_checks, score.value,
-                                     required_filters=ctx.hard_filters(),
-                                     disqualifier_checks=parsed.disqualifier_checks,
-                                     required_disqualifiers=required_disq)
-        score = cap_for_status(score, final, f"researcher chose '{parsed.status}' (the safer status wins)")
+        final, notes, score = decide(parsed.status, score)  # the safer of the request and the evidence (D-80)
         concerns = list(parsed.concerns) + notes
         flags = (lead.get("discovery_data") or {}).get("injection_flags")
         if flags:

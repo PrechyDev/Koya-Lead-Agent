@@ -35,7 +35,7 @@ The ICP is already saved. Your job: find companies, get each one researched, get
 Workflow (follow it in order; be terse, you pay for every token):
 1. Call discover_companies with the FIRST query in the ICP's discovery_query_plan.
 2. Delegate companies_to_research to the "researcher" agent with ONLY: "Research <domain>" (one company per
-   delegation). Delegate ONE company at a time (max_parallel_subagents in the run brief is 1): send one
+   delegation). Delegate ONE company at a time: send one
    delegation, wait for its answer, then send the next. Several delegations in one message run in the
    background and can end the run early (specs D-49).
 3. Stop researching as soon as qualified_so_far reaches the target (a tool will also tell you with target_reached).
@@ -85,7 +85,6 @@ def orchestrator_user_prompt(run: dict) -> str:
     brief = {
         "objective": run.get("objective"),
         "target_qualified": limits.get("target_qualified"),
-        "max_parallel_subagents": limits.get("max_parallel_subagents", 1),
         "hard_filters": icp.get("hard_filters"),
         "discovery_query_plan": icp.get("discovery_query_plan"),
         "find_new_companies_only": bool(run.get("cross_run_dedupe", True)),

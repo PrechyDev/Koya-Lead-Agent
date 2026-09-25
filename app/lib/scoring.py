@@ -4,13 +4,14 @@ The researcher (AI) only records evidence decisions: pass/fail/unknown per hard 
 per exclusion, matched/not_matched/unknown per nice-to-have, each with a source. This module turns those into
 a number with a written reason for every point. Same recorded evidence -> same score, always.
 
-Bands match the qualification status rules:
-  qualified      0.70 - 1.00   every hard filter passes with evidence and no exclusion applies
-  needs_review   0.40 - 0.65   something is unknown, nothing fails
+The evidence band IS the qualification rule (specs §8.3; E-15, E-16, E-17, E-31, E-45), in one place:
+  qualified      0.70 - 1.00   every ICP hard filter passes with evidence + a source, and no exclusion applies
+  needs_review   0.40 - 0.65   something is unknown or unevidenced (or a check is missing), nothing fails
   not_qualified  0.00 - 0.30   a hard filter fails or an exclusion applies
+decide() then stores the SAFER of the researcher's requested status and this band (D-80).
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
 BASE_ELIGIBLE = 0.70
@@ -23,12 +24,15 @@ REVIEW_FLOOR, REVIEW_SPAN = 0.40, 0.25
 NOT_QUALIFIED_SPAN = 0.30
 
 
+STATUS_ORDER = {"not_qualified": 0, "needs_review": 1, "qualified": 2}  # lower = safer
+
+
 @dataclass
 class Score:
     value: float
     band: str  # qualified | needs_review | not_qualified
     breakdown: list[dict]  # [{"points": +0.05, "reason": "..."}]
-
+    notes: list[str] = field(default_factory=list)  # why a check counted differently than the researcher said
 
 
 def _evidenced(check, source_field: str = "source_url") -> bool:
@@ -54,6 +58,7 @@ def compute_fit_score(*, hard_checks: list, disqualifier_checks: list, soft_chec
                       required_filters: list[str], required_disqualifiers: list[str], discovery: dict,
                       company_domain: str, source_urls: list[str]) -> Score:
     breakdown: list[dict] = []
+    notes: list[str] = []
 
     def add(points: float, reason: str) -> None:
         breakdown.append({"points": round(points, 2), "reason": reason})
@@ -64,8 +69,10 @@ def compute_fit_score(*, hard_checks: list, disqualifier_checks: list, soft_chec
     for f in filter_names:
         c = by_filter.get(f.strip().lower())
         if c is None:
+            notes.append(f'no check for hard filter "{f}", so it counts as unknown')
             results.append("unknown")
         elif c.result == "pass" and not _evidenced(c):
+            notes.append(f'"{f}" was marked pass without evidence and a source URL, so it counts as unknown')
             results.append("unknown")
         else:
             results.append(c.result)
@@ -78,10 +85,14 @@ def compute_fit_score(*, hard_checks: list, disqualifier_checks: list, soft_chec
     for d in disq_names:
         chk = by_disq.get(d.strip().lower())
         if chk is None:
+            notes.append(f'no check for exclusion "{d}", so it counts as unknown')
             disq_results.append("unknown")
         elif chk.applies == "no" and not _evidenced(chk):
+            notes.append(f'"{d}" was marked not applying without evidence, so it counts as unknown')
             disq_results.append("unknown")
         else:
+            if chk.applies == "yes":
+                notes.append(f'exclusion applies: "{d}"')
             disq_results.append(chk.applies)
 
     # Penalties that code can see for itself (no judgment involved).
@@ -103,7 +114,7 @@ def compute_fit_score(*, hard_checks: list, disqualifier_checks: list, soft_chec
             add(0.0, "fails: " + "; ".join(failed))
         if applied:
             add(0.0, "exclusion applies: " + "; ".join(applied))
-        return Score(value, "not_qualified", breakdown)
+        return Score(value, "not_qualified", breakdown, notes)
 
     if "unknown" in results or "unknown" in disq_results:
         value = REVIEW_FLOOR + REVIEW_SPAN * share
@@ -116,7 +127,8 @@ def compute_fit_score(*, hard_checks: list, disqualifier_checks: list, soft_chec
         for points, reason in penalties:
             value += points
             add(points, reason)
-        return Score(round(max(REVIEW_FLOOR, min(value, REVIEW_FLOOR + REVIEW_SPAN)), 2), "needs_review", breakdown)
+        return Score(round(max(REVIEW_FLOOR, min(value, REVIEW_FLOOR + REVIEW_SPAN)), 2), "needs_review", breakdown,
+                     notes)
 
     value = BASE_ELIGIBLE
     add(BASE_ELIGIBLE, f"all {len(results)} hard filters pass with evidence and no exclusion applies")
@@ -135,16 +147,22 @@ def compute_fit_score(*, hard_checks: list, disqualifier_checks: list, soft_chec
     for points, reason in penalties:
         value += points
         add(points, reason)
-    return Score(round(max(BASE_ELIGIBLE, min(value, 1.0)), 2), "qualified", breakdown)
+    return Score(round(max(BASE_ELIGIBLE, min(value, 1.0)), 2), "qualified", breakdown, notes)
 
 
-def cap_for_status(score: Score, final_status: str, reason: str) -> Score:
-    """If the final status is lower than the evidence band (e.g. the researcher asked for human review),
-    keep the safer status and cap the score to its band, recording why."""
-    caps = {"needs_review": REVIEW_FLOOR + REVIEW_SPAN, "not_qualified": NOT_QUALIFIED_SPAN}
-    order = {"not_qualified": 0, "needs_review": 1, "qualified": 2}
-    if order[final_status] < order[score.band]:
-        capped = min(score.value, caps[final_status])
-        score.breakdown.append({"points": round(capped - score.value, 2), "reason": reason})
-        return Score(round(capped, 2), final_status, score.breakdown)
-    return score
+def decide(requested: str, score: Score) -> tuple[str, list[str], Score]:
+    """The status the server stores: the SAFER of what the researcher asked for and what the evidence shows.
+    Returns (status, notes for the researcher and the lead's concerns, the score capped to that status)."""
+    notes = list(score.notes)
+    if STATUS_ORDER[score.band] < STATUS_ORDER[requested]:  # the evidence doesn't support the request
+        notes.append({"not_qualified": "a hard filter failed or an exclusion applies, so the lead is not_qualified",
+                      "needs_review": "something is unconfirmed, so the lead needs human review instead of "
+                                      "qualified"}[score.band])
+        return score.band, notes, score
+    if STATUS_ORDER[requested] < STATUS_ORDER[score.band]:  # the researcher chose the safer status: keep it
+        caps = {"needs_review": REVIEW_FLOOR + REVIEW_SPAN, "not_qualified": NOT_QUALIFIED_SPAN}
+        capped = min(score.value, caps[requested])
+        breakdown = score.breakdown + [{"points": round(capped - score.value, 2),
+                                        "reason": f"researcher chose '{requested}' (the safer status wins)"}]
+        return requested, notes, Score(round(capped, 2), requested, breakdown, score.notes)
+    return requested, notes, score
