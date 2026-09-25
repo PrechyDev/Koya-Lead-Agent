@@ -1,4 +1,4 @@
-"""One logging setup for the web app, scripts, evals and spikes.
+"""One logging setup for the web app and the scripts.
 
 Every log line is masked by RedactingFormatter AFTER it is fully formatted, so an email address or key-shaped
 string in a message, an exception traceback or uvicorn's own access/error lines is masked before it reaches the

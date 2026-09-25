@@ -17,9 +17,6 @@ htmlcov/
 dist/
 build/
 
-# Eval fixtures contain scraped third-party website content — keep local
-evals/fixtures/*.json
-!evals/fixtures/sample_*.json
 
 # Exports / local artefacts
 exports/

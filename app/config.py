@@ -174,7 +174,7 @@ def limits_for_run(target_qualified: int, dev: bool) -> RunLimits:
 
 # ---------------------------------------------------------------------------
 # Model prices, USD per 1M tokens: (input, output, cache read). Used for calls made outside the Agent SDK
-# (fact-checks, scope check, evals, cost recovered from transcripts); the SDK reports its own cost.
+# (fact-checks, scope check, cost recovered from transcripts); the SDK reports its own cost.
 # Cache reads are each model's real price, not one multiplier: Opus 5.5 reads its cache at $0.20 (0.05x its
 # input price), the others at the standard 0.1x. Cache writes are 1.25x input for all of them.
 # ---------------------------------------------------------------------------

@@ -30,12 +30,12 @@ async def main() -> int:
     parser.add_argument("objective")
     parser.add_argument("--full", action="store_true", help="use full limits instead of DEV limits")
     parser.add_argument("--target", type=int, default=10)
-    parser.add_argument("--kind", default="dev", choices=["dev", "eval_record", "app"])
+    parser.add_argument("--kind", default="dev", choices=["dev", "app"])
     parser.add_argument("--refresh", action="store_true",
                         help="re-research companies seen within RESEARCH_REUSE_DAYS")
     parser.add_argument("--yes", action="store_true", help="confirm: this spends (Claude + Apify + Firecrawl)")
     args = parser.parse_args()
-    if not args.yes:  # same confirmation as resume_run.py, evals/record.py and evals/ab.py
+    if not args.yes:  # it spends money: ask first
         log.error("This spends (capped by the run's limits). Add --yes to go ahead.")
         return 1
 

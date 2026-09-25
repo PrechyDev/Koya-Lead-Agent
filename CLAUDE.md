@@ -71,14 +71,14 @@ The owner is a **Python developer** who knows some TypeScript, and wants to be *
 
   Failed-then-fixed evidence matters more than "all green".
 - UI follows `docs/design.md`: every clickable has hover/focus/active/disabled/loading states; system messages never go inside result content.
-- Use `DEV_LIMITS=true` for all development. The model A/B (`evals/ab.py`) replays recorded fixtures, so it makes no Apify/Firecrawl calls. `FIXTURE_MODE=true` only switches on the public test pages (`/fixtures/…`, for the injection test); keep it `false` otherwise.
+- Use `DEV_LIMITS=true` for all development. The model A/B test is done (results: `docs/specs.md` §8.7; its harness is archived in `../archive/`, not in the repo). `FIXTURE_MODE=true` only switches on the public test pages (`/fixtures/…`, for the injection test); keep it `false` otherwise.
 - Run the secret scan before every commit.
 
 ## Stack
 
 Python 3.12 · `claude-agent-sdk` 0.2.158 (orchestrator + subagents, in-process MCP tools, skills as a local plugin in `agent_plugin/`) · FastAPI + Jinja2 + HTMX + plain CSS · psycopg 3 + psycopg_pool (direct Postgres, `prepare_threshold=None`) · Pydantic v2 · httpx (Firecrawl) · apify-client · anthropic (scope check + fact-check) · tldextract · pycountry · slowapi · PyJWT · pytest + respx · Render free (Docker).
 
-Models are set per role via `MODEL_ORCHESTRATOR`, `MODEL_ICP`, `MODEL_RESEARCHER`, `MODEL_COPYWRITER`, `MODEL_GROUNDING`, plus `MODEL_CHECKS` for the small checks (scope check + pre-run credit probe). Nothing hard-codes a model name outside `app/config.py` (and the A/B candidate list in `evals/ab.py`). **Chosen by the A/B test + owner (specs D-77): researcher and copywriter `claude-opus-5-5`, ICP, fact-check and checks `claude-haiku-4-5`, orchestrator `claude-sonnet-5`.** Opus in two roles may reach the $1.25 per-run cap before 10 leads; measure with a DEV run first.
+Models are set per role via `MODEL_ORCHESTRATOR`, `MODEL_ICP`, `MODEL_RESEARCHER`, `MODEL_COPYWRITER`, `MODEL_GROUNDING`, plus `MODEL_CHECKS` for the small checks (scope check + pre-run credit probe). Nothing hard-codes a model name outside `app/config.py`. **Chosen by the A/B test + owner (specs D-77): researcher and copywriter `claude-opus-5-5`, ICP, fact-check and checks `claude-haiku-4-5`, orchestrator `claude-sonnet-5`.** Opus in two roles may reach the $1.25 per-run cap before 10 leads; measure with a DEV run first.
 
 ## Project layout
 
@@ -104,10 +104,7 @@ Models are set per role via `MODEL_ORCHESTRATOR`, `MODEL_ICP`, `MODEL_RESEARCHER
   templates/            pages, partials/ (HTMX fragments), fixtures/ (test pages)
   static/               app.css, app.js, htmx.min.js
 /db/migrations          0000_app_role.sql … 0007_scrape_cache_links_parked.sql
-/scripts                migrate, create_app_role, bootstrap_owner, dev_run, resume_run, transcript_cost, secret_scan,
-                        claude_credit
-/evals                  ab.py (model A/B), record.py (records A/B fixtures), fixtures/
-/spikes                 sdk_spike.py + spike_plugin/
+/scripts                migrate, create_app_role, bootstrap_owner, dev_run, secret_scan, claude_credit
 /n8n                    alert-email-workflow.json
 /tests                  unit + integration (real DB, paid APIs faked)
 ```
@@ -117,12 +114,11 @@ Models are set per role via `MODEL_ORCHESTRATOR`, `MODEL_ICP`, `MODEL_RESEARCHER
 ```
 py -3.12 -m venv .venv && .venv/Scripts/python -m pip install -r requirements.txt   # + pytest pytest-asyncio respx ruff
 .venv/Scripts/python -m uvicorn app.main:app --port 8000            # run locally (NOT --reload on Windows: it can't start the agent CLI)
-.venv/Scripts/python -m pytest -q                                   # 249 tests (real DB, paid APIs faked)
+.venv/Scripts/python -m pytest -q                                   # 253 tests (real DB, paid APIs faked)
 .venv/Scripts/python scripts/migrate.py                             # apply DB migrations (admin DSN, laptop only)
 .venv/Scripts/python scripts/create_app_role.py                     # create/sync the app DB user from the DSN you put in .env
 .venv/Scripts/python scripts/bootstrap_owner.py <email> "<Name>" --owner [--invite]   # give the first admin access
 .venv/Scripts/python scripts/dev_run.py "<objective>" --yes         # a DEV-limits run from the terminal (spends!)
-.venv/Scripts/python evals/ab.py estimate --name <fixtures>         # A/B pre-flight (free); run/reference need --yes
 .venv/Scripts/python scripts/secret_scan.py --all                   # scan everything tracked
 .venv/Scripts/python scripts/claude_credit.py                       # is the Anthropic key working? + project spend (1-token probe; --no-probe = free)
 ```

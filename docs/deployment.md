@@ -77,7 +77,7 @@ Import `n8n/alert-email-workflow.json`, set the Gmail credential, email and secr
 
 ## 6. Model A/B, then the final run
 
-1. On the laptop: `evals/ab.py export … → estimate → reference --yes → run --yes → report` (cap $1.20, incl. Opus 5.5, D-59). Set the
+1. ~~Model A/B~~ **done 2026-09-25**: results and chosen models in specs §8.7 (D-77); the harness is archived outside the repo.
    winning models in Render (`MODEL_*`) and redeploy.
 2. **Final run on Render** with the PRD objective, full limits (cap $1.25 Claude + $0.25 Apify). Approve drafts in the
    lead drawer, then download the CSV and the sample pack (JSON contains approved drafts only, D-19).
