@@ -746,3 +746,20 @@ def test_header_puts_new_run_first_and_team_rows_use_one_menu(client_as, monkeyp
     team = client_as(ADMIN).get("/team").text
     assert team.count('<details class="menu">') == 1 and 'value="deactivate"' in team and 'value="make_admin"' in team
     assert 'class="invite-row"' in team  # name, email, role and the button on one row
+
+
+
+def test_zero_qualified_banner_reads_correctly():
+    from app.web.templating import shortfall_sentence
+    s = shortfall_sentence({"limits": {"target_qualified": 1}, "error_detail": None,
+                            "usage": {"candidates_found": 2, "qualified": 0}}, 0)
+    assert s == "Found 0 of 1 qualified leads. None of the companies found met every requirement. See the Summary tab."
+
+
+def test_cancel_button_survives_the_status_refresh(client_as, monkeypatch):
+    """The live panel refreshes every 3 s; hx-preserve keeps the Cancel form as it is (hover, focus, spinner)."""
+    from app.web import routes
+    run = dict(db.search_runs(limit=1)[0][0], status="researching", created_by=DEVELOPER.user_id)
+    monkeypatch.setattr(routes, "_get_run_or_404", lambda run_id: run)
+    html = client_as(DEVELOPER).get(f"/runs/{run['id']}/live").text
+    assert 'id="cancel-run" hx-preserve' in html

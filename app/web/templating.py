@@ -82,8 +82,9 @@ def shortfall_sentence(run: dict, drafted: int) -> str:
         return f"Found {qualified} of {target} qualified leads. {stopped}"
     if found == 0:
         return "No qualified leads: the company search found no matching companies. Try a broader objective."
-    rest = "None of the companies found" if qualified == 0 else "The other companies found"
-    return f"Found {qualified} of {target} qualified leads. {rest} didn't meet every requirement. See the Summary tab."
+    rest = ("None of the companies found met every requirement" if qualified == 0
+            else "The other companies found didn't meet every requirement")
+    return f"Found {qualified} of {target} qualified leads. {rest}. See the Summary tab."
 
 
 def money(value) -> str:
