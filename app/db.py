@@ -316,7 +316,9 @@ def active_run() -> dict | None:
 
 
 def count_full_runs_today(created_by: str | None = None) -> int:
-    """Runs that went past the ICP phase today (a superseded/clarification run is cheap and not counted)."""
+    """App runs started today (UTC, the database's day) for the daily caps. Runs that stopped early and cheaply
+    (superseded, waiting for a clarification, cancelled) aren't counted; everything else is, including a run
+    still in its ICP step or waiting at the repeat check."""
     sql = (f"select count(*) as n from {t('runs')} where created_at >= date_trunc('day', now())"
            f" and run_kind = 'app' and status not in ('superseded', 'needs_clarification', 'cancelled')")
     params: tuple = ()

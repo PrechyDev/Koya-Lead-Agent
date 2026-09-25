@@ -37,9 +37,11 @@ def usage_by_model(path: Path) -> dict[str, dict[str, int]]:
         msg = entry.get("message") or {}
         if entry.get("type") != "assistant" or not msg.get("usage"):
             continue
-        if msg.get("id") in seen:  # streamed messages repeat the same id; count once
+        msg_id = msg.get("id")
+        if msg_id and msg_id in seen:  # streamed messages repeat the same id; count once (no id: count it)
             continue
-        seen.add(msg.get("id"))
+        if msg_id:
+            seen.add(msg_id)
         u = msg["usage"]
         m = totals[msg.get("model", "?")]
         m["input"] += u.get("input_tokens", 0)

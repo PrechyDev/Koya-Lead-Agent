@@ -34,6 +34,9 @@ def main() -> int:
     parser.add_argument("--invite", action="store_true", help="send an invite email if no account exists")
     args = parser.parse_args()
 
+    if args.owner and args.member:  # checked BEFORE any invite is sent or account created
+        log.error("--owner and --member can't be combined: the owner is always an admin.")
+        return 1
     email = args.email.strip().lower()
     row = db.fetch_one(f"select {db.SCHEMA}.auth_user_id_by_email(%s) as id", (email,))
     user_id = str(row["id"]) if row and row["id"] else None
@@ -49,9 +52,6 @@ def main() -> int:
         log.info(f"No account exists for {email}. Re-run with --invite to send an invite email.")
         return 1
 
-    if args.owner and args.member:
-        log.error("--owner and --member can't be combined: the owner is always an admin.")
-        return 1
     role = "member" if args.member else "admin"
     db.add_member(user_id, email, args.full_name, role, None)
     if args.owner:

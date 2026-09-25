@@ -105,7 +105,7 @@ Models are set per role via `MODEL_ORCHESTRATOR`, `MODEL_ICP`, `MODEL_RESEARCHER
   static/               app.css, app.js, htmx.min.js
 /db/migrations          0000_app_role.sql … 0007_scrape_cache_links_parked.sql
 /scripts                migrate, create_app_role, bootstrap_owner, dev_run, resume_run, transcript_cost, secret_scan
-/evals                  ab.py (model A/B), fixtures/
+/evals                  ab.py (model A/B), record.py (records A/B fixtures), fixtures/
 /spikes                 sdk_spike.py + spike_plugin/
 /n8n                    alert-email-workflow.json
 /tests                  unit + integration (real DB, paid APIs faked)
@@ -120,7 +120,7 @@ py -3.12 -m venv .venv && .venv/Scripts/python -m pip install -r requirements.tx
 .venv/Scripts/python scripts/migrate.py                             # apply DB migrations (admin DSN, laptop only)
 .venv/Scripts/python scripts/create_app_role.py                     # create/sync the app DB user from the DSN you put in .env
 .venv/Scripts/python scripts/bootstrap_owner.py <email> "<Name>" --owner [--invite]   # give the first admin access
-.venv/Scripts/python scripts/dev_run.py "<objective>"               # a DEV-limits run from the terminal (spends!)
+.venv/Scripts/python scripts/dev_run.py "<objective>" --yes         # a DEV-limits run from the terminal (spends!)
 .venv/Scripts/python evals/ab.py estimate --name <fixtures>         # A/B pre-flight (free); run/reference need --yes
 .venv/Scripts/python scripts/secret_scan.py --all                   # scan everything tracked
 ```

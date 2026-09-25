@@ -249,17 +249,21 @@ async def _no_sleep(_):
     return None
 
 
-def _apify_503():
+def _apify_error(status: int = 503, kind: str = "server-error"):
     from apify_client.errors import ApifyApiError
 
-    class _Unavailable(ApifyApiError):  # built by hand: the real one needs an HTTP response object
+    class _ApiError(ApifyApiError):  # built by hand: the real one needs an HTTP response object
         def __new__(cls):
             return Exception.__new__(cls)
 
         def __init__(self):
-            Exception.__init__(self, "service unavailable")
-            self.status_code, self.type = 503, "server-error"
-    return _Unavailable()
+            Exception.__init__(self, f"{kind} ({status})")
+            self.status_code, self.type = status, kind
+    return _ApiError()
+
+
+def _apify_503():
+    return _apify_error(503, "server-error")
 
 
 async def test_a_problem_while_waiting_never_starts_a_second_paid_run(monkeypatch):
@@ -276,14 +280,25 @@ async def test_a_problem_while_waiting_never_starts_a_second_paid_run(monkeypatc
     assert "Apify console" in err.value.message
 
 
-async def test_a_failed_start_request_is_retried_once(monkeypatch):
-    err_503 = _apify_503()
+async def test_a_rate_limited_start_request_is_retried_once(monkeypatch):
+    """Only a 429 is retried: Apify refused before creating anything."""
     fake = _FakeClient({"id": "run4", "status": "SUCCEEDED", "usageTotalUsd": 0.013, "defaultDatasetId": "d"}, RAW,
-                       start_errors=[err_503])
+                       start_errors=[_apify_error(429, "rate-limit-exceeded")])
     monkeypatch.setattr(apify_svc, "ApifyClientAsync", lambda token: fake)
     monkeypatch.setattr(apify_svc.asyncio, "sleep", _no_sleep)
     res = await apify_svc.find_companies(query="x", geos=[], size_bands=[], max_items=3, max_charge_usd=0.05)
     assert len(fake._actor.calls) == 2 and res.apify_run_id == "run4"
+
+
+async def test_a_server_error_on_start_is_not_retried(monkeypatch):
+    """A 5xx may arrive AFTER the run was created, so retrying could start a second paid run (rule 9)."""
+    fake = _FakeClient({"id": "run7", "status": "SUCCEEDED", "usageTotalUsd": 0.013, "defaultDatasetId": "d"}, RAW,
+                       start_errors=[_apify_503()])
+    monkeypatch.setattr(apify_svc, "ApifyClientAsync", lambda token: fake)
+    monkeypatch.setattr(apify_svc.asyncio, "sleep", _no_sleep)
+    with pytest.raises(apify_svc.DiscoveryError):
+        await apify_svc.find_companies(query="x", geos=[], size_bands=[], max_items=3, max_charge_usd=0.05)
+    assert len(fake._actor.calls) == 1
 
 
 async def test_an_empty_search_is_retried_with_the_same_input(monkeypatch):

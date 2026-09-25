@@ -99,13 +99,19 @@ def password_sign_in(email: str, password: str) -> dict:
     return response.json()
 
 
+CLEAR_SESSION = {"clear": True}  # returned instead of new tokens when the cookies should be deleted
+
+
 def refresh_session(refresh_token: str) -> dict | None:
+    """New tokens; {} when Supabase REJECTS the refresh token (revoked/expired); None on a network problem."""
     try:
         response = httpx.post(_auth_url("token"), params={"grant_type": "refresh_token"}, headers=_auth_headers(),
                               json={"refresh_token": refresh_token}, timeout=15)
     except httpx.HTTPError:
         return None
-    return response.json() if response.status_code == 200 else None
+    if response.status_code == 200:
+        return response.json()
+    return {} if 400 <= response.status_code < 500 else None
 
 
 def set_password(access_token: str, password: str, full_name: str | None = None) -> None:
@@ -209,6 +215,8 @@ def resolve_session(request: Request) -> tuple[dict | None, dict | None]:
             access = None
     if refresh:
         tokens = refresh_session(refresh)
+        if tokens == {}:  # rejected: forget it, so we don't ask Supabase again on every request
+            return None, CLEAR_SESSION
         if tokens and tokens.get("access_token"):
             try:
                 return verify_access_token(tokens["access_token"]), tokens

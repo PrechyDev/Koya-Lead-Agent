@@ -115,21 +115,32 @@ def test_run_page_live_tabs_and_exports(client_as, a_run):
     assert csv.status_code == 200 and csv.text.startswith("company_name,company_domain")
     pack = c.get(f"/runs/{rid}/export.json").json()
     assert pack["run_id"] == str(rid)
-    assert all(l["email_sequence"] == "not approved" or l["review_status"] == "approved" for l in pack["leads"])
+    assert all(lead["email_sequence"] == "not approved" or lead["review_status"] == "approved" for lead in pack["leads"])
 
 
-def test_lead_drawer_and_review_rules(client_as, a_run):
-    leads = db.list_leads(str(a_run["id"]))
-    if not leads:
-        pytest.skip("run has no leads")
-    c = client_as(ADMIN)
-    lead = leads[0]
-    r = c.get(f"/leads/{lead['id']}")
-    assert r.status_code == 200 and 'role="dialog"' in r.text
-    token = auth.csrf_token_for(ADMIN.user_id)
-    reject = c.post(f"/leads/{lead['id']}/review", data={"review_status": "rejected", "reviewer_note": "",
-                                                         "csrf_token": token}, headers={"HX-Request": "true"})
-    assert reject.status_code == 400  # a note is required to reject
+def test_lead_drawer_and_review_rules(client_as, admin_dsn):
+    import psycopg
+
+    from app.config import DEV_LIMITS
+    # A throwaway run + lead: if the "note required" rule ever broke, no real lead gets rejected.
+    run, _ = db.create_run(idempotency_key=f"test-{uuid.uuid4()}", objective="review rules test objective",
+                           objective_hash="h" + uuid.uuid4().hex, limits=DEV_LIMITS.to_dict(), run_kind="dev")
+    lead = db.insert_lead_if_new(str(run["id"]), company_name="Review Test", company_domain="review-webtest.com",
+                                 linkedin_url=None, discovery_data={}, prescreen_result="passed", prescreen_reason="",
+                                 qualification_status="qualified", fetched_urls=[])
+    try:
+        c = client_as(ADMIN)
+        r = c.get(f"/leads/{lead['id']}")
+        assert r.status_code == 200 and 'role="dialog"' in r.text
+        token = auth.csrf_token_for(ADMIN.user_id)
+        reject = c.post(f"/leads/{lead['id']}/review", data={"review_status": "rejected", "reviewer_note": "",
+                                                             "csrf_token": token}, headers={"HX-Request": "true"})
+        assert reject.status_code == 400  # a note is required to reject
+        assert db.get_lead(str(lead["id"]))["review_status"] != "rejected"
+    finally:
+        with psycopg.connect(admin_dsn, prepare_threshold=None, autocommit=True) as conn:
+            conn.execute("delete from lead_agent.leads where run_id = %s", (run["id"],))
+            conn.execute("delete from lead_agent.runs where id = %s", (run["id"],))
 
 
 def test_banner_escapes_user_text(client_as):
@@ -326,8 +337,9 @@ def test_only_admins_send_reset_links(client_as, monkeypatch):
     _people(monkeypatch, **{"active@acme.io": True, "gone@acme.io": False})
     sent = []
     monkeypatch.setattr(auth, "send_password_reset", lambda email: sent.append(email))
-    admin_post = lambda uid: client_as(ADMIN).post(f"/team/{uid}/update", headers={"HX-Request": "true"},
-                                                   data={"action": "send_reset", "csrf_token": auth.csrf_token_for(ADMIN.user_id)})
+    def admin_post(uid):
+        return client_as(ADMIN).post(f"/team/{uid}/update", headers={"HX-Request": "true"},
+                                     data={"action": "send_reset", "csrf_token": auth.csrf_token_for(ADMIN.user_id)})
     assert "Reset link sent" in admin_post(_uid("active@acme.io")).text and sent == ["active@acme.io"]
     assert "Reactivate them first" in admin_post(_uid("gone@acme.io")).text and sent == ["active@acme.io"]
     r = client_as(MEMBER).post(f"/team/{_uid('active@acme.io')}/update", headers={"HX-Request": "true"},

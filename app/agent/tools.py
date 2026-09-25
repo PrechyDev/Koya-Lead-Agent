@@ -769,7 +769,7 @@ def _grounding_context(lead: dict) -> str:
     parts.append(f"LinkedIn profile: {d.get('tagline') or ''} {d.get('description') or ''} "
                  f"Industries: {d.get('industries')}. Stated size: {d.get('employee_count_range')}. HQ: {d.get('hq')}.")
     for url in lead.get("fetched_urls") or []:
-        page = db.get_cached_page(url, 30)
+        page = db.get_cached_page(url, get_settings().scrape_cache_days)  # same window as scrape_website
         if page and page.get("content"):
             parts.append(f"Page {url}:\n{page['content'][:2500]}")
     return "\n\n".join(parts)[:14000]

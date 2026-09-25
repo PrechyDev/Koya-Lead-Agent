@@ -184,6 +184,9 @@ async def test_tool_call_cap_blocks_work_but_never_finishing(run_ctx):
     # Looking at the run and finishing it stay allowed at the cap (audit fix: finish_run used to be blocked too).
     data, err = await call(ctx, "get_run_state", {"purpose": "3"})
     assert not err and data.get("reason") != "tool_call_limit_reached"
+    data, _ = await call(ctx, "finish_run", {"purpose": "4", "summary": "nothing found",
+                                             "shortfall_reason": "test run with no companies"})
+    assert data.get("reason") != "tool_call_limit_reached" and data.get("status") == "completed_partial"
 
 
 async def test_logged_events_do_not_use_up_the_tool_call_cap(run_ctx):

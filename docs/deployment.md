@@ -68,7 +68,7 @@ Import `n8n/alert-email-workflow.json`, set the Gmail credential, email and secr
 | 5.3 | "Find me leads" | ~$0.001 | too_vague → clarification question (PRD test 1 companion) |
 | 5.4 | One **DEV** run of a new objective (target 2) | $0.30 Claude + $0.05 Apify | Live proof of **`check_drafts` before saving (D-50)** and the rewrite path (errors log #7). Check `tool_calls`: `check_drafts` before `save_outreach` |
 | 5.5 | Set `FIXTURE_MODE=true`, run the injection fixture page, then set it back to `false` | ~$0.10 | Prompt injection over a real public URL (PRD "untrusted input") |
-| 5.6 | Watch Render → Metrics → Memory during 5.4 | — | Stays under 512 MB. Measured locally under a hard 512 MB limit: peak 456 MB with 2 parallel researchers **plus** a separate 131 MB script process Render doesn't have; expected on Render ≈ 330–400 MB, sequential |
+| 5.6 | Watch Render → Metrics → Memory during 5.4 | — | Stays under 512 MB. Measured locally under a hard 512 MB limit: peak 456 MB with 2 parallel researchers (a test done before the cap was set to 1, D-49) **plus** a separate 131 MB script process Render doesn't have; expected on Render ≈ 330–400 MB, sequential |
 
 `DEV_LIMITS` stays **`false`** (full limits) throughout; any change to it is made by the owner in Render → Environment, between runs.
 

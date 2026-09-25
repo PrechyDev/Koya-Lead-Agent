@@ -20,14 +20,14 @@ OBFUSCATED_EMAIL_RE = re.compile(
     re.I,
 )
 # Phone-shaped numbers only (separators or a leading +), so years/prices survive. "+14155550100" (no separators)
-# is caught by the second branch; "10 000 000" and "2019-2020-2021" are left alone by _looks_like_phone.
+# is caught by the second branch; "10 000 000" and "2019-2020-2021" are left alone by looks_like_phone.
 PHONE_RE = re.compile(
     r"(?<!\w)(?:(?:\+\d{1,3}[\s.\-]?)?(?:\(\d{2,4}\)[\s.\-]?|\d{2,4}[\s.\-])\d{3,4}[\s.\-]\d{3,4}|\+\d{10,15})(?!\w)"
 )
 _YEAR_RE = re.compile(r"^(?:19|20)\d\d$")
 
 
-def _looks_like_phone(match: re.Match) -> bool:
+def looks_like_phone(match: re.Match) -> bool:
     s = match.group(0)
     if s.startswith(("+", "(")):
         return True
@@ -85,7 +85,7 @@ def redact(text: str) -> tuple[str, dict[str, int]]:
     text = _sub(TOKEN_RE, "token", text)
 
     def _phone(m: re.Match) -> str:
-        if not _looks_like_phone(m):
+        if not looks_like_phone(m):
             return m.group(0)
         counts["phone"] = counts.get("phone", 0) + 1
         return "[phone redacted]"
@@ -159,4 +159,4 @@ def contains_contact_details(text: str) -> bool:
     """Any email (plain or disguised) or phone number left in stored text (the end-of-run safety check)."""
     text = text or ""
     return bool(EMAIL_RE.search(text) or OBFUSCATED_EMAIL_RE.search(text)
-                or any(_looks_like_phone(m) for m in PHONE_RE.finditer(text)))
+                or any(looks_like_phone(m) for m in PHONE_RE.finditer(text)))

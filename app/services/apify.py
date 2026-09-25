@@ -206,8 +206,9 @@ async def _run_once(client, actor_id: str, actor_input: dict, max_items: int, ma
                     timeout_s: int) -> tuple[str, list[dict], float]:
     """One actor run: (run id, raw items, settled cost). Raises DiscoveryError with the run id and its cost."""
     actor = client.actor(actor_id)
-    # 1) START the run. Only this request is retried (once, on a 5xx/429 from Apify): it failed, so no run
-    #    exists yet. Waiting is a separate step, so a hiccup while waiting can never start a second paid run.
+    # 1) START the run. Only this request is retried, once, and only on HTTP 429 (Apify refused it before doing
+    #    anything). A 5xx is NOT retried: the run may have been created before the error (rule 9). Waiting is a
+    #    separate step, so a hiccup while waiting can never start a second paid run.
     started = None
     for attempt in range(2):
         try:
@@ -221,7 +222,7 @@ async def _run_once(client, actor_id: str, actor_input: dict, max_items: int, ma
         except ApifyApiError as exc:
             status = getattr(exc, "status_code", None)
             failure = classify_apify(status, f"{getattr(exc, 'type', '')} {exc}")
-            if failure == "apify_unavailable" and attempt == 0:
+            if status == 429 and attempt == 0:
                 await asyncio.sleep(2)
                 continue
             raise DiscoveryError(failure, f"Apify API error ({status}): {str(exc)[:200]}", failure_code=failure) from exc

@@ -103,7 +103,7 @@ async def login_page(request: Request, next: str = "/"):
 @router.post("/login")
 @limiter.limit("5/15minutes")
 async def login_submit(request: Request, email: str = Form(...), password: str = Form(...), next: str = Form("/")):
-    if not is_valid_email(email):  # same rule as the form; saves a Supabase call (and a rate-limit slot)
+    if not is_valid_email(email):  # same rule as the form; saves a Supabase call
         return templates.TemplateResponse(request, "login.html", _ctx(request, next=next, error=EMAIL_HINT,
                                                                       email=email), status_code=400)
     try:
@@ -338,6 +338,8 @@ async def create_run(request: Request, objective: str = Form(""),
     parent = None
     if parent_run_id:
         parent = await db.run(_get_run_or_404, parent_run_id)
+        if not _can_control(member, parent):  # the follow-up marks the parent superseded (D-73)
+            raise HTTPException(status_code=403, detail="Only the person who started that run, or an admin, can answer it.")
     run, created = await db.run(
         db.create_run, idempotency_key=idempotency_key, objective=objective,
         objective_hash=objective_hash(objective), limits=limits.to_dict(), run_kind="app",

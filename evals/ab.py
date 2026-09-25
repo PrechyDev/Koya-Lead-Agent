@@ -34,6 +34,7 @@ from app.agent import prompts  # noqa: E402
 from app.agent.tools import ICPModel  # noqa: E402
 from app.config import get_settings  # noqa: E402
 from app.lib.budget import BudgetExceeded, assert_can_spend, cost_from_usage  # noqa: E402
+from app.lib.icp_defaults import has_company_type  # noqa: E402
 from app.lib.outreach_checks import check_outreach  # noqa: E402
 from app.lib.qualification_rules import DisqualifierCheck, HardFilterCheck, SoftPreferenceCheck  # noqa: E402
 from app.logging_setup import configure_logging  # noqa: E402
@@ -43,15 +44,18 @@ SKILLS = ROOT / "agent_plugin" / "skills"
 EVAL_CAP_USD = Decimal("1.20")  # owner-approved 2026-09-24: +$0.30 so Opus 5.5 can compete on two stages (D-59)
 CANDIDATES = ["claude-haiku-4-5", "claude-sonnet-5"]
 REFERENCE_MODEL = "claude-opus-5-5"
-# Opus 5.5 also competes where quality matters most and a quality gain could justify ~2x the price. On
-# qualification it is scored against its own reference labels, so its agreement is self-consistency, not
-# accuracy: the owner spot-checks its disagreements with Sonnet before choosing it.
-OPUS_STAGES = {"qual", "copy"}
+# Opus 5.5 also competes on copywriting, where quality matters most and a gain could justify ~2x the price.
+# Not on qualification (owner, 2026-09-25): its answer key IS Opus's qualification, so a replay would only
+# measure self-consistency (~$0.35). Its qualification quality is read from the reference itself.
+OPUS_STAGES = {"copy"}
+COPY_SET_SIZE = 3  # qualified companies first, then the needs-review ones with the most passed hard filters
 REPEATS = 2
 
 ICP_CASES = [
+    # No kind of company named: since D-58 the right answer is to ASK (save_icp enforces it). This case expected
+    # "searchable" before D-58, which marked the correct answer wrong (errors log #66).
     {"id": "vague", "objective": "Find companies that might need AI automation help",
-     "searchable": True, "must_preserve": []},
+     "searchable": False, "must_preserve": []},
     {"id": "specific", "objective": "Find 10 US-based B2B SaaS companies with 20 to 80 employees selling to healthcare "
                                     "providers; exclude agencies.",
      "searchable": True, "must_preserve": ["us", "20", "80", "healthcare", "agenc"]},
@@ -142,13 +146,15 @@ def export(run_ids: list[str], name: str) -> None:
     icp = None
     for run_id in run_ids:
         run = db.get_run(run_id)
+        if run is None:
+            raise SystemExit(f"Run {run_id} not found.")
         icp = icp or run["icp"]
         for lead in db.list_leads(run_id):
             if lead["prescreen_result"] and lead["prescreen_result"].startswith("rejected"):
                 continue
             pages = []
             for url in lead["fetched_urls"] or []:
-                page = db.get_cached_page(url, 60)
+                page = db.get_cached_page(url, get_settings().scrape_cache_days)
                 if page and page["content"]:
                     pages.append({"url": url, "content": page["content"]})
             if not pages:
@@ -225,8 +231,22 @@ def ground_request(model: str, c: dict, draft: dict) -> dict:
     return _params(model, SYSTEM, build_prompt(context, draft["emails"], draft["linkedin_message"]), GroundOut)
 
 
+def page_sentence(c: dict) -> str:
+    """A real sentence from the company's own page (6-30 words), so a clean control draft is truly supported."""
+    import re
+    text = " ".join(p["content"] for p in c["pages"])
+    for sentence in re.split(r"(?<=[.!?])\s+", text):
+        words = sentence.split()
+        clean = not re.search(r"[\[\]|*#\n]|cookie|privacy", sentence, re.I)  # skip banners, markup, broken lines
+        if 6 <= len(words) <= 30 and sentence.endswith(".") and clean:
+            return sentence.strip()
+    return f"{c['name']} is a company with a public website."
+
+
 def planted_draft(c: dict, fake: str | None) -> dict:
-    line = f"I noticed {c['name']} {fake}." if fake else f"I noticed {c['name']} works with growing teams."
+    # Clean controls quote the page (errors log #70: "works with growing teams" was itself unsupported, so a
+    # strict checker was scored as raising a false alarm).
+    line = f"I noticed {c['name']} {fake}." if fake else f"I read on your site: \"{page_sentence(c)}\""
     body = f"Hi {{{{first_name}}}}, {line} Is there repetitive ops work an automation assistant could take on?"
     return {"emails": [{"step": i, "subject": "Quick question", "body": body, "personalization_note": "n",
                         "evidence_ref": c["pages"][0]["url"]} for i in (1, 2, 3)],
@@ -236,11 +256,37 @@ def planted_draft(c: dict, fake: str | None) -> dict:
 # ---------------------------------------------------------------------------
 # Batch plumbing, estimation, budget
 # ---------------------------------------------------------------------------
+DEFAULT_OUTPUT_TOKENS = {"opus": 900, "other": 700}  # a guess, used only until real answers exist
+
+
+def observed_output_tokens() -> dict[str, float]:
+    """Average output tokens per model from answers already paid for (thinking is billed as output)."""
+    rows = db.fetch_all(f"select model, avg(output_tokens) as avg_out from {db.t('spend_ledger')} "
+                        "where source = 'eval' and output_tokens is not null group by model")
+    return {r["model"]: float(r["avg_out"]) for r in rows}
+
+
+def _output_guess(model: str, observed: dict[str, float]) -> int:
+    for known, avg in observed.items():
+        if known.startswith(model) or model.startswith(known):
+            return int(avg * 1.25) + 1  # 25% headroom over what this model actually wrote
+    return DEFAULT_OUTPUT_TOKENS["opus" if "opus" in model else "other"]
+
+
 def estimate_cost(requests: list[tuple[str, dict]]) -> Decimal:
+    observed = observed_output_tokens()
     total = Decimal("0")
     for _, p in requests:
         chars = len(json.dumps(p["system"])) + len(json.dumps(p["messages"]))
-        total += cost_from_usage(p["model"], chars // 4, 900 if "opus" in p["model"] else 700, batch=True)
+        out = min(p["max_tokens"], _output_guess(p["model"], observed))
+        total += cost_from_usage(p["model"], chars // 4, out, batch=True)
+    return total.quantize(Decimal("0.0001"))
+
+
+def worst_case_cost(requests: list[tuple[str, dict]]) -> Decimal:
+    """If every answer used its full max_tokens: the most this batch can cost."""
+    total = sum((cost_from_usage(p["model"], (len(json.dumps(p["system"])) + len(json.dumps(p["messages"]))) // 4,
+                                 p["max_tokens"], batch=True) for _, p in requests), Decimal("0"))
     return total.quantize(Decimal("0.0001"))
 
 
@@ -251,17 +297,44 @@ def eval_spent() -> Decimal:
 
 def run_batch(requests: list[tuple[str, dict]], label: str) -> dict[str, dict]:
     client = anthropic.Anthropic(api_key=get_settings().anthropic_api_key)
-    batch = client.messages.batches.create(requests=[{"custom_id": cid, "params": p} for cid, p in requests])
+    # Batch ids may only use [a-zA-Z0-9_-] (max 64); ours contain "::" and domains, so send short ids and map back.
+    names = {f"r{i:04d}": cid for i, (cid, _) in enumerate(requests)}
+    safe = {cid: sid for sid, cid in names.items()}
+    batch = client.messages.batches.create(requests=[{"custom_id": safe[cid], "params": p} for cid, p in requests])
+    # Saved at once: if this script dies while waiting, `collect` fetches the (already paid) answers later.
+    pending = FIXTURES / f"batch_{label}_{batch.id}.pending.json"
+    pending.write_text(json.dumps({"batch_id": batch.id, "label": label, "names": names}), encoding="utf-8")
     log.info(f"batch {batch.id} submitted ({len(requests)} requests); waiting…")
+    return collect(batch.id)
+
+
+def collect(batch_id: str) -> dict[str, dict]:
+    """Wait for a submitted batch (tolerating network drops), record its spend once, save and return the answers."""
+    pending = next(FIXTURES.glob(f"batch_*_{batch_id}.pending.json"), None)
+    if pending is None:
+        raise SystemExit(f"No pending file for {batch_id}: its id map is unknown.")
+    info = json.loads(pending.read_text(encoding="utf-8"))
+    names, label = info["names"], info["label"]
+    saved = FIXTURES / f"batch_{label}_{batch_id}.results.json"
+    if saved.exists():  # already collected: never record its spend twice
+        log.info(f"{batch_id} was already collected ({saved.name})")
+        return json.loads(saved.read_text(encoding="utf-8"))
+    client = anthropic.Anthropic(api_key=get_settings().anthropic_api_key)
     while True:
-        batch = client.messages.batches.retrieve(batch.id)
-        if batch.processing_status == "ended":
-            break
+        try:
+            batch = client.messages.batches.retrieve(batch_id)
+            if batch.processing_status == "ended":
+                break
+        except (anthropic.APIConnectionError, anthropic.APITimeoutError) as exc:
+            log.info(f"waiting for {batch_id}: {type(exc).__name__}, retrying")  # the batch keeps running remotely
         time.sleep(20)
     results: dict[str, dict] = {}
-    for item in client.messages.batches.results(batch.id):
+    for item in client.messages.batches.results(batch_id):
+        item_id = names[item.custom_id]
+        if item.result.type in ("canceled", "expired"):
+            continue  # never ran (and isn't billed): not a wrong answer, so it isn't scored (errors log #71)
         if item.result.type != "succeeded":
-            results[item.custom_id] = {"error": item.result.type}
+            results[item_id] = {"error": item.result.type}
             continue
         msg = item.result.message
         text = next((b.text for b in msg.content if b.type == "text"), "{}")
@@ -270,24 +343,30 @@ def run_batch(requests: list[tuple[str, dict]], label: str) -> dict[str, dict]:
                                getattr(u, "cache_read_input_tokens", 0) or 0,
                                getattr(u, "cache_creation_input_tokens", 0) or 0, batch=True)
         db.record_spend("eval", cost, model=msg.model, input_tokens=u.input_tokens, output_tokens=u.output_tokens,
-                        note=f"{label} {item.custom_id}")
+                        note=f"{label} {item_id}")
         try:
             parsed = json.loads(text)
         except ValueError:
             parsed = {"error": "invalid json"}
-        results[item.custom_id] = {"output": parsed, "cost": float(cost), "stop": msg.stop_reason}
+        results[item_id] = {"output": parsed, "cost": float(cost), "stop": msg.stop_reason,
+                            "output_tokens": u.output_tokens}
+    if not results:
+        log.info(f"{batch_id} returned no answers (cancelled or expired); nothing to score")
+        return results
+    saved.write_text(json.dumps(results, indent=1), encoding="utf-8")  # kept: answers already paid for
+    log.info(f"batch results saved to {saved}")
     return results
 
 
 def guard(requests: list[tuple[str, dict]], yes: bool) -> None:
     est = estimate_cost(requests)
     spent = eval_spent()
-    log.info(f"pre-flight: {len(requests)} requests, estimated ${est} (batch price); eval spent so far ${spent:.4f}; "
-          f"cap ${EVAL_CAP_USD}")
+    log.info(f"pre-flight: {len(requests)} requests, estimated ${est} (worst case ${worst_case_cost(requests)}), "
+             f"batch price; eval spent so far ${spent:.4f}; cap ${EVAL_CAP_USD}")
     if spent + est > EVAL_CAP_USD:
         raise SystemExit("REFUSED: this would exceed the eval cap. Shrink the test set or raise the cap on purpose.")
-    try:  # and the project's hard Claude budget, like every other paid call (specs §7.2, E-29)
-        assert_can_spend(db.total_spend(), est, get_settings().claude_budget_total_usd)
+    try:  # and the project's hard Claude budget: refused if even the WORST case could pass it (rule 5, E-29)
+        assert_can_spend(db.total_spend(), worst_case_cost(requests), get_settings().claude_budget_total_usd)
     except BudgetExceeded as exc:
         raise SystemExit(f"REFUSED: {exc}") from None
     if not yes:
@@ -305,17 +384,24 @@ def build_reference_requests(name: str) -> list[tuple[str, dict]]:
 def build_ab_requests(name: str) -> list[tuple[str, dict]]:
     fx, ref = load(name), load_reference(name)
     reqs: list[tuple[str, dict]] = []
-    qualified = [c for c in fx["companies"] if ref.get(c["domain"], {}).get("status") == "qualified"][:3]
+    # Owner, 2026-09-25: the answer key had 1 qualified company, so the writing test also uses needs-review
+    # companies with the most evidence. Still a fair test: every fact must come from their pages.
+    def passes(c: dict) -> int:
+        return sum(ch.get("result") == "pass" for ch in ref.get(c["domain"], {}).get("hard_filter_checks", []))
+    rank = {"qualified": 0, "needs_review": 1}
+    pool = [c for c in fx["companies"] if ref.get(c["domain"], {}).get("status") in rank]
+    qualified = sorted(pool, key=lambda c: (rank[ref[c["domain"]]["status"]], -passes(c)))[:COPY_SET_SIZE]
     for model in CANDIDATES + [REFERENCE_MODEL]:
-        opus = model == REFERENCE_MODEL
+        def runs(stage: str, cases: list, m: str = model) -> list:
+            return cases if m != REFERENCE_MODEL or stage in OPUS_STAGES else []  # Opus only in OPUS_STAGES
         for rep in range(1, REPEATS + 1):
-            for case in ([] if opus else ICP_CASES):
+            for case in runs("icp", ICP_CASES):
                 reqs.append((f"icp::{model}::{rep}::{case['id']}", icp_request(model, case)))
-            for c in fx["companies"][:8]:
+            for c in runs("qual", fx["companies"][:8]):
                 reqs.append((f"qual::{model}::{rep}::{c['domain']}", qual_request(model, c, fx["icp"])))
-            for c in qualified:
+            for c in runs("copy", qualified):
                 reqs.append((f"copy::{model}::{rep}::{c['domain']}", copy_request(model, c, ref)))
-            for i, (fake, _) in enumerate([] if opus else PLANTED):
+            for i, (fake, _) in enumerate(runs("ground", PLANTED)):
                 c = fx["companies"][i % len(fx["companies"])]
                 reqs.append((f"ground::{model}::{rep}::{i}", ground_request(model, c, planted_draft(c, fake))))
     return reqs
@@ -334,13 +420,15 @@ def score(name: str, results: dict[str, dict]) -> None:
             c = next(x for x in ICP_CASES if x["id"] == case)
             text = json.dumps(out).lower()
             preserved = all(k in text for k in c["must_preserve"])
-            passed = (out.get("is_searchable") == c["searchable"]) and preserved
+            # Score what the server would STORE: save_icp makes an ICP with no company type a question (D-58).
+            stored_searchable = bool(out.get("is_searchable")) and has_company_type(out.get("icp") or {})
+            passed = (stored_searchable == c["searchable"]) and preserved
             expected, actual = {"searchable": c["searchable"], "preserve": c["must_preserve"]}, out.get("is_searchable")
         elif stage == "qual":
             exp = ref.get(case, {}).get("status")
             got = out.get("status")
             passed = exp is not None and got == exp
-            false_qualified = got == "qualified" and exp != "qualified"
+            false_qualified = got == "qualified" and exp is not None and exp != "qualified"  # needs a label
             score_value = 1 if passed else 0
             expected, actual = exp, got
             notes = "FALSE QUALIFIED" if false_qualified else ""
@@ -361,6 +449,26 @@ def score(name: str, results: dict[str, dict]) -> None:
                               passed=passed, score=score_value, cost_usd=res.get("cost"), notes=notes)
 
 
+def rescore(name: str, stages: set[str]) -> None:
+    """Score saved answers again (free: no API calls), e.g. after fixing a scorer. The app's DB role can't
+    DELETE (least privilege), so the old rows are removed with the local admin DSN (laptop only)."""
+    import psycopg
+    from dotenv import dotenv_values
+    results: dict[str, dict] = {}
+    for f in sorted(FIXTURES.glob("batch_ab-*.results.json")):
+        results.update({k: v for k, v in json.loads(f.read_text(encoding="utf-8")).items()
+                        if k.split("::", 1)[0] in stages})
+    admin = (dotenv_values(ROOT / ".env").get("SUPABASE_ADMIN_DSN") or "").strip()
+    if not admin:
+        raise SystemExit("SUPABASE_ADMIN_DSN is needed (locally) to replace old eval rows.")
+    with psycopg.connect(admin, prepare_threshold=None, autocommit=True) as conn:
+        n = conn.execute(f"delete from {db.t('eval_results')} where eval_name = %s and stage = any(%s)",
+                         (name, sorted(stages))).rowcount
+    log.info(f"removed {n} old rows; re-scoring {len(results)} saved answers")
+    score(name, results)
+    report(name)
+
+
 def report(name: str) -> None:
     rows = db.fetch_all(
         f"""select stage, model, repeat_no, count(*) as n, sum(case when passed then 1 else 0 end) as ok,
@@ -375,11 +483,15 @@ def report(name: str) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=["export", "estimate", "reference", "run", "report"])
+    parser.add_argument("command", choices=["export", "estimate", "reference", "run", "collect", "rescore", "report"])
+    parser.add_argument("--batch-id", help="for `collect`: a batch submitted earlier whose answers weren't fetched")
     parser.add_argument("run_ids", nargs="*")
     parser.add_argument("--name", default="prd_example")
     parser.add_argument("--yes", action="store_true")
+    parser.add_argument("--stages", default="icp,qual,copy,ground",
+                        help="comma list for `run`/`estimate`: run stage by stage so spend is re-checked in between")
     args = parser.parse_args()
+    stages = {x.strip() for x in args.stages.split(",") if x.strip()}
 
     if args.command == "export":
         export(args.run_ids, args.name)
@@ -387,8 +499,10 @@ def main() -> int:
         ref = build_reference_requests(args.name)
         log.info(f"reference (Opus 5.5, {len(ref)} companies): est ${estimate_cost(ref)}")
         if load_reference(args.name):
-            ab = build_ab_requests(args.name)
-            log.info(f"A/B replays ({len(ab)} requests): est ${estimate_cost(ab)}")
+            for st in sorted(stages):
+                part = [r for r in build_ab_requests(args.name) if r[0].startswith(st + "::")]
+                log.info(f"A/B {st:<6} ({len(part):>3} requests): est ${estimate_cost(part)}, "
+                         f"worst ${worst_case_cost(part)}")
         else:
             log.info("A/B estimate needs the reference labels first (run `reference`).")
         log.info(f"eval spent so far: ${eval_spent():.4f} of ${EVAL_CAP_USD}")
@@ -400,11 +514,21 @@ def main() -> int:
         (FIXTURES / f"{args.name}.reference.json").write_text(json.dumps(labels, indent=1), encoding="utf-8")
         log.info(f"reference labels saved for {len(labels)} companies")
     elif args.command == "run":
-        reqs = build_ab_requests(args.name)
+        reqs = [r for r in build_ab_requests(args.name) if r[0].split("::", 1)[0] in stages]
         guard(reqs, args.yes)
-        results = run_batch(reqs, "ab")
+        results = run_batch(reqs, "ab-" + "-".join(sorted(stages)))
         score(args.name, results)
         report(args.name)
+    elif args.command == "collect":
+        results = collect(args.batch_id)
+        if next(iter(results), "").startswith("ref::"):
+            labels = {cid.split("::", 1)[1]: r.get("output", {}) for cid, r in results.items()}
+            (FIXTURES / f"{args.name}.reference.json").write_text(json.dumps(labels, indent=1), encoding="utf-8")
+        else:
+            score(args.name, results)
+            report(args.name)
+    elif args.command == "rescore":
+        rescore(args.name, stages)
     elif args.command == "report":
         report(args.name)
     return 0

@@ -60,6 +60,8 @@ async def check_scope(objective: str, client: anthropic.AsyncAnthropic | None = 
         return ScopeResult(None, Decimal("0"), failure_code=classify_claude_error(exc.status_code, str(exc)))
     except anthropic.APIConnectionError:
         return ScopeResult(None, Decimal("0"), failure_code="anthropic_unavailable")
+    except Exception:  # noqa: BLE001 — e.g. an answer that can't be parsed: skip the check, the ICP step decides
+        return ScopeResult(None, Decimal("0"))
     u = response.usage
     cost = cost_from_usage(model, u.input_tokens, u.output_tokens)
     return ScopeResult(response.parsed_output, cost, u.input_tokens, u.output_tokens)

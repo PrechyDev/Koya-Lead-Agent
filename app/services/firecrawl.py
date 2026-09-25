@@ -116,7 +116,11 @@ async def scrape(url: str, *, max_chars: int = 6000, client: httpx.AsyncClient |
         raise ScrapeError("firecrawl_error", f"Firecrawl returned HTTP {response.status_code} for {url}.",
                           response.status_code)
 
-    body = response.json()
+    try:
+        body = response.json()
+    except ValueError:
+        raise ScrapeError("firecrawl_error", f"Firecrawl sent an unreadable answer for {url}.",
+                          response.status_code) from None
     data = body.get("data") or {}
     meta = data.get("metadata") or {}
     site_status = meta.get("statusCode")

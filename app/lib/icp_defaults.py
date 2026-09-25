@@ -48,6 +48,8 @@ DEFAULTS: list[Default] = [
 
 
 def _is_empty(value) -> bool:
+    if isinstance(value, list):
+        return not any(isinstance(v, str) and v.strip() or (v and not isinstance(v, str)) for v in value)
     return not value or (isinstance(value, str) and not value.strip())
 
 

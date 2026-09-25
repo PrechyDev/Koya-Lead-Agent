@@ -60,11 +60,11 @@ class Settings(BaseSettings):
     alert_webhook_secret: str = ""
     cookie_secure: bool | None = Field(default=None)
 
-    @field_validator("apify_actor_id", "model_orchestrator", "model_icp", "model_researcher", "model_copywriter",
-                     "model_grounding", "model_checks", "max_parallel_subagents", mode="before")
+    @field_validator("*", mode="before")
     @classmethod
     def _blank_means_default(cls, value, info):
-        # An empty line like `APIFY_ACTOR_ID=` in .env must not override the default with "".
+        # An empty value (`APIFY_ACTOR_ID=` in .env, or a blank Render variable) means "use the default", for
+        # every setting: a blank bool/int would otherwise stop the app from starting.
         if value is None or (isinstance(value, str) and not value.strip()):
             return cls.model_fields[info.field_name].default
         return value.strip() if isinstance(value, str) else value

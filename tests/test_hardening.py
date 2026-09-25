@@ -129,7 +129,6 @@ def test_preflight_catches_empty_anthropic_account(monkeypatch):
 
 
 # --- alerts: in-app + webhook, deduped -------------------------------------------------------
-pytestmark_db = pytest.mark.db
 
 
 @pytest.mark.db
@@ -139,7 +138,11 @@ def test_alert_is_recorded_deduped_and_sent(app_dsn, admin_dsn, monkeypatch):
         alert_webhook_url="https://n8n.example/webhook/koya", alert_webhook_secret="s3cret",
         app_base_url="https://app.example", claude_budget_total_usd=Decimal("6")))
     hook = respx.post("https://n8n.example/webhook/koya").mock(return_value=httpx.Response(200))
-    code = "apify_actor_not_found"
+    # A test-only code, so the clean-up below can never delete (or bump) a real alert.
+    code = "test_only_alert"
+    real = CATALOGUE["apify_actor_not_found"]
+    monkeypatch.setitem(alerts.CATALOGUE, code, type(real)(code, real.service, real.severity, real.fatal,
+                                                           real.client, real.admin))
     with psycopg.connect(admin_dsn, prepare_threshold=None, autocommit=True) as conn:
         conn.execute("delete from lead_agent.system_events where code = %s", (code,))
     try:

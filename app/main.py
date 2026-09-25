@@ -87,24 +87,30 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 response = templates.TemplateResponse(request, "error.html", {
                     "title": "No access", "message": "Your account doesn't have access to this app, or it was "
                     "deactivated. Ask an admin to invite you.", "no_access": True}, status_code=403)
-                return response
+                return _finish(response, new_tokens)
         if request.state.member is None and not path.startswith(PUBLIC_PATHS) and path != "/logout":
             # Keep the query string (a filtered Runs view, a prefilled New run) and encode it as one parameter.
             wanted = request.url.path + (f"?{request.url.query}" if request.url.query else "")
             target = f"/login?next={quote(wanted, safe='/')}"
             if _is_htmx(request):
-                return HTMLResponse("", status_code=401, headers={"HX-Redirect": target})
-            return RedirectResponse(target, status_code=303)
-        response = await call_next(request)
-        if new_tokens:
-            auth.set_session_cookies(response, new_tokens)
-        response.headers.setdefault("X-Content-Type-Options", "nosniff")
-        response.headers.setdefault("Referrer-Policy", "same-origin")
-        response.headers.setdefault("X-Frame-Options", "DENY")
-        response.headers.setdefault("Content-Security-Policy", CSP)
-        if get_settings().secure_cookies:
-            response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
-        return response
+                return _finish(HTMLResponse("", status_code=401, headers={"HX-Redirect": target}), new_tokens)
+            return _finish(RedirectResponse(target, status_code=303), new_tokens)
+        return _finish(await call_next(request), new_tokens)
+
+
+def _finish(response, new_tokens: dict | None):
+    """Every response, early returns included, gets the session update and the security headers."""
+    if new_tokens is auth.CLEAR_SESSION:
+        auth.clear_session_cookies(response)  # Supabase rejected the refresh token: stop retrying it
+    elif new_tokens:
+        auth.set_session_cookies(response, new_tokens)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "same-origin")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Content-Security-Policy", CSP)
+    if get_settings().secure_cookies:
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    return response
 
 
 app.add_middleware(AuthMiddleware)

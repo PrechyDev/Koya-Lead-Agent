@@ -10,7 +10,7 @@ DISQ = ["Agency or consultancy"]
 
 def _hard(results=("pass", "pass", "pass")):
     src = [LI, SITE, LI]
-    return [HardFilterCheck(filter=f, result=r, evidence="stated", source_url=s) for f, r, s in zip(FILTERS, results, src)]
+    return [HardFilterCheck(filter=f, result=r, evidence="stated", source_url=s) for f, r, s in zip(FILTERS, results, src, strict=True)]
 
 
 def _disq(applies="no"):

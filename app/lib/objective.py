@@ -57,11 +57,12 @@ def objective_problem(text: str) -> str | None:
     if count_words(t) < MIN_OBJECTIVE_WORDS:
         return (f"Describe the companies in at least {MIN_OBJECTIVE_WORDS} words, e.g. "
                 "\"Find US B2B SaaS companies with 10 to 100 employees\".")
-    if re.search(r"(.)\1{5,}", t):
+    if re.search(r"([^\d\s])\1{5,}", t):  # "1000000" is a number, not a key mash
         return "That looks like repeated characters. Describe the companies you want to find."
-    vowelless = [w for w in words if len(w) >= 4 and not re.search(r"[aeiouyAEIOUY]", w)]
+    latin = [w for w in words if re.fullmatch(r"[A-Za-z]+", w)]  # other scripts have no a/e/i/o/u (any language is fine)
+    vowelless = [w for w in latin if len(w) >= 4 and not re.search(r"[aeiouyAEIOUY]", w)]
     long_mash = [w for w in words if len(w) >= 13 and len(set(w.lower())) <= 6]
-    if len(vowelless) > len(words) / 2 or long_mash:
+    if (latin and len(vowelless) > len(latin) / 2) or long_mash:
         return "That doesn't look like a sentence. Describe the companies you want to find."
     return None
 
@@ -99,7 +100,8 @@ def normalize_geo(value: str) -> str:
 
 
 _UNDER_RE = re.compile(r"\b(?:under|below|fewer\s+than|less\s+than)\b|<", re.I)
-_UP_TO_RE = re.compile(r"\b(?:up\s+to|at\s+most|no\s+more\s+than|max(?:imum)?)\b", re.I)
+_UP_TO_RE = re.compile(r"\b(?:up\s+to|at\s+most|no\s+more\s+than|max(?:imum)?|or\s+(?:fewer|less|under|below))\b",
+                       re.I)
 
 
 def normalize_headcount(value: str | None) -> str:

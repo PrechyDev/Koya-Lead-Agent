@@ -257,7 +257,7 @@ def _result_failure(result: ResultMessage | None) -> ServiceFailure | None:
 
 def fail_run(run_id: str, failure: ServiceFailure, detail_status: str | None = None) -> None:
     """Store a failed run with the client message + admin detail, and alert the owner."""
-    scorecard, qualified, target = build_scorecard(run_id)
+    scorecard, qualified, _target = build_scorecard(run_id)
     status = "completed_partial" if qualified else "failed"
     db.set_status(run_id, status, detail_status or ("Stopped: " + failure.client if qualified else failure.client),
                   error_message=failure.client, error_detail=f"[{failure.code}] {failure.detail}"[:2000],
@@ -428,9 +428,9 @@ async def run_research_phase(run_id: str) -> None:
         await db.run(_recover_cost, run_id, "run", session, "phase interrupted")
         await db.run(_refresh_run_cost, run_id)
         raise
-    if session.stopped_for_fatal:
-        await db.run(_recover_cost, run_id, "run", session, f"stopped: {ctx.fatal.code}")
-    else:
+    if result is None:  # stopped before the SDK's final message (a fatal tool error): cost from the transcript
+        await db.run(_recover_cost, run_id, "run", session, f"stopped: {ctx.fatal.code if ctx.fatal else 'no result'}")
+    else:  # the final message arrived (even when a fatal error stopped the run right after): it has the cost
         await db.run(_record_cost, run_id, "run", result, settings.model_orchestrator)
     await db.run(_refresh_run_cost, run_id, result.num_turns if result else 0)
 

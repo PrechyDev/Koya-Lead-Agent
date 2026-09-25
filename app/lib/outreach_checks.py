@@ -7,7 +7,7 @@ bounced for free. Returns a list of human-readable problems; empty = pass.
 import re
 
 from app.lib.domain import same_url
-from app.lib.sanitize import EMAIL_RE, PHONE_RE
+from app.lib.sanitize import EMAIL_RE, PHONE_RE, looks_like_phone
 
 MAX_SUBJECT_CHARS = 60
 MAX_BODY_WORDS = 120
@@ -15,7 +15,7 @@ MAX_FINAL_EMAIL_WORDS = 80   # the guide: "keep the final follow-up brief"
 MAX_LINKEDIN_CHARS = 300
 ALLOWED_PLACEHOLDERS = {"first_name", "sender_name"}
 URL_RE = re.compile(r"https?://|www\.", re.I)
-PLACEHOLDER_RE = re.compile(r"\{\{\s*([a-zA-Z_]+)\s*\}\}")
+PLACEHOLDER_RE = re.compile(r"\{\{\s*([\w-]+)\s*\}\}")
 
 # From the outbound-copywriting guide: weak personalization, fake urgency, hype.
 BANNED_PHRASES = [
@@ -36,7 +36,7 @@ def _contact_or_url_problems(label: str, text: str) -> list[str]:
     problems = []
     if EMAIL_RE.search(text or ""):
         problems.append(f"{label} contains an email address; remove it (no emails anywhere)")
-    if PHONE_RE.search(text or ""):
+    if any(looks_like_phone(m) for m in PHONE_RE.finditer(text or "")):  # same rule as redaction
         problems.append(f"{label} contains a phone number; remove it")
     if URL_RE.search(text or ""):
         problems.append(f"{label} contains a URL; keep links out of the copy (evidence goes in evidence_ref)")

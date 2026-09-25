@@ -2,18 +2,19 @@
 
 * raise_alert(...) records a row in lead_agent.system_events. The same open code within 30 minutes
   bumps `occurrences` instead of creating a new row, so a broken key doesn't flood your inbox.
-* A new (or re-opened) issue is POSTed to ALERT_WEBHOOK_URL with header X-Alert-Secret.
+* A new issue (the first of its code in 30 minutes) is POSTed to ALERT_WEBHOOK_URL with header X-Alert-Secret.
 * If the database itself is down, the alert goes straight to the webhook.
 """
 
 import logging
 import threading
+import time
 from datetime import UTC, datetime
 
 import httpx
 
 from app import db
-from app.config import get_settings
+from app.config import APP_NAME, get_settings
 from app.failures import CATALOGUE
 
 log = logging.getLogger("lead_agent.alerts")
@@ -36,7 +37,7 @@ def _post_webhook(payload: dict) -> bool:
 def _payload(code: str, message: str, run_id: str | None, severity: str, service: str, occurrences: int) -> dict:
     base = get_settings().app_base_url.rstrip("/")
     return {
-        "app": "Koya Lead Research Agent",
+        "app": APP_NAME,
         "severity": severity, "service": service, "code": code,
         "summary": f"[{severity.upper()}] {service}: {code.replace('_', ' ')}",
         "message": message, "occurrences": occurrences,
@@ -95,13 +96,24 @@ def check_budget() -> None:
         raise_alert("budget_warning", f"${spent:.2f} of ${total:.2f} used")
 
 
+_issue_count_cache: tuple[float, int] = (0.0, 0)
+ISSUE_COUNT_TTL_S = 15  # the nav badge may lag a few seconds; pages (and HTMX polls) don't each hit the DB
+
+
 def open_issue_count() -> int:
+    """Open warning/critical issues, for the admin nav badge (cached for ISSUE_COUNT_TTL_S seconds)."""
+    global _issue_count_cache
+    now = time.monotonic()
+    if now - _issue_count_cache[0] < ISSUE_COUNT_TTL_S:
+        return _issue_count_cache[1]
     try:
         row = db.fetch_one(f"select count(*) as n from {db.t('system_events')} where resolved_at is null "
                            f"and severity in ('warning', 'critical')")
-        return int(row["n"])
+        count = int(row["n"])
     except Exception:  # noqa: BLE001
         return 0
+    _issue_count_cache = (now, count)
+    return count
 
 
 def list_events(limit: int = 100) -> list[dict]:
