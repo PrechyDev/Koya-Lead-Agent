@@ -22,6 +22,7 @@ This repo (`lead-agent/`) holds **only** what runs the system, plus its shared d
 | `docs/specs.md` | ✅ | **Source of truth**: architecture, data model, tool contracts, limits, budgets, A/B plan, edge cases, decisions |
 | `docs/design.md` | ✅ | UI rules |
 | `docs/deployment.md` | ✅ | Ordered Render deployment + verification plan |
+| `README.md`, `CONTRIBUTING.md` | ✅ | What it does + setup; the starting point for developers who join |
 | `agent_plugin/skills/*` | ✅ | The 5 Agent SDK skills (built from the assets guides), loaded as a local plugin |
 | `../docs/build_plan.md` | ❌ | Ordered steps with Why / Do / Done when / You decide |
 | `../docs/progress.md` | ❌ | Live log: status, decisions, errors → fixes, tests, spend, A/B results |
