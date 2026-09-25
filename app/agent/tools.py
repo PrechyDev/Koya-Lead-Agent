@@ -490,6 +490,11 @@ def build_handlers(ctx: RunContext) -> dict:
             "candidates_used": usage_after.get("candidates_found", 0),
             "candidate_limit": limits["max_candidates"],
             "next_search_can_fetch": left,
+            "searches_left": int(limits["max_discovery_calls"]) - int(usage_after.get("discovery_calls", 0)),
+            "next_step": (("No companies matched. Search again with a SHORTER or broader query: 1-2 keywords, a synonym, "
+                           "or a nearby niche (e.g. 'automation agency' instead of 'workflow automation consulting'). "
+                           "Don't repeat a query that returned nothing.") if not result.companies else
+                          "Research these one at a time; search again only if more qualified leads are needed."),
             "apify_run_id": result.apify_run_id,
         }, summary, cost=result.cost_usd)
 

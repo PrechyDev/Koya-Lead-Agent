@@ -134,6 +134,9 @@ def normalize_company(item: dict) -> dict | None:
 # returns no data and is billed only the $0.001 start event, so it is retried up to twice with the identical
 # input (owner decision D-76). FAILED/aborted/timed-out runs are still never re-run (rule 9).
 EMPTY_RESULT_RETRIES = 2
+# The provider goes quiet in bursts (errors log #63/#65; run 30237325: the same query gave 5 companies at 20:33 and
+# 0 three times at 20:44). Immediate retries land in the same burst, so wait first (D-103): time, not money.
+EMPTY_RETRY_DELAYS_S = (20, 60)
 PRICE_PER_COMPANY_USD = 0.004   # "full-company" event, FREE tier (checked 2026-09-23)
 PRICE_PER_START_USD = 0.001
 
@@ -189,8 +192,9 @@ async def find_companies(
         if raw:
             break
         if attempt < EMPTY_RESULT_RETRIES:
-            log.info("Apify run %s found 0 companies for %r; retrying the identical search (%d of %d)",
-                     run_id, query, attempt + 1, EMPTY_RESULT_RETRIES)
+            log.info("Apify run %s found 0 companies for %r; retrying the identical search in %ss (%d of %d)",
+                     run_id, query, EMPTY_RETRY_DELAYS_S[attempt], attempt + 1, EMPTY_RESULT_RETRIES)
+            await asyncio.sleep(EMPTY_RETRY_DELAYS_S[attempt])
     companies, dropped = [], 0
     for item in raw[: int(max_items)]:
         company = normalize_company(item)

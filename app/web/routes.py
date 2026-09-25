@@ -428,7 +428,7 @@ async def run_tab(request: Request, run_id: str, name: str, status: str = "", me
         wanted = status if status in {"qualified", "needs_review", "not_qualified", "pending", "all"} else None
         if wanted is None:  # first open: clients see the qualified leads, then the possible fits (D-100)
             have = {lead["qualification_status"] for lead in ctx["leads"]}
-            wanted = "all" if member.is_developer else next((k for k in ("qualified", "needs_review") if k in have), "all")
+            wanted = next((k for k in ("qualified", "needs_review") if k in have), "all")  # everyone, devs too (D-103)
         ctx["filter"] = "" if wanted == "all" else wanted
         template = "partials/tab_leads.html"
     elif name == "calls":

@@ -45,3 +45,10 @@ def runs_today_start_at_zero(monkeypatch):
     """The database is shared with real use: today's real runs must not trip the daily limits inside tests."""
     from app import db
     monkeypatch.setattr(db, "count_full_runs_today", lambda created_by=None: 0)
+
+
+@pytest.fixture(autouse=True)
+def no_retry_waits(monkeypatch):
+    """The empty-search retry waits 20 s / 60 s in production (D-103); tests don't wait."""
+    from app.services import apify
+    monkeypatch.setattr(apify, "EMPTY_RETRY_DELAYS_S", (0, 0))

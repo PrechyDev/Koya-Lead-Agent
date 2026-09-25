@@ -420,7 +420,7 @@ def test_runs_pagination_and_old_form_links(client_as, monkeypatch):
         pytest.skip("needs more than 2 runs in the database")
     first = c.get("/").text
     assert "Showing 1–2 of" in first and "Next →</a>" in first and 'aria-disabled="true">← Previous' in first
-    assert "Showing 3–4 of" in c.get("/?page=2").text
+    assert "Showing 3–" in c.get("/?page=2").text  # page 2 starts at run 3, however many runs exist
     r = c.get("/?page=999")
     assert r.status_code == 303 and "page=" in r.headers["location"]  # past the end: go to the last page
     old = c.get("/?objective=Find+SaaS")  # links from before the split still land on the form
@@ -887,7 +887,9 @@ def test_clients_open_on_qualified_leads(client_as, a_run, monkeypatch):
     assert "q.com" in member_view and "n.com" not in member_view and "All companies checked" in member_view
     assert "Pending" not in member_view
     dev_view = client_as(DEVELOPER).get(f"/runs/{a_run['id']}/tab/leads").text
-    assert "q.com" in dev_view and "n.com" in dev_view  # developers see everything
+    assert "q.com" in dev_view and "n.com" not in dev_view  # everyone opens on Qualified (D-103)
+    dev_all = client_as(DEVELOPER).get(f"/runs/{a_run['id']}/tab/leads?status=all").text
+    assert "n.com" in dev_all and "Pending" in dev_all  # developers still get every status chip
 
 
 

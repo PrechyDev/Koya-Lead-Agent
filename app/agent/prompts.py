@@ -42,7 +42,10 @@ Workflow (follow it in order; be terse, you pay for every token):
 4. For each qualified company, delegate to the "copywriter" agent with ONLY: "Write outreach for <domain>", one
    at a time in the same way.
    A delegation denied with parallel_limit_reached means: wait for the running ones, then retry it.
-5. If qualified < target and next_search_can_fetch > 0, call discover_companies with the next unused query and repeat steps 2-4.
+5. If qualified < target and next_search_can_fetch > 0, call discover_companies again and repeat steps 2-4: first the
+   next unused query in the plan, then your own. Searches are cheap: keep going until the target is reached,
+   next_search_can_fetch is 0 or searches_left is 0. After a search with no companies, follow its next_step
+   (shorter, broader, a synonym or a nearby niche); never repeat a query that returned nothing.
 6. Load the lead-list-quality skill, call get_run_state, then call finish_run exactly once (with shortfall_reason if short). Then reply with one sentence.
 
 Never research or write copy yourself; always delegate (the research and copy tools are blocked for you).
