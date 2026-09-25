@@ -161,7 +161,12 @@ def create_run(
     )
     if row:
         return row, True
-    return fetch_one(f"select * from {t('runs')} where idempotency_key = %s", (idempotency_key,)), False
+    return get_run_by_idempotency_key(idempotency_key), False
+
+
+def get_run_by_idempotency_key(idempotency_key: str) -> dict | None:
+    """The run a form submission already created (double-click / resubmit, E-20)."""
+    return fetch_one(f"select * from {t('runs')} where idempotency_key = %s", (idempotency_key,))
 
 
 def get_run(run_id: str) -> dict | None:
@@ -170,7 +175,7 @@ def get_run(run_id: str) -> dict | None:
 
 # Run history filters (the Runs page). eval_record runs are internal and never listed.
 RUN_STATUS_GROUPS: dict[str, tuple[str, ...]] = {
-    "in_progress": ("queued", "refining_icp", "discovering", "researching", "drafting", "finalizing"),
+    "in_progress": ACTIVE_STATUSES,
     "needs_you": ("awaiting_confirmation", "needs_clarification"),
     "completed": ("completed",),
     "partial": ("completed_partial",),
@@ -328,8 +333,8 @@ def count_full_runs_today(created_by: str | None = None) -> int:
     return int(fetch_one(sql, params)["n"])
 
 
-def find_recent_run_by_hash(  # only runs that produced qualified leads are worth pointing to
-objective_hash: str, days: int, exclude_id: str | None = None) -> dict | None:
+def find_recent_run_by_hash(objective_hash: str, days: int, exclude_id: str | None = None) -> dict | None:
+    """The latest earlier run with the same objective that produced qualified leads (the stage-1 hint)."""
     return fetch_one(
         f"""select * from {t('runs')}
             where objective_hash = %s and created_at > now() - make_interval(days => %s)
@@ -527,6 +532,17 @@ def run_spend(run_id: str, source: str | None = None) -> Decimal:
 def total_spend() -> Decimal:
     row = fetch_one(f"select coalesce(sum(cost_usd), 0) as s from {t('spend_ledger')}")
     return Decimal(str(row["s"]))
+
+
+def apify_spend_by_run(limit: int = 50) -> list[dict]:
+    """Apify cost per run, from the discovery tool calls (the Spend page)."""
+    return fetch_all(
+        f"""select r.id, r.objective, sum(tc.external_cost_usd) as apify_usd
+            from {t('tool_calls')} tc join {t('runs')} r on r.id = tc.run_id
+            where tc.tool_name = 'discover_companies' and tc.external_cost_usd is not null
+            group by r.id, r.objective order by max(tc.created_at) desc limit %s""",
+        (limit,),
+    )
 
 
 def spend_summary() -> list[dict]:

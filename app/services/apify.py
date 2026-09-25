@@ -55,7 +55,6 @@ class DiscoveryResult:
     dropped_no_domain: int
     apify_run_id: str | None
     cost_usd: float
-    actor_input: dict = field(default_factory=dict)
     empty_retries: int = 0                                  # identical re-runs after an empty result
     apify_run_ids: list[str] = field(default_factory=list)  # every actor run behind this search
 
@@ -198,7 +197,7 @@ async def find_companies(
         else:
             companies.append(company)
     return DiscoveryResult(companies=companies, raw_count=len(raw), dropped_no_domain=dropped,
-                           apify_run_id=run_id, cost_usd=round(total_cost, 4), actor_input=actor_input,
+                           apify_run_id=run_id, cost_usd=round(total_cost, 4),
                            empty_retries=len(run_ids) - 1, apify_run_ids=run_ids)
 
 

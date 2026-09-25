@@ -6,6 +6,7 @@ from pathlib import Path
 from fastapi.templating import Jinja2Templates
 
 from app.config import get_settings
+from app.db import ACTIVE_STATUSES
 from app.lib.icp_defaults import DEFAULT_LEAD_COUNT, DEFAULTS
 from app.lib.validation import EMAIL_PATTERN, MIN_PASSWORD_LENGTH, safe_url
 
@@ -42,7 +43,7 @@ STEP_OF_STATUS = {
     "discovering": 1, "researching": 2, "drafting": 3, "finalizing": 4,
     "completed": 5, "completed_partial": 5, "failed": -1, "cancelled": -1, "superseded": 5,
 }
-ACTIVE = {"queued", "refining_icp", "discovering", "researching", "drafting", "finalizing"}
+ACTIVE = set(ACTIVE_STATUSES)  # the one list lives in db.py
 
 
 def badge(status: str | None) -> tuple[str, str]:

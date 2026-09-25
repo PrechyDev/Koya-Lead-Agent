@@ -195,6 +195,9 @@ ul.clean { margin: 0; padding-left: 18px; }
 .drawer-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.35); z-index: 40; }
 /* Full-screen "waiting for you" dialogs (repeat check, clarification). */
 .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 50; }
+/* A refusal answered from inside a dialog (e.g. "Another run is in progress") must be readable, not dimmed. */
+body.modal-open #system-message { position: fixed; z-index: 52; top: calc(env(safe-area-inset-top, 0px) + 16px);
+  left: 50%; transform: translateX(-50%); width: min(560px, calc(100% - 32px)); }
 .modal { position: fixed; z-index: 51; top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(560px, calc(100% - 32px));
   max-height: calc(100vh - 48px); overflow-y: auto; background: var(--surface); border: 1px solid var(--border);
   border-radius: 12px; padding: 20px 22px; box-shadow: 0 20px 50px rgba(0,0,0,0.35); display: flex; flex-direction: column; gap: 12px; }

@@ -141,7 +141,7 @@ def test_alert_is_recorded_deduped_and_sent(app_dsn, admin_dsn, monkeypatch):
     # A test-only code, so the clean-up below can never delete (or bump) a real alert.
     code = "test_only_alert"
     real = CATALOGUE["apify_actor_not_found"]
-    monkeypatch.setitem(alerts.CATALOGUE, code, type(real)(code, real.service, real.severity, real.fatal,
+    monkeypatch.setitem(alerts.CATALOGUE, code, type(real)(code, real.service, real.severity,
                                                            real.client, real.admin))
     with psycopg.connect(admin_dsn, prepare_threshold=None, autocommit=True) as conn:
         conn.execute("delete from lead_agent.system_events where code = %s", (code,))

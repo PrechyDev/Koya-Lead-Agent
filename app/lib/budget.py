@@ -2,7 +2,7 @@
 
 from decimal import ROUND_HALF_UP, Decimal
 
-from app.config import BATCH_DISCOUNT, CACHE_WRITE_MULTIPLIER, MODEL_PRICES
+from app.config import BATCH_DISCOUNT, CACHE_WRITE_MULTIPLIER, GROUNDING_RUN_CAP_USD, MODEL_PRICES
 
 
 class BudgetExceeded(Exception):
@@ -55,3 +55,9 @@ def assert_can_spend(spent: Decimal, cap: Decimal | float, total: Decimal | floa
     cap_d, total_d = Decimal(str(cap)), Decimal(str(total))
     if spent + cap_d > total_d:
         raise BudgetExceeded(spent, cap_d, total_d)
+
+
+def assert_run_fits(spent: Decimal, run_cap: Decimal | float, total: Decimal | float) -> None:
+    """Before a run (or its next phase) starts: the run's Claude cap plus its fact-check reserve must fit in
+    what's left of the project budget (rule 5). One rule, used by the web route and both runner phases."""
+    assert_can_spend(spent, Decimal(str(run_cap)) + GROUNDING_RUN_CAP_USD, total)

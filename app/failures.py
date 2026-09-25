@@ -4,7 +4,6 @@ Every failure has:
   * a plain-language message for the person using the app (a non-developer client):
     what happened, and what happens next — never stack traces or env var names;
   * an admin message: what broke and exactly how to fix it (goes to System issues + the alert);
-  * `fatal`: if true the run stops immediately instead of letting the agent retry and spend.
 """
 
 import re
@@ -16,87 +15,86 @@ class FailureKind:
     code: str
     service: str
     severity: str  # info | warning | critical
-    fatal: bool
     client: str
     admin: str
 
 
 CATALOGUE: dict[str, FailureKind] = {k.code: k for k in [
-    FailureKind("anthropic_no_credit", "anthropic", "critical", True,
+    FailureKind("anthropic_no_credit", "anthropic", "critical",
                 "The AI service has run out of credit, so this research couldn't run. Your admin has been told. "
                 "Nothing was spent on company searches.",
                 "Anthropic account is out of credit. Top up at console.anthropic.com → Billing (and check the "
                 "workspace spend limit), then start the run again."),
-    FailureKind("anthropic_auth", "anthropic", "critical", True,
+    FailureKind("anthropic_auth", "anthropic", "critical",
                 "The AI service isn't connected correctly, so this research couldn't run. Your admin has been told.",
                 "Anthropic rejected ANTHROPIC_API_KEY (invalid or revoked). Create a new key and update it in "
                 "Render → Environment."),
-    FailureKind("anthropic_rate_limited", "anthropic", "warning", True,
+    FailureKind("anthropic_rate_limited", "anthropic", "warning",
                 "The AI service is busy right now. Please try again in a few minutes.",
                 "Anthropic returned 429 (rate limit). Wait a few minutes; if it keeps happening, check the "
                 "workspace's rate limits in the Anthropic Console."),
-    FailureKind("anthropic_unavailable", "anthropic", "warning", True,
+    FailureKind("anthropic_unavailable", "anthropic", "warning",
                 "The AI service is temporarily unavailable. Please try again shortly. Anything found so far is saved.",
                 "Anthropic API error/overload (5xx/529) or the agent process failed. Retry later; see the run's "
                 "technical detail."),
-    FailureKind("agent_cannot_start", "app", "critical", True,
+    FailureKind("agent_cannot_start", "app", "critical",
                 "The research engine couldn't start on this server, so nothing was spent. Your admin has been told.",
                 "The Claude Code CLI process couldn't be started. Most common cause on Windows: the web server was "
                 "started with `uvicorn --reload`, whose event loop can't start subprocesses. Restart it WITHOUT "
                 "--reload. (Linux, Docker and Render are not affected.) Otherwise check that the CLI bundled in "
                 "claude-agent-sdk is present."),
-    FailureKind("apify_no_credit", "apify", "critical", True,
+    FailureKind("apify_no_credit", "apify", "critical",
                 "Company search is unavailable: the search account has run out of credit. Your admin has been told.",
                 "Apify account has no usage left this month (or the run's charge cap was hit). Check Apify Console "
                 "→ Billing/Usage, or switch APIFY_TOKEN to the team account."),
-    FailureKind("apify_auth", "apify", "critical", True,
+    FailureKind("apify_auth", "apify", "critical",
                 "Company search isn't set up correctly, so this research couldn't run. Your admin has been told.",
                 "Apify rejected APIFY_TOKEN (invalid token). Copy the team account token from Apify Console → "
                 "Settings → API & Integrations."),
-    FailureKind("apify_actor_not_found", "apify", "critical", True,
+    FailureKind("apify_actor_not_found", "apify", "critical",
                 "Company search isn't set up correctly, so this research couldn't run. Your admin has been told.",
                 "APIFY_ACTOR_ID doesn't exist or isn't accessible. Expected: harvestapi/linkedin-company-search."),
-    FailureKind("apify_run_failed", "apify", "warning", True,
+    FailureKind("apify_run_failed", "apify", "warning",
                 "A company search didn't complete. To avoid being charged twice it was not retried automatically. "
                 "Your admin has been told. Anything found so far is saved.",
                 "An Apify actor run ended FAILED/TIMED-OUT/ABORTED. Open it in the Apify console (run id in the "
                 "detail) before re-running — PRD rule: stop and ask."),
-    FailureKind("apify_bad_input", "apify", "warning", True,
+    FailureKind("apify_bad_input", "apify", "warning",
                 "Company search couldn't understand this search, so this research stopped. Your admin has been told.",
                 "Apify rejected the actor input (HTTP 400), e.g. an unknown location name or size band. See the "
                 "tool call's detail, fix the input mapping in app/services/apify.py, then run again."),
-    FailureKind("apify_unavailable", "apify", "warning", True,
+    FailureKind("apify_unavailable", "apify", "warning",
                 "Company search is temporarily unavailable. Please try again shortly.",
                 "Apify API returned a server error or didn't answer in time. Retry later; check status.apify.com."),
-    FailureKind("firecrawl_no_credit", "firecrawl", "critical", True,
+    FailureKind("firecrawl_no_credit", "firecrawl", "critical",
                 "Website research is unavailable: the research account has run out of credit. Companies not yet "
                 "researched are marked for review. Your admin has been told.",
                 "Firecrawl returned 402 (no credits left). Top up or upgrade at firecrawl.dev → Billing."),
-    FailureKind("firecrawl_auth", "firecrawl", "critical", True,
+    FailureKind("firecrawl_auth", "firecrawl", "critical",
                 "Website research isn't set up correctly. Your admin has been told.",
                 "Firecrawl rejected FIRECRAWL_API_KEY. Create a new key at firecrawl.dev and update it in Render."),
-    FailureKind("budget_exhausted", "budget", "critical", True,
+    FailureKind("budget_exhausted", "budget", "critical",
                 "This workspace has used its AI budget, so new research is paused. Your admin has been told.",
                 "The app's Claude budget (CLAUDE_BUDGET_TOTAL_USD) would be exceeded. Raise it on purpose in "
                 "Render → Environment, or wait."),
-    FailureKind("budget_warning", "budget", "warning", False,
+    FailureKind("budget_warning", "budget", "warning",
                 "", "The app has used 80% or more of its Claude budget."),
-    FailureKind("not_configured", "app", "critical", True,
+    FailureKind("not_configured", "app", "critical",
                 "The app isn't fully set up yet, so research can't start. Your admin has been told.",
                 "Required settings are missing (see detail). Set them in Render → Environment and redeploy."),
-    FailureKind("run_timeout", "app", "warning", False,
+    FailureKind("run_timeout", "app", "warning",
                 "The research took too long and was stopped safely. Everything found so far is saved below.",
                 "A run phase hit its watchdog timeout (see detail). Check the run's tool calls for where it stalled."),
-    FailureKind("database_unavailable", "database", "critical", True,
+    FailureKind("database_unavailable", "database", "critical",
                 "The app can't reach its database right now. Please try again in a few minutes.",
                 "Postgres is unreachable (Supabase paused, down, or the DSN/password changed). Check the Supabase "
                 "dashboard; a paused free project needs 'Restore'."),
-    FailureKind("auth_token_rejected", "app", "warning", False,
+    FailureKind("auth_token_rejected", "app", "warning",
                 "We couldn't confirm your sign-in. Please try again in a moment.",
                 "Supabase issued a login token this server refused (e.g. 'not yet valid' or 'expired' right after "
                 "sign-in). Usually this server's clock is off: on Docker Desktop, restart Docker (or run "
                 "`wsl --shutdown`) to resync it; on Render this shouldn't happen. The detail names the exact error."),
-    FailureKind("unexpected", "app", "critical", False,
+    FailureKind("unexpected", "app", "critical",
                 "Something went wrong on our side. Your admin has been told.",
                 "Unhandled error (see detail and the server logs for the reference id)."),
 ]}
@@ -118,9 +116,6 @@ class ServiceFailure(Exception):
     def client(self) -> str:
         return self.kind.client
 
-    @property
-    def fatal(self) -> bool:
-        return self.kind.fatal
 
 
 def message_for(failure: "ServiceFailure", is_admin: bool) -> str:

@@ -101,7 +101,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
 def _finish(response, new_tokens: dict | None):
     """Every response, early returns included, gets the session update and the security headers."""
     if new_tokens is auth.CLEAR_SESSION:
-        auth.clear_session_cookies(response)  # Supabase rejected the refresh token: stop retrying it
+        # Supabase rejected the old refresh token: stop retrying it. Not when this very response signs the person
+        # in (login / reset / accept invite): clearing after it would delete the new session (errors log #100).
+        signing_in = any(h.startswith(f"{auth.ACCESS_COOKIE}=") for h in response.headers.getlist("set-cookie"))
+        if not signing_in:
+            auth.clear_session_cookies(response)
     elif new_tokens:
         auth.set_session_cookies(response, new_tokens)
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
@@ -118,13 +122,7 @@ app.add_middleware(AuthMiddleware)
 
 @app.exception_handler(RateLimitExceeded)
 async def rate_limited(request: Request, exc: RateLimitExceeded):
-    message = "Too many requests. Wait a minute and try again."
-    if _is_htmx(request):
-        return templates.TemplateResponse(request, "partials/banner.html", {"kind": "warning", "message": message},
-                                          status_code=429, headers={"HX-Retarget": "#system-message",
-                                                                    "HX-Reswap": "innerHTML"})
-    return templates.TemplateResponse(request, "error.html", {"title": "Slow down", "message": message},
-                                      status_code=429)
+    return _friendly_error(request, "Slow down", "Too many requests. Wait a minute and try again.", 429, "warning")
 
 
 @app.exception_handler(HTTPException)
@@ -132,14 +130,7 @@ async def http_error(request: Request, exc: HTTPException):
     if exc.status_code == 401:
         return RedirectResponse("/login", status_code=303)
     message = exc.detail if isinstance(exc.detail, str) else "Something went wrong."
-    if _is_htmx(request):
-        return templates.TemplateResponse(request, "partials/banner.html", {"kind": "error", "message": message},
-                                          status_code=exc.status_code,
-                                          headers={"HX-Retarget": "#system-message", "HX-Reswap": "innerHTML"})
-    if request.url.path.endswith(".json"):
-        return JSONResponse({"error": {"code": exc.status_code, "message": message}}, status_code=exc.status_code)
-    return templates.TemplateResponse(request, "error.html", {"title": "Can't do that", "message": message},
-                                      status_code=exc.status_code)
+    return _friendly_error(request, "Can't do that", message, exc.status_code)
 
 
 @app.exception_handler(psycopg.OperationalError)
@@ -160,9 +151,10 @@ async def unexpected_error(request: Request, exc: Exception):
                            f"Something went wrong on our side. Your admin has been told (reference {ref}).", 500)
 
 
-def _friendly_error(request: Request, title: str, message: str, status: int):
+def _friendly_error(request: Request, title: str, message: str, status: int, kind: str = "error"):
+    """One way to show an error: a banner for HTMX requests, JSON for .json routes, else the error page."""
     if _is_htmx(request):
-        return templates.TemplateResponse(request, "partials/banner.html", {"kind": "error", "message": message},
+        return templates.TemplateResponse(request, "partials/banner.html", {"kind": kind, "message": message},
                                           status_code=status, headers={"HX-Retarget": "#system-message",
                                                                        "HX-Reswap": "innerHTML"})
     if request.url.path.endswith(".json"):

@@ -8,15 +8,16 @@ from datetime import datetime
 from urllib.parse import urlencode
 
 import jwt
+import psycopg
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 
 from app import alerts, auth, db
-from app.agent.runner import AGENT_CANNOT_START, GROUNDING_RESERVE_USD, agent_can_start
+from app.agent.runner import AGENT_CANNOT_START, agent_can_start
 from app.auth import Member, current_member, require_admin
 from app.config import get_settings, limits_for_run
 from app.failures import CATALOGUE, ServiceFailure, admin_message_from_detail, message_for
-from app.lib.budget import BudgetExceeded, assert_can_spend
+from app.lib.budget import BudgetExceeded, assert_run_fits
 from app.lib.icp_defaults import MAX_LEAD_COUNT
 from app.lib.objective import objective_hash, objective_problem
 from app.lib.validation import EMAIL_HINT, MIN_PASSWORD_LENGTH, csv_cell, is_valid_email, safe_next
@@ -164,6 +165,20 @@ async def reset_password_page(request: Request):
     return templates.TemplateResponse(request, "reset_password.html", _ctx(request))
 
 
+def _password_problem(password: str, confirm: str) -> str | None:
+    """The one password rule, for reset and accept-invite (the forms show the same rule before submit)."""
+    if len(password) < MIN_PASSWORD_LENGTH or password != confirm:
+        return f"Passwords must match and be at least {MIN_PASSWORD_LENGTH} characters."
+    return None
+
+
+def _signed_in(access_token: str, refresh_token: str) -> RedirectResponse:
+    """The session from an emailed link becomes the person's sign-in: cookies set, off to the Runs page."""
+    response = RedirectResponse("/", status_code=303)
+    auth.set_session_cookies(response, {"access_token": access_token, "refresh_token": refresh_token})
+    return response
+
+
 @router.post("/reset-password")
 @limiter.limit("10/15minutes")
 async def reset_password_submit(request: Request, access_token: str = Form(...), refresh_token: str = Form(""),
@@ -175,8 +190,8 @@ async def reset_password_submit(request: Request, access_token: str = Form(...),
         return templates.TemplateResponse(request, "reset_password.html", _ctx(request, error=msg, **keep),
                                           status_code=status)
 
-    if len(password) < MIN_PASSWORD_LENGTH or password != confirm:
-        return fail(f"Passwords must match and be at least {MIN_PASSWORD_LENGTH} characters.")
+    if problem := _password_problem(password, confirm):
+        return fail(problem)
     try:
         claims = await db.run(auth.verify_access_token, access_token)
     except Exception:  # noqa: BLE001
@@ -189,10 +204,7 @@ async def reset_password_submit(request: Request, access_token: str = Form(...),
         await db.run(auth.set_password, access_token, password)
     except auth.AuthError as exc:
         return fail(exc.message)
-    response = RedirectResponse("/", status_code=303)
-    auth.set_session_cookies(response, {"access_token": access_token, "refresh_token": refresh_token,
-                                        "expires_in": 3600})
-    return response
+    return _signed_in(access_token, refresh_token)
 
 
 @router.get("/accept-invite", response_class=HTMLResponse)
@@ -212,8 +224,8 @@ async def accept_invite_submit(request: Request, access_token: str = Form(...), 
     full_name = full_name.strip()
     if not (1 <= len(full_name) <= 120):
         return fail("Enter your name (up to 120 characters).")
-    if len(password) < MIN_PASSWORD_LENGTH or password != confirm:
-        return fail(f"Passwords must match and be at least {MIN_PASSWORD_LENGTH} characters.")
+    if problem := _password_problem(password, confirm):
+        return fail(problem)
     try:
         claims = await db.run(auth.verify_access_token, access_token)
     except Exception:  # noqa: BLE001
@@ -228,10 +240,7 @@ async def accept_invite_submit(request: Request, access_token: str = Form(...), 
     except auth.AuthError as exc:
         return fail(exc.message)
     await db.run(db.update_member, str(member["user_id"]), full_name=full_name)
-    response = RedirectResponse("/", status_code=303)
-    auth.set_session_cookies(response, {"access_token": access_token, "refresh_token": refresh_token,
-                                        "expires_in": 3600})
-    return response
+    return _signed_in(access_token, refresh_token)
 
 
 # ---------------------------------------------------------------------------
@@ -277,7 +286,7 @@ async def new_run_page(request: Request, objective: str = "", member: Member = D
     mine_today = await db.run(db.count_full_runs_today, member.user_id)
     return templates.TemplateResponse(request, "new_run.html", _ctx(
         request, active=active, prefill=objective.strip()[:1000],
-        limits=limits_for_run(10, dev=settings.dev_limits), mine_today=mine_today, daily_cap=_daily_cap(member),
+        limits=limits_for_run(MAX_LEAD_COUNT, dev=settings.dev_limits), mine_today=mine_today, daily_cap=_daily_cap(member),
         idempotency_key=str(uuid.uuid4())))
 
 
@@ -302,8 +311,7 @@ async def create_run(request: Request, objective: str = Form(""),
     if problem:
         return _banner(request, "warning", problem, 400)
 
-    existing = await db.run(db.fetch_one, f"select id from {db.t('runs')} where idempotency_key = %s",
-                            (idempotency_key,))
+    existing = await db.run(db.get_run_by_idempotency_key, idempotency_key)
     if existing:  # double-click / resubmit (E-20): go to the run that already exists
         return Response(status_code=204, headers={"HX-Redirect": f"/runs/{existing['id']}"})
     active = await db.run(db.active_run)
@@ -320,8 +328,7 @@ async def create_run(request: Request, objective: str = Form(""),
     # The lead target comes from the objective once the ICP step reads it (D-57); until then, the preset maximum.
     limits = limits_for_run(MAX_LEAD_COUNT, dev=settings.dev_limits)
     try:
-        assert_can_spend(await db.run(db.total_spend), limits.max_budget_usd + float(GROUNDING_RESERVE_USD),
-                         settings.claude_budget_total_usd)
+        assert_run_fits(await db.run(db.total_spend), limits.max_budget_usd, settings.claude_budget_total_usd)
     except BudgetExceeded as exc:
         failure = ServiceFailure("budget_exhausted", str(exc))
         await db.run(alerts.raise_alert, failure.code, failure.detail)
@@ -591,7 +598,7 @@ async def team_update(request: Request, user_id: str, action: str = Form(...), c
         return _banner(request, "warning", "You can't remove your own admin access. Ask another admin to do it.", 400)
     try:
         updated = await db.run(db.update_member, user_id, **fields)
-    except Exception as exc:  # the DB trigger protects the owner and the last admin (E-41)
+    except psycopg.errors.CheckViolation as exc:  # the DB trigger protects the owner and the last admin (E-41)
         text = str(exc)
         reason = ("The owner can't be demoted or deactivated." if "owner" in text
                   else "At least one active admin must remain." if "admin" in text else "That change isn't allowed.")
@@ -620,10 +627,7 @@ async def spend_page(request: Request, member: Member = Depends(require_admin)):
     return templates.TemplateResponse(request, "spend.html", _ctx(
         request, spent=await db.run(db.total_spend), budget=settings.claude_budget_total_usd,
         by_source=await db.run(db.spend_summary), by_run=await db.run(db.spend_by_run, 50),
-        apify=await db.run(db.fetch_all, f"""select r.id, r.objective, sum(t.external_cost_usd) as apify_usd
-            from {db.t('tool_calls')} t join {db.t('runs')} r on r.id = t.run_id
-            where t.tool_name = 'discover_companies' and t.external_cost_usd is not null
-            group by r.id, r.objective order by max(t.created_at) desc limit 50""")))
+        apify=await db.run(db.apify_spend_by_run, 50)))
 
 
 # ---------------------------------------------------------------------------
@@ -651,9 +655,7 @@ async def resolve_event(request: Request, event_id: str, csrf_token: str = Form(
 @limiter.limit("5/hour")
 async def test_alert(request: Request, csrf_token: str = Form(""), member: Member = Depends(require_admin)):
     _check_csrf(request, member, csrf_token)
-    ok = await db.run(alerts._post_webhook, alerts._payload("test_alert", "Test alert from the Koya Lead Research "
-                                                           "Agent. If you got this, alerts work.", None, "info",
-                                                           "app", 1))
+    ok = await db.run(alerts.send_test_alert)
     return _banner(request, "success" if ok else "error",
                    "Test alert sent to the webhook." if ok else
                    "The webhook didn't accept the test (check ALERT_WEBHOOK_URL and that the n8n workflow is active).")

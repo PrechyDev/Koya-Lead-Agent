@@ -30,6 +30,7 @@ CSRF_MAX_AGE_S = 12 * 3600
 # Supabase's would see a brand-new token as "not yet valid" and refuse the sign-in (found in Docker on Windows,
 # whose VM clock drifts). Allowing a small difference is standard practice; expired tokens are still refused.
 JWT_CLOCK_SKEW_S = 60
+ACCESS_TOKEN_DEFAULT_S = 3600  # Supabase access tokens last an hour unless it says otherwise
 _jwks_client: jwt.PyJWKClient | None = None
 
 
@@ -212,7 +213,7 @@ def resolve_session(request: Request) -> tuple[dict | None, dict | None]:
         except jwt.ExpiredSignatureError:
             pass
         except jwt.PyJWTError:
-            access = None
+            pass  # a bad access token: try the refresh token below
     if refresh:
         tokens = refresh_session(refresh)
         if tokens == {}:  # rejected: forget it, so we don't ask Supabase again on every request
@@ -228,7 +229,8 @@ def resolve_session(request: Request) -> tuple[dict | None, dict | None]:
 def set_session_cookies(response: Any, tokens: dict) -> None:
     settings = get_settings()
     common = {"httponly": True, "secure": settings.secure_cookies, "samesite": "lax", "path": "/"}
-    response.set_cookie(ACCESS_COOKIE, tokens["access_token"], max_age=int(tokens.get("expires_in") or 3600), **common)
+    response.set_cookie(ACCESS_COOKIE, tokens["access_token"],
+                        max_age=int(tokens.get("expires_in") or ACCESS_TOKEN_DEFAULT_S), **common)
     if tokens.get("refresh_token"):
         response.set_cookie(REFRESH_COOKIE, tokens["refresh_token"], max_age=30 * 24 * 3600, **common)
 

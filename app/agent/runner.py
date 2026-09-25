@@ -30,7 +30,6 @@ from app.agent import prompts
 from app.agent.context import RunContext
 from app.agent.logging import log_event
 from app.agent.tools import (
-    GROUNDING_RUN_CAP_USD,
     OUT_OF_SCOPE_QUESTION,
     build_scorecard,
     build_server,
@@ -39,7 +38,7 @@ from app.agent.tools import (
 from app.agent.transcripts import session_cost
 from app.config import ICP_PHASE_MAX_BUDGET_USD, ICP_PHASE_MAX_TURNS, ICP_PHASE_TIMEOUT_S, get_settings
 from app.failures import ServiceFailure, classify_claude_error
-from app.lib.budget import BudgetExceeded, assert_can_spend
+from app.lib.budget import BudgetExceeded, assert_run_fits
 from app.lib.objective import objective_problem
 from app.lib.sanitize import redact
 from app.services import health
@@ -57,8 +56,9 @@ BLOCKED_BUILTINS = ["Bash", "Read", "Write", "Edit", "MultiEdit", "Glob", "Grep"
 ICP_TOOLS = ["save_icp"]
 ORCHESTRATOR_TOOLS = ["discover_companies", "get_run_state", "finish_run"]
 RESEARCHER_TOOLS = ["get_research_brief", "scrape_website", "save_qualification"]
+SUBAGENT_MAX_TURNS = 10      # a researcher/copywriter handles ONE company; more turns means it's stuck
+MIN_PHASE_BUDGET_USD = 0.05  # the research phase always gets at least this much of the run's cap
 COPYWRITER_TOOLS = ["get_lead", "check_drafts", "save_outreach"]
-GROUNDING_RESERVE_USD = Decimal(str(GROUNDING_RUN_CAP_USD))  # the fact-checks' share, enforced per run by save_outreach
 
 
 def agent_can_start() -> bool:
@@ -179,11 +179,10 @@ class _Session:
     def __init__(self) -> None:
         self.session_id: str | None = None
         self.result: ResultMessage | None = None
-        self.stopped_for_fatal = False
 
 
 async def _consume(prompt: str, options: ClaudeAgentOptions, session: _Session, timeout_s: int,
-                   ctx: RunContext | None = None) -> ResultMessage | None:
+                   ctx: RunContext) -> ResultMessage | None:
     async def read() -> None:
         async for message in query(prompt=prompt, options=options):
             data = getattr(message, "data", None)
@@ -192,10 +191,9 @@ async def _consume(prompt: str, options: ClaudeAgentOptions, session: _Session, 
                 session.session_id = sid
             if isinstance(message, ResultMessage):
                 session.result = message  # the last one carries the cumulative cost
-            if ctx is not None and ctx.fatal is not None:
+            if ctx.fatal is not None:
                 # A service can't work (out of credit, bad key, wrong actor...): stop now, don't let the
                 # agent keep trying and spending (E-50). Leaving the loop closes the CLI process.
-                session.stopped_for_fatal = True
                 break
 
     try:
@@ -205,9 +203,13 @@ async def _consume(prompt: str, options: ClaudeAgentOptions, session: _Session, 
     return session.result
 
 
-def _recover_cost(run_id: str, source: str, session: _Session, why: str) -> Decimal:
-    """Phase ended without a ResultMessage (timeout/crash/cancel/stop): recover the true cost from transcripts."""
-    if not session.session_id or session.result is not None:
+def _phase_cost(run_id: str, source: str, session: _Session, model: str, why: str = "") -> Decimal:
+    """Record what a phase cost, however it ended (finished, timed out, cancelled, stopped on a fatal error).
+    The SDK's final message carries the exact cost; if it never arrived, recover the cost from the transcript.
+    One place, so no ending can skip the ledger (rule 5; errors log #86, #99)."""
+    if session.result is not None:
+        return _record_cost(run_id, source, session.result, model)
+    if not session.session_id:
         return Decimal("0")
     total = Decimal("0")
     for model, cost in session_cost(session.session_id).items():
@@ -239,10 +241,9 @@ def _record_cost(run_id: str, source: str, result: ResultMessage | None, fallbac
 
 
 def _refresh_run_cost(run_id: str, turns_add: int = 0) -> None:
-    row = db.fetch_one(f"select coalesce(sum(cost_usd), 0) as s from {db.t('spend_ledger')} where ref_id = %s",
-                       (run_id,))
+    total = db.run_spend(run_id)
     run = db.get_run(run_id)
-    db.update_run(run_id, cost_usd=Decimal(str(row["s"])), num_turns=int(run["num_turns"] or 0) + turns_add)
+    db.update_run(run_id, cost_usd=total, num_turns=int(run["num_turns"] or 0) + turns_add)
     alerts.check_budget()
 
 
@@ -282,10 +283,8 @@ async def run_icp_phase(run_id: str) -> str:
         await db.run(db.update_run, run_id, request_type="too_vague", clarification_question=problem)
         await db.run(db.set_status, run_id, "needs_clarification", "The objective needs rewording before searching.")
         return "needs_clarification"
-    spent = await db.run(db.total_spend)
     try:
-        assert_can_spend(spent, Decimal(str(ctx.limits["max_budget_usd"])) + GROUNDING_RESERVE_USD,
-                         settings.claude_budget_total_usd)
+        assert_run_fits(await db.run(db.total_spend), ctx.limits["max_budget_usd"], settings.claude_budget_total_usd)
     except BudgetExceeded as exc:
         await db.run(fail_run, run_id, ServiceFailure("budget_exhausted", str(exc)))
         return "failed"
@@ -313,10 +312,7 @@ async def run_icp_phase(run_id: str) -> str:
         question = (scope.verdict.clarification_question if kind == "too_vague" and scope.verdict.clarification_question
                     else OUT_OF_SCOPE_QUESTION.get(kind) or OUT_OF_SCOPE_QUESTION["unrelated"])
         await db.run(db.update_run, run_id, request_type=kind, clarification_question=question[:500])
-        detail = ("This doesn't look like a search for companies." if kind in ("question", "unrelated")
-                  else "The objective needs a little more detail before searching.")
-        await db.run(db.set_status, run_id, "needs_clarification", detail + " Answer the question to continue.")
-        return "needs_clarification"
+        return await _ask_for_clarification(run_id, kind)
 
     parent = await db.run(db.get_run, str(run["parent_run_id"])) if run.get("parent_run_id") else None
     options = _options(ctx, model=settings.model_icp, system_prompt=prompts.ICP_SYSTEM, tool_names=ICP_TOOLS,
@@ -328,23 +324,20 @@ async def run_icp_phase(run_id: str) -> str:
                                                         "answered" if parent else None), options, session,
                                 timeout_s=ICP_PHASE_TIMEOUT_S, ctx=ctx)
     except PhaseTimeout as exc:
-        await db.run(_recover_cost, run_id, "icp", session, "watchdog timeout")
+        await db.run(_phase_cost, run_id, "icp", session, settings.model_icp, "watchdog timeout")
         await db.run(_refresh_run_cost, run_id)
         await db.run(fail_run, run_id, ServiceFailure("anthropic_unavailable", f"ICP step timed out: {exc}"))
         return "failed"
     except BaseException:
-        await db.run(_recover_cost, run_id, "icp", session, "phase interrupted")
+        await db.run(_phase_cost, run_id, "icp", session, settings.model_icp, "phase interrupted")
         await db.run(_refresh_run_cost, run_id)
         raise
-    await db.run(_record_cost, run_id, "icp", result, settings.model_icp)
+    await db.run(_phase_cost, run_id, "icp", session, settings.model_icp)
     await db.run(_refresh_run_cost, run_id, result.num_turns if result else 0)
 
     run = await db.run(db.get_run, run_id)
     if run["clarification_question"] and not run["icp_signature"]:
-        detail = ("This doesn't look like a search for companies." if run.get("request_type") in ("question", "unrelated")
-                  else "The objective needs a little more detail before searching.")
-        await db.run(db.set_status, run_id, "needs_clarification", detail + " Answer the question to continue.")
-        return "needs_clarification"
+        return await _ask_for_clarification(run_id, run.get("request_type"))
     if not run["icp"]:
         failure = _result_failure(result) or ServiceFailure(
             "anthropic_unavailable", f"ICP step ended without saving an ICP ({result.subtype if result else 'no result'})")
@@ -368,11 +361,9 @@ async def run_research_phase(run_id: str) -> None:
     settings = get_settings()
     ctx = await db.run(RunContext.load, run_id)
     run = await db.run(db.get_run, run_id)
-    remaining_budget = max(0.05, float(ctx.limits["max_budget_usd"]) - float(run["cost_usd"] or 0))
-    spent = await db.run(db.total_spend)
+    remaining_budget = max(MIN_PHASE_BUDGET_USD, float(ctx.limits["max_budget_usd"]) - float(run["cost_usd"] or 0))
     try:
-        assert_can_spend(spent, Decimal(str(remaining_budget)) + GROUNDING_RESERVE_USD,
-                         settings.claude_budget_total_usd)
+        assert_run_fits(await db.run(db.total_spend), remaining_budget, settings.claude_budget_total_usd)
     except BudgetExceeded as exc:
         await db.run(fail_run, run_id, ServiceFailure("budget_exhausted", str(exc)))
         return
@@ -393,7 +384,7 @@ async def run_research_phase(run_id: str) -> None:
             tools=[mcp_name(t) for t in RESEARCHER_TOOLS] + ["Skill"],
             skills=[_skill("lead-qualification"), _skill("outreach-safety")],
             model=settings.model_researcher,
-            maxTurns=10,
+            maxTurns=SUBAGENT_MAX_TURNS,
             background=False,  # foreground: the orchestrator waits for each result (progress.md errors log)
         ),
         "copywriter": AgentDefinition(
@@ -402,7 +393,7 @@ async def run_research_phase(run_id: str) -> None:
             tools=[mcp_name(t) for t in COPYWRITER_TOOLS] + ["Skill"],
             skills=[_skill("outbound-copywriting"), _skill("outreach-safety")],
             model=settings.model_copywriter,
-            maxTurns=10,
+            maxTurns=SUBAGENT_MAX_TURNS,
             background=False,
         ),
     }
@@ -418,20 +409,18 @@ async def run_research_phase(run_id: str) -> None:
     try:
         result = await _consume(prompts.orchestrator_user_prompt(run), options, session, timeout_s=timeout_s, ctx=ctx)
     except PhaseTimeout as exc:
-        await db.run(_recover_cost, run_id, "run", session, "watchdog timeout")
+        await db.run(_phase_cost, run_id, "run", session, settings.model_orchestrator, "watchdog timeout")
         await db.run(_refresh_run_cost, run_id)
         failure = ServiceFailure("run_timeout", str(exc))
         await db.run(_force_finish, ctx, None, "it ran too long and was stopped safely", failure)
         await db.run(alerts.raise_alert, failure.code, failure.detail, run_id)
         return
     except BaseException:
-        await db.run(_recover_cost, run_id, "run", session, "phase interrupted")
+        await db.run(_phase_cost, run_id, "run", session, settings.model_orchestrator, "phase interrupted")
         await db.run(_refresh_run_cost, run_id)
         raise
-    if result is None:  # stopped before the SDK's final message (a fatal tool error): cost from the transcript
-        await db.run(_recover_cost, run_id, "run", session, f"stopped: {ctx.fatal.code if ctx.fatal else 'no result'}")
-    else:  # the final message arrived (even when a fatal error stopped the run right after): it has the cost
-        await db.run(_record_cost, run_id, "run", result, settings.model_orchestrator)
+    await db.run(_phase_cost, run_id, "run", session, settings.model_orchestrator,
+                 f"stopped: {ctx.fatal.code}" if ctx.fatal else "")
     await db.run(_refresh_run_cost, run_id, result.num_turns if result else 0)
 
     if ctx.fatal is not None:
@@ -461,6 +450,14 @@ def _force_finish(ctx: RunContext, result: ResultMessage | None, why: str | None
         db.set_status(ctx.run_id, "completed_partial", f"{qualified} of {target} qualified (stopped early)",
                       shortfall_reason=client, error_detail=detail, quality_scorecard=scorecard,
                       summary="Finalized by the system.")
+
+
+async def _ask_for_clarification(run_id: str, request_type: str | None) -> str:
+    """Pause the run until the person answers the stored clarification question."""
+    detail = ("This doesn't look like a search for companies." if request_type in ("question", "unrelated")
+              else "The objective needs a little more detail before searching.")
+    await db.run(db.set_status, run_id, "needs_clarification", detail + " Answer the question to continue.")
+    return "needs_clarification"
 
 
 async def execute_run(run_id: str, skip_icp: bool = False) -> None:

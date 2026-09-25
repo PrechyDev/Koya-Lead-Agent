@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field, ValidationError
 from app import db
 from app.agent.context import RunContext
 from app.agent.logging import Outcome, blocked, failure, logged_call, success
-from app.config import get_settings
+from app.config import GROUNDING_RUN_CAP_USD, get_settings
 from app.failures import ServiceFailure
 from app.lib.budget import BudgetExceeded, assert_can_spend
 from app.lib.domain import normalize_domain
@@ -50,7 +50,8 @@ OUT_OF_SCOPE_QUESTION = {
 MISSING_TYPE_QUESTION = ("Which kind of companies should the agent look for? For example: \"B2B SaaS companies\", "
                          "\"marketing agencies\" or \"dental clinics\". Location, size and the rest have sensible "
                          "defaults if you leave them out.")
-GROUNDING_RUN_CAP_USD = 0.10   # fact-check spend per run; equals the reserve the run start checks for
+GROUNDING_PAGE_CHARS = 2500      # per cached page in the fact-checker's context
+GROUNDING_CONTEXT_CHARS = 14000  # whole fact-check context (keeps each check near its ~$0.005 cost)
 MAX_FREE_EMPTY_SEARCHES = 1    # an Apify search that returns nothing is given back once per run
 MAX_DRAFT_CHECKS_PER_LEAD = 5  # free self-checks before save_outreach; bounded so a confused writer can't loop
 # A disqualifier is answered "does it apply?", so it must name what to EXCLUDE. "Not an agency" inverts that:
@@ -94,7 +95,6 @@ class QualificationInput(BaseModel):
     purpose: str = ""
     domain: str
     status: Literal["qualified", "not_qualified", "needs_review"]
-    confidence: float | None = Field(default=None, description="Ignored: the system computes the fit score")
     hard_filter_checks: list[HardFilterCheck]
     disqualifier_checks: list[DisqualifierCheck] = Field(default_factory=list)
     soft_preference_checks: list[SoftPreferenceCheck] = Field(default_factory=list)
@@ -771,8 +771,8 @@ def _grounding_context(lead: dict) -> str:
     for url in lead.get("fetched_urls") or []:
         page = db.get_cached_page(url, get_settings().scrape_cache_days)  # same window as scrape_website
         if page and page.get("content"):
-            parts.append(f"Page {url}:\n{page['content'][:2500]}")
-    return "\n\n".join(parts)[:14000]
+            parts.append(f"Page {url}:\n{page['content'][:GROUNDING_PAGE_CHARS]}")
+    return "\n\n".join(parts)[:GROUNDING_CONTEXT_CHARS]
 
 
 def build_scorecard(run_id: str) -> tuple[dict, int, int]:

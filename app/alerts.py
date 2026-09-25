@@ -47,6 +47,12 @@ def _payload(code: str, message: str, run_id: str | None, severity: str, service
     }
 
 
+def send_test_alert() -> bool:
+    """POST a harmless test alert to the webhook (System issues page button). True if it was accepted."""
+    return _post_webhook(_payload("test_alert", "Test alert from the Koya Lead Research Agent. If you got this, "
+                                  "alerts work.", None, "info", "app", 1))
+
+
 def raise_alert(code: str, detail: str = "", run_id: str | None = None, notify: bool = True) -> None:
     """Record + notify. Safe to call from anywhere (sync). Never raises."""
     kind = CATALOGUE.get(code, CATALOGUE["unexpected"])

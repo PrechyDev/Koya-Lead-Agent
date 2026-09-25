@@ -166,6 +166,7 @@ APP_TAGLINE = ("the tool Koya's outbound team uses to find and research companie
                "assistant, and to draft outreach for human review")
 
 ICP_PHASE_MAX_TURNS = 6
+GROUNDING_RUN_CAP_USD = Decimal("0.10")  # fact-check spend allowed per run, on top of the run's Claude cap
 ICP_PHASE_MAX_BUDGET_USD = 0.05
 ICP_PHASE_TIMEOUT_S = 240
 

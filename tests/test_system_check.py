@@ -147,3 +147,79 @@ async def test_a_firecrawl_answer_that_is_not_json_is_a_scrape_error(monkeypatch
     respx.post(fc.API_URL).mock(return_value=httpx.Response(200, text="<html>gateway</html>"))
     with pytest.raises(fc.ScrapeError):
         await fc.scrape("https://acme.io/")
+
+
+# --- review 3 (2026-09-25): flow-trace fixes ------------------------------------------------------------------------
+def test_a_fresh_sign_in_is_not_undone_by_clearing_a_stale_refresh_cookie():
+    """Errors log #100: login set new cookies, then the middleware cleared them (stale refresh cookie)."""
+    from starlette.responses import Response
+
+    from app.main import _finish
+    response = Response()
+    auth.set_session_cookies(response, {"access_token": "new-access", "refresh_token": "new-refresh", "expires_in": 3600})
+    _finish(response, auth.CLEAR_SESSION)
+    cookies = response.headers.getlist("set-cookie")
+    assert not any("Max-Age=0" in c or "max-age=0" in c for c in cookies)
+    assert any(c.startswith(f"{auth.ACCESS_COOKIE}=new-access") for c in cookies)
+
+
+def test_a_rejected_refresh_cookie_is_still_cleared_on_other_pages():
+    from starlette.responses import Response
+
+    from app.main import _finish
+    response = _finish(Response(), auth.CLEAR_SESSION)
+    assert any(c.startswith(f"{auth.ACCESS_COOKIE}=") and "max-age=0" in c.lower()
+               for c in response.headers.getlist("set-cookie"))
+
+
+def test_a_phase_that_got_its_final_message_records_that_cost_however_it_ended(monkeypatch):
+    """Errors log #99: a timeout/cancel after the final message used to record nothing."""
+    from app.agent import runner
+    recorded = []
+    monkeypatch.setattr(runner, "_record_cost", lambda run_id, source, result, model: recorded.append((source, model)))
+    session = runner._Session()
+    session.result = SimpleNamespace(total_cost_usd=0.01)
+    runner._phase_cost("r1", "run", session, "claude-sonnet-5", "watchdog timeout")
+    assert recorded == [("run", "claude-sonnet-5")]
+    assert runner._phase_cost("r2", "run", runner._Session(), "claude-sonnet-5") == 0  # nothing started: nothing to record
+
+
+def test_the_run_budget_rule_includes_the_fact_check_reserve():
+    """One rule for the web route and both runner phases: run cap + fact-check reserve must fit (rule 5)."""
+    from decimal import Decimal
+
+    from app.config import GROUNDING_RUN_CAP_USD
+    from app.lib.budget import BudgetExceeded, assert_run_fits
+    assert_run_fits(Decimal("4.65"), 1.25, 6)  # 4.65 + 1.25 + 0.10 = 6.00: fits exactly
+    with pytest.raises(BudgetExceeded):
+        assert_run_fits(Decimal("4.66"), 1.25, 6)
+    assert GROUNDING_RUN_CAP_USD == Decimal("0.10")
+
+
+def test_only_the_protected_admin_trigger_becomes_not_allowed(monkeypatch):
+    """A DB outage used to be shown as "That change isn't allowed." (and never alerted)."""
+    import psycopg
+    from fastapi.testclient import TestClient
+
+    from app import db
+    from app.main import app
+    admin = auth.Member(user_id="00000000-0000-0000-0000-000000000001", email="a@acme.io", full_name="A",
+                        role="admin", is_owner=True)
+    monkeypatch.setattr(auth, "resolve_session", lambda request: ({"sub": admin.user_id}, None))
+    monkeypatch.setattr(auth, "load_member", lambda uid: admin)
+
+    def protected(*a, **k):
+        raise psycopg.errors.CheckViolation("At least one active admin must remain")
+    monkeypatch.setattr(db, "update_member", protected)
+    c = TestClient(app, raise_server_exceptions=False)
+    body = {"action": "make_member", "csrf_token": auth.csrf_token_for(admin.user_id)}
+    target = "/team/00000000-0000-0000-0000-000000000002/update"
+    r = c.post(target, data=body, headers={"HX-Request": "true"})
+    assert r.status_code == 400 and "At least one active admin must remain" in r.text
+
+    def outage(*a, **k):
+        raise RuntimeError("something else broke")
+    monkeypatch.setattr(db, "update_member", outage)
+    monkeypatch.setattr("app.alerts.raise_alert", lambda *a, **k: None)
+    r = c.post(target, data=body, headers={"HX-Request": "true"})
+    assert r.status_code == 500 and "isn't allowed" not in r.text
