@@ -542,6 +542,41 @@ def total_spend() -> Decimal:
     return Decimal(str(row["s"]))
 
 
+def claude_budget() -> Decimal:
+    """The project's Claude budget (D-94): the newest developer change, else CLAUDE_BUDGET_TOTAL_USD."""
+    row = fetch_one(f"select new_usd from {t('budget_changes')} order by changed_at desc limit 1")
+    return Decimal(str(row["new_usd"])) if row else get_settings().claude_budget_total_usd
+
+
+def change_budget(new_usd: Decimal, reason: str, changed_by: str) -> dict:
+    """Record a budget change (append-only) and resolve any open "more budget" requests. One transaction."""
+    old = claude_budget()
+    with get_pool().connection() as conn, conn.transaction():  # both writes or neither
+        row = conn.execute(
+            f"""insert into {t('budget_changes')} (changed_by, old_usd, new_usd, reason, credit_confirmed)
+                values (%s, %s, %s, %s, true) returning *""", (changed_by, old, new_usd, reason)).fetchone()
+        conn.execute(f"""update {t('system_events')} set resolved_at = now(), resolved_by = %s
+                         where code = 'budget_requested' and resolved_at is null""", (changed_by,))
+    return row
+
+
+def budget_history(limit: int = 20, offset: int = 0) -> tuple[list[dict], int]:
+    rows = fetch_all(
+        f"""select b.*, m.full_name as changed_by_name, count(*) over () as total
+            from {t('budget_changes')} b left join {t('members')} m on m.user_id = b.changed_by
+            order by b.changed_at desc limit %s offset %s""", (limit, offset))
+    if rows:
+        return rows, int(rows[0]["total"])
+    row = fetch_one(f"select count(*) as n from {t('budget_changes')}")
+    return [], int(row["n"]) if row else 0
+
+
+def open_budget_request() -> dict | None:
+    """The pending "more budget" request, if any (it is a System issue, so the developer is emailed)."""
+    return fetch_one(f"""select * from {t('system_events')} where code = 'budget_requested' and resolved_at is null
+                         order by last_seen_at desc limit 1""")
+
+
 def apify_spend_by_run(limit: int = 20, offset: int = 0) -> tuple[list[dict], int]:
     """Apify cost per run, from the discovery tool calls (the Spend page): (one page, total runs)."""
     rows = fetch_all(

@@ -13,13 +13,22 @@ class BudgetExceeded(Exception):
         remaining = max(Decimal("0"), total - spent)
         super().__init__(
             f"Claude budget would be exceeded: ${spent:.2f} of ${total:.2f} spent, "
-            f"${remaining:.2f} left, and this job can cost up to ${cap:.2f}. An admin must raise "
-            f"CLAUDE_BUDGET_TOTAL_USD before starting it."
+            f"${remaining:.2f} left, and this job can cost up to ${cap:.2f}. A developer must raise "
+            f"the budget on the Spend page before starting it."
         )
 
     @property
     def remaining(self) -> Decimal:
         return max(Decimal("0"), self.total - self.spent)
+
+
+MAX_BUDGET_USD = Decimal("1000")  # sanity ceiling for a typo; the DB check says the same (0009)
+
+
+def runs_left(spent: Decimal, total: Decimal, run_cap: Decimal | float) -> int:
+    """How many more runs of this size the budget allows: exactly what assert_run_fits would let start."""
+    per_run = Decimal(str(run_cap)) + GROUNDING_RUN_CAP_USD
+    return max(0, int((total - spent) // per_run)) if per_run > 0 else 0
 
 
 def _price(model: str) -> tuple[Decimal, Decimal, Decimal]:

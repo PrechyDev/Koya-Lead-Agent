@@ -75,8 +75,11 @@ CATALOGUE: dict[str, FailureKind] = {k.code: k for k in [
                 "Firecrawl rejected FIRECRAWL_API_KEY. Create a new key at firecrawl.dev and update it in Render."),
     FailureKind("budget_exhausted", "budget", "critical",
                 "This workspace has used its AI budget, so new research is paused. Our support team has been told.",
-                "The app's Claude budget (CLAUDE_BUDGET_TOTAL_USD) would be exceeded. Raise it on purpose in "
-                "Render → Environment, or wait."),
+                "The app's Claude budget would be exceeded. Top up the Anthropic account if needed, then raise the "
+                "budget on the Spend page (developers)."),
+    FailureKind("budget_requested", "budget", "warning", "",
+                "An admin asked for more Claude budget. Top up the Anthropic account (Console → Plans & Billing, and "
+                "raise its spend limit), then raise the budget on the Spend page; that resolves this request."),
     FailureKind("budget_warning", "budget", "warning",
                 "", "The app has used 80% or more of its Claude budget."),
     FailureKind("not_configured", "app", "critical",

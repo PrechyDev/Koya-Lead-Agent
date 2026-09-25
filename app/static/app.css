@@ -39,6 +39,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 h1, h2, h3 { line-height: 1.25; margin: 0 0 8px; text-wrap: balance; }
 h1 { font-size: 1.45rem; } h2 { font-size: 1.15rem; } h3 { font-size: 1rem; }
 p { margin: 0 0 8px; }
+.big { font-size: 1.3rem; margin: 0; }
 .muted { color: var(--text-muted); }
 .small { font-size: 0.85rem; }
 .mono { font-family: var(--mono); font-size: 0.85em; }

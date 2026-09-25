@@ -18,7 +18,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app import db  # noqa: E402
-from app.config import get_settings  # noqa: E402
 from app.logging_setup import configure_logging  # noqa: E402
 from app.services import health  # noqa: E402
 
@@ -29,7 +28,6 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--no-probe", action="store_true", help="skip the 1-token test call")
     args = parser.parse_args()
-    settings = get_settings()
 
     if not args.no_probe:
         failure = health.check_anthropic()  # the same probe the app runs before every research run
@@ -42,7 +40,7 @@ def main() -> int:
             log.info("Anthropic key: NOT WORKING (%s: %s)", failure.code, failure.detail)
 
     total = db.total_spend()
-    budget = settings.claude_budget_total_usd
+    budget = db.claude_budget()
     log.info("\nClaude spend recorded by this project: $%.4f of the app's $%.2f budget ($%.4f left in the app's "
              "budget; the Anthropic account's own balance is only visible in the Console)",
              total, budget, max(budget - total, 0))

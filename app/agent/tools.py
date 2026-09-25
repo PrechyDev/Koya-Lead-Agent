@@ -652,7 +652,7 @@ def build_handlers(ctx: RunContext) -> dict:
             source_context = await db.run(_grounding_context, lead)
             call_cap = grounding_call_cap(source_context, steps, parsed.linkedin_message)
             try:
-                assert_can_spend(await db.run(db.total_spend), call_cap, settings.claude_budget_total_usd)
+                assert_can_spend(await db.run(db.total_spend), call_cap, await db.run(db.claude_budget))
                 # The run's own fact-check allowance (reserved when the run started, runner.GROUNDING_RESERVE_USD).
                 assert_can_spend(await db.run(db.run_spend, ctx.run_id, "grounding"), call_cap,
                                  GROUNDING_RUN_CAP_USD)

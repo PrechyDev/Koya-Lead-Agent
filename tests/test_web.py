@@ -80,7 +80,7 @@ def test_admin_pages_render(client_as):
     c = client_as(ADMIN)
     assert c.get("/team").status_code == 200
     spend = c.get("/spend")
-    assert spend.status_code == 200 and "Claude budget used" in spend.text
+    assert spend.status_code == 200 and "left" in spend.text and "Claude budget used" not in spend.text  # runs, not dollars (D-94)
 
 
 def test_post_without_csrf_is_refused(client_as):
@@ -619,3 +619,81 @@ def test_exports_are_disabled_for_a_run_with_no_leads(client_as, a_run, monkeypa
     for tab in ("summary", "leads"):
         html = c.get(f"/runs/{a_run['id']}/tab/{tab}").text
         assert "export.csv" not in html and "Nothing to export" in html, tab
+
+
+
+# --- the budget lives in the database; developers change it, admins ask for more (D-94) --------------------------
+def test_runs_left_is_what_the_guard_allows():
+    from decimal import Decimal
+
+    from app.lib.budget import BudgetExceeded, assert_run_fits, runs_left
+    spent, total, cap = Decimal("2.61"), Decimal("6.00"), Decimal("3.00")
+    assert runs_left(spent, total, cap) == 1  # 3.39 left, 3.10 per run
+    assert_run_fits(spent, cap, total)  # one fits...
+    with pytest.raises(BudgetExceeded):
+        assert_run_fits(spent + Decimal("3.10"), cap, total)  # ...a second doesn't
+    assert runs_left(Decimal("5.99"), total, cap) == 0 and runs_left(spent, total, Decimal("0.30")) == 8
+
+
+def test_admins_see_runs_left_and_request_more_budget(client_as, monkeypatch):
+    from app.web import routes
+    raised = []
+    monkeypatch.setattr(routes.alerts, "raise_alert", lambda code, detail="", **k: raised.append((code, detail)))
+    monkeypatch.setattr(db, "open_budget_request", lambda: None)
+    c, token = client_as(ADMIN), auth.csrf_token_for(ADMIN.user_id)
+    page = c.get("/spend").text
+    assert "run" in page and "left" in page and "Request more budget" in page and "Change the budget" not in page
+    r = c.post("/spend/request-budget", data={"note": "5 more runs please", "csrf_token": token},
+               headers={"HX-Request": "true"})
+    assert "developer has been asked" in r.text and raised == [("budget_requested", "requested by Test Admin: 5 more runs please")]
+    monkeypatch.setattr(db, "open_budget_request", lambda: {"last_seen_at": None, "message": "x"})
+    r = c.post("/spend/request-budget", data={"csrf_token": token}, headers={"HX-Request": "true"})
+    assert "already been requested" in r.text and len(raised) == 1  # one pending request, not one per click
+    r = c.post("/spend/budget", data={"new_total": "20", "reason": "topped up", "credit_confirmed": "yes",
+                                      "csrf_token": token})
+    assert r.status_code == 403  # only developers change the budget
+
+
+def test_developer_changes_the_budget_with_a_reason_and_confirmed_credit(client_as, monkeypatch):
+    from decimal import Decimal
+    changes = []
+    monkeypatch.setattr(db, "total_spend", lambda: Decimal("2.61"))
+    monkeypatch.setattr(db, "change_budget", lambda new, reason, by: changes.append((new, reason, by)))
+    c, token = client_as(DEVELOPER), auth.csrf_token_for(DEVELOPER.user_id)
+    def post(**form):
+        return c.post("/spend/budget", data={"csrf_token": token, **form}, headers={"HX-Request": "true"})
+    good = {"new_total": "20", "reason": "Koya topped up $20", "credit_confirmed": "yes"}
+    assert "Confirm the Anthropic account" in post(**{**good, "credit_confirmed": ""}).text
+    assert "already been spent" in post(**{**good, "new_total": "2.00"}).text
+    assert "Say why" in post(**{**good, "reason": "x"}).text
+    assert "between" in post(**{**good, "new_total": "5000"}).text
+    assert "in dollars" in post(**{**good, "new_total": "lots"}).text
+    assert changes == []
+    r = post(**good)
+    assert r.status_code == 204 and r.headers["HX-Redirect"] == "/spend?tab=budget"
+    assert changes == [(Decimal("20.00"), "Koya topped up $20", DEVELOPER.user_id)]
+
+
+def test_budget_changes_are_stored_append_only_and_resolve_the_request(admin_dsn):
+    """Real DB: the newest change is the budget, the old value is kept, and an open request is resolved."""
+    import psycopg
+
+    from app import alerts
+    owner = db.fetch_one("select user_id from lead_agent.members where is_owner")
+    before = db.claude_budget()
+    alerts.raise_alert("budget_requested", "requested by test", notify=False)
+    change = None
+    try:
+        change = db.change_budget(before + 1, "test change, reverted", str(owner["user_id"]))
+        assert db.claude_budget() == before + 1 and change["old_usd"] == before
+        assert db.open_budget_request() is None
+        with psycopg.connect(admin_dsn, prepare_threshold=None) as conn, pytest.raises(psycopg.errors.CheckViolation):
+            conn.execute("insert into lead_agent.budget_changes (changed_by, old_usd, new_usd, reason, credit_confirmed) "
+                         "values (%s, 1, 2, 'no credit check', false)", (owner["user_id"],))
+    finally:
+        with psycopg.connect(admin_dsn, prepare_threshold=None, autocommit=True) as conn:
+            if change:
+                conn.execute("delete from lead_agent.budget_changes where id = %s", (change["id"],))
+            conn.execute("delete from lead_agent.system_events where code = 'budget_requested' "
+                         "and message like %s", ("%requested by test%",))
+    assert db.claude_budget() == before

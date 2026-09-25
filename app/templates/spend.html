@@ -5,11 +5,39 @@
 {% set pct = ((spent / budget) * 100) | round(0) if budget else 0 %}
 <section class="card stack">
   <h1>Spend</h1>
+  {# D-94: admins see how many runs are left, not dollars; developers see the dollars and change the budget #}
+  <p class="big nums"><b>{% if runs_left == 0 %}No runs left{% else %}About {{ runs_left }} run{{ 's' if runs_left != 1 }} left{% endif %}</b>
+    <span class="muted small">at this run size, before the AI budget is used up</span></p>
+  {% if member.is_developer %}
   <div class="bar {% if pct >= 90 %}full{% elif pct >= 70 %}warn{% endif %}" role="progressbar" aria-valuenow="{{ pct }}" aria-valuemin="0" aria-valuemax="100"><span style="width: {{ [pct, 100] | min }}%"></span></div>
-  <p class="nums">{{ spent | money }} of {{ budget | money }} Claude budget used (estimated). New runs are refused before any spend if they could go over.</p>
-  <p class="help">Claude cost is estimated from the token usage Anthropic reports for each call, priced with the published rates. The Anthropic Console (Usage page) shows the actual bill.
-    {% if member.is_developer %}The budget is <span class="mono">CLAUDE_BUDGET_TOTAL_USD</span> where the app is hosted; "used" is the total of the spend ledger, including development and tests.
-    {% else %}The budget is set by your developer; ask them to change it.{% endif %}</p>
+  <p class="nums">{{ spent | money }} of {{ budget | money }} Claude budget used (estimated; includes development and tests). Each run reserves {{ run_cap | money }} + $0.10 for fact-checks, so new runs are refused before any spend if they could go over.</p>
+  {% if request_pending %}<div class="callout small"><b>More budget requested</b> {{ request_pending.last_seen_at | ago }}: {{ request_pending.message.split("Detail: ")[-1] }}. Raising the budget below resolves it.</div>{% endif %}
+  <details>
+    <summary>Change the budget</summary>
+    <form class="stack" style="max-width: 560px; margin-top: 10px;" hx-post="/spend/budget" hx-target="#system-message">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <div class="field"><label for="b-total">New total budget ($)</label>
+        <input id="b-total" name="new_total" type="number" step="0.01" min="{{ '%.2f' | format(spent) }}" max="{{ max_budget }}" value="{{ '%.2f' | format(budget) }}" required></div>
+      <div class="field"><label for="b-reason">Why</label>
+        <input id="b-reason" name="reason" type="text" minlength="5" maxlength="300" placeholder="e.g. Koya topped up $20 on Oct 1" required></div>
+      <label class="row small"><input type="checkbox" name="credit_confirmed" value="yes" required>
+        I've checked the Anthropic Console: the account has credit for this, and its spend limit is at least this high.</label>
+      <div><button class="btn primary" type="submit"><span class="when-idle">Save budget</span><span class="when-loading"><span class="spinner"></span> Saving…</span></button></div>
+      <p class="help">Takes effect at once; no redeploy, and a run in progress keeps going. Every change is kept under "Budget changes". CLAUDE_BUDGET_TOTAL_USD is only the starting value.</p>
+    </form>
+  </details>
+  {% else %}
+  {% if request_pending %}
+  <p class="small"><span class="badge info">Requested</span> More budget was requested {{ request_pending.last_seen_at | ago }}. Your developer has been told.</p>
+  {% else %}
+  <form class="row" hx-post="/spend/request-budget" hx-target="#system-message">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <input name="note" type="text" maxlength="300" placeholder="Optional note, e.g. we need 5 more runs this week" aria-label="Note for your developer" style="max-width: 360px;">
+    <button class="btn" type="submit"><span class="when-idle">Request more budget</span><span class="when-loading"><span class="spinner"></span> Sending…</span></button>
+  </form>
+  {% endif %}
+  <p class="help">The AI budget is set by your developer. Ask for more before it runs out: runs that could go over are refused before they start.</p>
+  {% endif %}
 </section>
 
 <section class="card">
@@ -35,6 +63,13 @@
       {% else %}<tr><td colspan="3" class="empty">No Apify runs recorded yet.</td></tr>{% endfor %}</tbody>
     </table></div>
     <p class="help">Apify finds the companies. Its budget is separate from Claude's; the Apify console has the authoritative figure.</p>
+  {% elif tab == "budget" %}{# developers only (D-94) #}
+    <div class="table-wrap"><table>
+      <thead><tr><th>When</th><th>By</th><th>Change</th><th>Why</th></tr></thead>
+      <tbody>{% for b in items %}<tr><td class="small">{{ b.changed_at | ago }}</td><td>{{ b.changed_by_name or '—' }}</td>
+        <td class="nums">{{ b.old_usd | money }} → <b>{{ b.new_usd | money }}</b></td><td class="small">{{ b.reason }}<div class="muted">Anthropic credit confirmed</div></td></tr>
+      {% else %}<tr><td colspan="4" class="empty">No changes yet: the budget is the starting value ({{ budget | money }}).</td></tr>{% endfor %}</tbody>
+    </table></div>
   {% else %}{# breakdown: developers only (D-90, D-92) #}
     <h3>By step</h3>
     <p class="help">What each part of the system spent on Claude, across all runs and tests.</p>

@@ -79,7 +79,7 @@ Import `n8n/alert-email-workflow.json`, set the Gmail credential, email and secr
 
 1. ~~Model A/B~~ **done 2026-09-25**: results and chosen models in specs §8.7 (D-77); the harness is archived outside the repo.
    winning models in Render (`MODEL_*`) and redeploy.
-2. **Final run on Render** with the PRD objective, full limits (cap $3.00 Claude + $0.25 Apify per search, D-83). It uses most of the remaining $6 budget: raise `CLAUDE_BUDGET_TOTAL_USD` first if graders must run full runs afterwards. Approve drafts in the
+2. **Final run on Render** with the PRD objective, full limits (cap $3.00 Claude + $0.25 Apify per search, D-83). It uses most of the remaining $6 budget: if graders must run full runs afterwards, top up Anthropic and raise the budget on the Spend page (developer, D-94); no redeploy needed. Approve drafts in the
    lead drawer, then download the CSV and the sample pack (JSON contains approved drafts only, D-19).
 
 ## 7. Keep it alive for grading ($0)

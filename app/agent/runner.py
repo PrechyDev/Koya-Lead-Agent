@@ -296,7 +296,7 @@ async def run_icp_phase(run_id: str) -> str:
         await db.run(db.set_status, run_id, "needs_clarification", "The objective needs rewording before searching.")
         return "needs_clarification"
     try:
-        assert_run_fits(await db.run(db.total_spend), ctx.limits["max_budget_usd"], settings.claude_budget_total_usd)
+        assert_run_fits(await db.run(db.total_spend), ctx.limits["max_budget_usd"], await db.run(db.claude_budget))
     except BudgetExceeded as exc:
         await db.run(fail_run, run_id, ServiceFailure("budget_exhausted", str(exc)))
         return "failed"
@@ -377,7 +377,7 @@ async def run_research_phase(run_id: str) -> None:
     run = await db.run(db.get_run, run_id)
     remaining_budget = max(MIN_PHASE_BUDGET_USD, float(ctx.limits["max_budget_usd"]) - float(run["cost_usd"] or 0))
     try:
-        assert_run_fits(await db.run(db.total_spend), remaining_budget, settings.claude_budget_total_usd)
+        assert_run_fits(await db.run(db.total_spend), remaining_budget, await db.run(db.claude_budget))
     except BudgetExceeded as exc:
         await db.run(fail_run, run_id, ServiceFailure("budget_exhausted", str(exc)))
         return

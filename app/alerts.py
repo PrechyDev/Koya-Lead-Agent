@@ -93,12 +93,10 @@ def raise_alert(code: str, detail: str = "", run_id: str | None = None, notify: 
 
 def check_budget() -> None:
     """Warn once when Claude spend passes 80% of the budget."""
-    settings = get_settings()
     try:
-        spent = db.total_spend()
+        spent, total = db.total_spend(), db.claude_budget()
     except Exception:  # noqa: BLE001
         return
-    total = settings.claude_budget_total_usd
     if total and spent >= total * 8 / 10:
         raise_alert("budget_warning", f"${spent:.2f} of ${total:.2f} used")
 

@@ -5,6 +5,7 @@ import io
 import re
 import uuid
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
 from urllib.parse import urlencode
 
 import jwt
@@ -17,7 +18,7 @@ from app.agent.runner import AGENT_CANNOT_START, agent_can_start
 from app.auth import Member, current_member, require_admin, require_developer
 from app.config import get_settings, limits_for_run
 from app.failures import CATALOGUE, ServiceFailure, admin_message_from_detail, message_for
-from app.lib.budget import BudgetExceeded, assert_run_fits
+from app.lib.budget import MAX_BUDGET_USD, BudgetExceeded, assert_run_fits, runs_left
 from app.lib.icp_defaults import MAX_LEAD_COUNT
 from app.lib.objective import objective_hash, objective_problem
 from app.lib.spend_breakdown import breakdown
@@ -329,7 +330,7 @@ async def create_run(request: Request, objective: str = Form(""),
     # The lead target comes from the objective once the ICP step reads it (D-57); until then, the preset maximum.
     limits = limits_for_run(MAX_LEAD_COUNT, dev=settings.dev_limits)
     try:
-        assert_run_fits(await db.run(db.total_spend), limits.max_budget_usd, settings.claude_budget_total_usd)
+        assert_run_fits(await db.run(db.total_spend), limits.max_budget_usd, await db.run(db.claude_budget))
     except BudgetExceeded as exc:
         failure = ServiceFailure("budget_exhausted", str(exc))
         await db.run(alerts.raise_alert, failure.code, failure.detail)
@@ -658,7 +659,8 @@ async def team_table(request: Request, member: Member = Depends(require_admin)):
 async def spend_page(request: Request, tab: str = "runs", page: int = 1, member: Member = Depends(require_admin)):
     """Tabs (D-92): By run first, then Apify; "Where the money went" is the technical view (developers, D-90).
     Every list is paginated, SPEND_PER_PAGE rows a page."""
-    tabs = {"runs": "By run", "apify": "Apify"} | ({"breakdown": "Where the money went"} if member.is_developer else {})
+    tabs = {"runs": "By run", "apify": "Apify"} | ({"breakdown": "Where the money went", "budget": "Budget changes"}
+                                                    if member.is_developer else {})
     tab = tab if tab in tabs else "runs"
     page, models = max(1, page), []
     offset = (page - 1) * SPEND_PER_PAGE
@@ -666,17 +668,62 @@ async def spend_page(request: Request, tab: str = "runs", page: int = 1, member:
         items, total = await db.run(db.spend_by_run, SPEND_PER_PAGE, offset)
     elif tab == "apify":
         items, total = await db.run(db.apify_spend_by_run, SPEND_PER_PAGE, offset)
+    elif tab == "budget":
+        items, total = await db.run(db.budget_history, SPEND_PER_PAGE, offset)
     else:
         steps, models = breakdown(await db.run(db.spend_summary))
         items, total = steps[offset:offset + SPEND_PER_PAGE], len(steps)
     pages = max(1, -(-total // SPEND_PER_PAGE))
     if page > pages:
         return RedirectResponse(f"/spend?tab={tab}&page={pages}", status_code=303)
+    spent, budget = await db.run(db.total_spend), await db.run(db.claude_budget)
+    run_cap = limits_for_run(MAX_LEAD_COUNT, dev=get_settings().dev_limits).max_budget_usd
     return templates.TemplateResponse(request, "spend.html", _ctx(
-        request, spent=await db.run(db.total_spend), budget=get_settings().claude_budget_total_usd, tabs=tabs,
+        request, spent=spent, budget=budget, runs_left=runs_left(spent, budget, run_cap), run_cap=run_cap,
+        request_pending=await db.run(db.open_budget_request), max_budget=MAX_BUDGET_USD, tabs=tabs,
         tab=tab, items=items, models=models, page=page, pages=pages, total=total,
         first=offset + 1 if total else 0, last=min(offset + SPEND_PER_PAGE, total),
         page_url=lambda n: f"/spend?tab={tab}&page={n}"))
+
+
+@router.post("/spend/budget")
+@limiter.limit("10/hour")
+async def change_budget(request: Request, new_total: str = Form(""), reason: str = Form(""),
+                        credit_confirmed: str = Form(""), csrf_token: str = Form(""),
+                        member: Member = Depends(require_developer)):
+    """Developers change the Claude budget in the app (D-94): no redeploy, no stopped run, every change logged."""
+    _check_csrf(request, member, csrf_token)
+    try:
+        new = Decimal(new_total.strip().lstrip("$")).quantize(Decimal("0.01"))
+    except (InvalidOperation, ValueError):
+        return _banner(request, "error", "Enter the new total budget in dollars, e.g. 12.00.", 400)
+    spent = await db.run(db.total_spend)
+    if not (0 < new <= MAX_BUDGET_USD):
+        return _banner(request, "error", f"The budget must be between $0.01 and ${MAX_BUDGET_USD:.0f}.", 400)
+    if new < spent:
+        return _banner(request, "error", f"${new:.2f} is less than what's already been spent (${spent:.2f}).", 400)
+    if len(reason.strip()) < 5:
+        return _banner(request, "error", "Say why the budget is changing (at least 5 characters).", 400)
+    if credit_confirmed != "yes":
+        return _banner(request, "error", "Confirm the Anthropic account has credit for this budget first.", 400)
+    await db.run(db.change_budget, new, reason.strip()[:300], member.user_id)
+    return Response(status_code=204, headers={"HX-Redirect": "/spend?tab=budget"})
+
+
+@router.post("/spend/request-budget")
+@limiter.limit("5/hour")
+async def request_budget(request: Request, note: str = Form(""), csrf_token: str = Form(""),
+                         member: Member = Depends(require_admin)):
+    """Admins ask the developer for more budget: a System issue + the n8n email (D-94)."""
+    _check_csrf(request, member, csrf_token)
+    if await db.run(db.open_budget_request):
+        return _banner(request, "info", "More budget has already been requested; your developer has been told.")
+    detail = f"requested by {member.full_name}" + (f": {note.strip()[:300]}" if note.strip() else "")
+    await db.run(alerts.raise_alert, "budget_requested", detail)
+    response = _banner(request, "success", "Your developer has been asked for more budget. Runs continue until "
+                                           "the current budget is used.")
+    response.headers["HX-Trigger"] = "budgetRequested"
+    return response
 
 
 # ---------------------------------------------------------------------------
