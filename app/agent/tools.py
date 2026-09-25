@@ -24,7 +24,7 @@ from app.lib.domain import normalize_domain
 from app.lib.icp_defaults import apply_defaults, decide_lead_count, has_company_type
 from app.lib.limits import next_discovery_batch
 from app.lib.objective import icp_signature, parse_headcount_range
-from app.lib.outreach_checks import WRITING_RULES, check_outreach, measure
+from app.lib.outreach_checks import WRITING_RULES, check_outreach, measure, unresolved_claims
 from app.lib.qualification_rules import (
     DisqualifierCheck,
     HardFilterCheck,
@@ -632,6 +632,15 @@ def build_handlers(ctx: RunContext) -> dict:
             await db.run(ctx.move_to, "drafting", "Drafting outreach for qualified leads")
         steps = [e.model_dump() for e in sorted(parsed.emails, key=lambda e: e.step)]
         problems = check_outreach(steps, parsed.linkedin_message, lead["source_urls"] or [])
+        # Free: a claim the fact-checker flagged last time must be gone before we pay for another check (D-87).
+        flagged = (lead.get("grounding_report") or {}).get("unsupported") or []
+        still = unresolved_claims(flagged, steps, parsed.linkedin_message) if not problems else []
+        if still:
+            out = failure("These claims were flagged as unsupported last time and are still in the draft. Remove "
+                          "or change them (use only facts from get_lead), then call save_outreach again. This check "
+                          "was free: no attempt was used.", problems=[f"Still unsupported: {c}" for c in still])
+            out.summary = f"{lead['company_domain']}: {len(still)} flagged claim(s) still in the draft (free re-check)"
+            return out
         source_context = ""
         if not problems:
             # Checked before an attempt is used up: a budget stop is not the draft's fault.

@@ -48,7 +48,7 @@ git config core.hooksPath .githooks        # secret scan before every commit
 ## Tests
 
 ```bash
-.venv/Scripts/python -m pytest -q          # 253 tests; uses the real DB (throwaway rows), fakes all paid APIs
+.venv/Scripts/python -m pytest -q          # 256 tests; uses the real DB (throwaway rows), fakes all paid APIs
 ```
 
 ## Useful scripts

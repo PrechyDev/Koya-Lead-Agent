@@ -100,6 +100,35 @@ def _template_problems(steps: list[dict]) -> list[str]:
     return problems
 
 
+CLAIM_OVERLAP = 0.85  # share of a flagged claim's words still in one sentence = "the claim is still there"
+
+
+def _norm_words(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9$%#]+", (text or "").lower())
+
+
+def unresolved_claims(flagged: list[str], steps: list[dict], linkedin_message: str) -> list[str]:
+    """Claims the fact-checker flagged last time that are STILL in the new draft (free, code only).
+
+    The checker words each claim itself, so a claim counts as still there when its text appears in the draft
+    (ignoring case and punctuation) or when most of its meaningful words (3+ letters) sit in one sentence."""
+    texts = [f"{s.get('subject', '')}. {s.get('body', '')}" for s in steps] + [linkedin_message or ""]
+    joined = " ".join(" ".join(_norm_words(t)) for t in texts)
+    sentences = [set(_norm_words(sentence)) for t in texts for sentence in re.split(r"(?<=[.!?])\s+|\n+", t)]
+    still = []
+    for claim in flagged:
+        words = _norm_words(claim)
+        if not words:
+            continue
+        if " ".join(words) in joined:
+            still.append(claim)
+            continue
+        key = {w for w in words if len(w) >= 3}
+        if key and any(len(key & sentence) / len(key) >= CLAIM_OVERLAP for sentence in sentences):
+            still.append(claim)
+    return still
+
+
 def check_outreach(steps: list[dict], linkedin_message: str, allowed_sources: list[str]) -> list[str]:
     problems: list[str] = []
     if len(steps) != 3:

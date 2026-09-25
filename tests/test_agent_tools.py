@@ -95,6 +95,9 @@ async def test_discovery_is_refused_before_icp(run_ctx, fake_apify):
 
 async def test_full_tool_flow(run_ctx, fake_apify, fake_scrape, monkeypatch):
     ctx = run_ctx
+    # A pool of 4 so the flow covers a country reject, a size reject and a duplicate; the 1.5x-per-lead sizing
+    # itself is tested in test_lib_rules (it would give 2 for this 1-lead run).
+    monkeypatch.setattr(T, "next_discovery_batch", lambda limits, usage: 4)
     data, err = await call(ctx, "save_icp", ICP_ARGS)
     assert data["saved"] and not err
     assert db.get_run(ctx.run_id)["icp_signature"]
@@ -338,3 +341,27 @@ async def test_a_refresh_run_rereads_the_site_instead_of_the_cache(run_ctx, fake
     data, _ = await call(run_ctx, "scrape_website", {"purpose": "home", "domain": "alpha-tooltest.com", "path": "/"})
     assert not data["from_cache"] and fake_scrape == ["https://alpha-tooltest.com/"]
     assert "Alpha sells B2B SaaS" in db.get_cached_page("https://alpha-tooltest.com/", 7)["content"]  # cache updated
+
+
+async def test_a_flagged_claim_left_in_the_draft_is_sent_back_for_free(run_ctx, fake_apify, monkeypatch):
+    """D-87: before paying for another fact-check, the claims flagged last time must be gone (no attempt used)."""
+    lead = await _one_lead(run_ctx)
+    db.update_lead(str(lead["id"]), qualification_status="qualified", source_urls=["https://alpha-tooltest.com/"],
+                   grounding_report={"passed": False, "unsupported": ["Alpha raised a $40M Series B last month"]})
+    checked = []
+
+    async def fake_grounding(*a, **k):
+        checked.append(1)
+        return GroundingResult(True, None, [], Decimal("0.002"), "claude-haiku-4-5", 1000, 200)
+    monkeypatch.setattr(T, "check_grounding", fake_grounding)
+    steps = [{"step": i, "subject": f"Clinic onboarding {i}", "body": "Hi {{first_name}}, Alpha raised a $40M Series B "
+              "last month. Is onboarding still manual? {{sender_name}}", "personalization_note": "n",
+              "evidence_ref": "https://alpha-tooltest.com/"} for i in (1, 2, 3)]
+    args = {"purpose": "o", "domain": "alpha-tooltest.com", "emails": steps, "linkedin_message": "Hi {{first_name}}, quick question?"}
+    data, err = await call(run_ctx, "save_outreach", args)
+    assert err and "Still unsupported" in data["problems"][0] and checked == []
+    assert db.get_lead(str(lead["id"]))["outreach_attempts"] == 0  # free: no attempt used
+    for s in steps:
+        s["body"] = "Hi {{first_name}}, Alpha sells software to clinics. Is onboarding still manual? {{sender_name}}"
+    data, err = await call(run_ctx, "save_outreach", {**args, "emails": steps})
+    assert not err and data["drafted"] and checked == [1]

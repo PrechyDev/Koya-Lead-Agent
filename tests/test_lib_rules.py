@@ -31,6 +31,13 @@ def test_discovery_batches_first_pool_then_topups_then_stop():
     assert next_discovery_batch(limits, {"discovery_calls": 1, "candidates_found": 20}) == 0
 
 
+def test_first_search_scales_with_the_target():
+    """D-88: the first search fetches 1.5x the leads wanted, never more than the preset pool of 12."""
+    full = FULL_LIMITS.to_dict()
+    assert [next_discovery_batch({**full, "target_qualified": t}, {}) for t in (1, 3, 5, 8, 10)] == [2, 5, 8, 12, 12]
+    assert next_discovery_batch({**full, "target_qualified": 3}, {"discovery_calls": 1, "candidates_found": 5}) == 5
+
+
 def test_target_is_clamped_to_preset():
     assert limits_for_run(25, dev=False).target_qualified == 10
     assert limits_for_run(0, dev=False).target_qualified == 1

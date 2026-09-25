@@ -78,7 +78,7 @@ Before finalizing copy, check:
 5. **Banned phrases** (rejected automatically): "loved what you are building", "your company looks impressive", "I saw your website", "came across your company", "hope this finds you well", "act now", "limited time", "last chance", "don't miss out", "guaranteed", "revolutionary", "game-changer", "10x", "skyrocket", "urgent".
 6. **`evidence_ref`:** for each email, the source URL its company observation came from. It must be one of the lead's `source_urls`.
 7. **Hedge inferences.** If you connect a fact to a likely bottleneck, phrase it as a question or possibility ("with 40 clinics onboarding a month, is setup still manual?"), never as a claimed fact about their operations.
-8. **After `save_outreach`:** if it returns problems (unsupported claims, or an email with no company-specific detail), rewrite only what it flags, re-check with `check_drafts`, and call it again. You get at most the number of rewrites the tool states; after that, stop.
+8. **After `save_outreach`:** if it returns problems (unsupported claims, or an email with no company-specific detail), rewrite only what it flags, re-check with `check_drafts`, and call it again. `save_outreach` first checks, for free, that every claim flagged last time is gone; if one is still there it sends the draft straight back without using an attempt. You get at most the number of rewrites the tool states; after that, stop.
 9. The drafts are labelled DRAFT and reviewed by a human before anything is sent. Never suggest they were sent.
 
 ## Output (arguments for `save_outreach`)
